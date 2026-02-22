@@ -35,7 +35,7 @@ public class BladelowHudScreen extends Screen {
     private static final int TILE_W = 56;
     private static final int TILE_H = 22;
     private static final int PANEL_W = 352;
-    private static final int PANEL_H = 266;
+    private static final int PANEL_H = 272;
     private static final int LEFT_X = 8;
     private static final int LEFT_W = 236;
     private static final int RIGHT_X = 248;
@@ -94,8 +94,8 @@ public class BladelowHudScreen extends Screen {
 
     @Override
     protected void init() {
-        int panelX = this.width / 2 - PANEL_W / 2;
-        int panelY = this.height / 2 - PANEL_H / 2;
+        int panelX = Math.max(4, this.width / 2 - PANEL_W / 2);
+        int panelY = Math.max(4, this.height / 2 - PANEL_H / 2);
 
         this.searchField = new TextFieldWidget(this.textRenderer, panelX + LEFT_X, panelY + 28, 168, 18, Text.literal("Search"));
         this.searchField.setPlaceholder(Text.literal("Search blocks (e.g. stone)"));
@@ -196,28 +196,28 @@ public class BladelowHudScreen extends Screen {
             .build());
 
         this.shapeModeButton = addDrawableChild(ButtonWidget.builder(Text.literal(shapeLabel(this.shapeMode)), btn -> toggleShapeMode())
-            .dimensions(panelX + RIGHT_X, panelY + 170, RIGHT_W, 18)
+            .dimensions(panelX + RIGHT_X, panelY + 168, RIGHT_W, 18)
             .build());
 
         addDrawableChild(ButtonWidget.builder(Text.literal("-"), btn -> adjustReach(-0.25))
-            .dimensions(panelX + RIGHT_X, panelY + 190, 20, 18)
+            .dimensions(panelX + RIGHT_X, panelY + 188, 20, 18)
             .build());
 
         this.reachButton = addDrawableChild(ButtonWidget.builder(Text.literal(reachLabel()), btn -> {
         })
-            .dimensions(panelX + RIGHT_X + 22, panelY + 190, 52, 18)
+            .dimensions(panelX + RIGHT_X + 22, panelY + 188, 52, 18)
             .build());
 
         addDrawableChild(ButtonWidget.builder(Text.literal("+"), btn -> adjustReach(0.25))
-            .dimensions(panelX + RIGHT_X + 76, panelY + 190, 20, 18)
+            .dimensions(panelX + RIGHT_X + 76, panelY + 188, 20, 18)
             .build());
 
         this.moveModeButton = addDrawableChild(ButtonWidget.builder(Text.literal("Mode: WALK"), btn -> toggleMoveMode())
-            .dimensions(panelX + RIGHT_X, panelY + 200, RIGHT_W, 18)
+            .dimensions(panelX + RIGHT_X, panelY + 208, RIGHT_W, 18)
             .build());
 
         this.smartMoveButton = addDrawableChild(ButtonWidget.builder(Text.literal("Smart: ON"), btn -> toggleSmartMove())
-            .dimensions(panelX + RIGHT_X, panelY + 220, RIGHT_W, 18)
+            .dimensions(panelX + RIGHT_X, panelY + 228, RIGHT_W, 18)
             .build());
 
         this.blueprintField = new TextFieldWidget(this.textRenderer, panelX + RIGHT_X + 14, panelY + 48, RIGHT_W - 28, 18, Text.literal("Blueprint"));
@@ -239,15 +239,15 @@ public class BladelowHudScreen extends Screen {
             .build());
 
         this.webField = new TextFieldWidget(this.textRenderer, panelX + RIGHT_X, panelY + 108, RIGHT_W, 18, Text.literal("Web"));
-        this.webField.setPlaceholder(Text.literal("idx/url"));
+        this.webField.setPlaceholder(Text.literal("index or URL"));
         addDrawableChild(this.webField);
 
-        addDrawableChild(ButtonWidget.builder(Text.literal("WebCat"), btn -> webCatalog())
-            .dimensions(panelX + RIGHT_X, panelY + 128, 47, 18)
+        addDrawableChild(ButtonWidget.builder(Text.literal("Cat"), btn -> webCatalog())
+            .dimensions(panelX + RIGHT_X, panelY + 128, 34, 18)
             .build());
 
-        addDrawableChild(ButtonWidget.builder(Text.literal("WebImp"), btn -> webImport())
-            .dimensions(panelX + RIGHT_X + 49, panelY + 128, 47, 18)
+        addDrawableChild(ButtonWidget.builder(Text.literal("ImpLoad"), btn -> webImport())
+            .dimensions(panelX + RIGHT_X + 36, panelY + 128, 60, 18)
             .build());
 
         this.profileButton = addDrawableChild(ButtonWidget.builder(Text.literal("Prof"), btn -> cycleProfile())
@@ -268,14 +268,14 @@ public class BladelowHudScreen extends Screen {
 
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
-        int panelX = this.width / 2 - PANEL_W / 2;
-        int panelY = this.height / 2 - PANEL_H / 2;
+        int panelX = Math.max(4, this.width / 2 - PANEL_W / 2);
+        int panelY = Math.max(4, this.height / 2 - PANEL_H / 2);
 
         context.fill(panelX, panelY, panelX + PANEL_W, panelY + PANEL_H, 0xD0111111);
         context.fill(panelX + 1, panelY + 1, panelX + PANEL_W - 1, panelY + 24, 0xAA1F2430);
         context.fill(panelX + LEFT_X - 2, panelY + 46, panelX + LEFT_X + LEFT_W + 2, panelY + 122, 0x7722262F);
         context.fill(panelX + LEFT_X - 2, panelY + 124, panelX + LEFT_X + LEFT_W + 2, panelY + 146, 0x66303646);
-        context.fill(panelX + RIGHT_X - 2, panelY + 28, panelX + RIGHT_X + RIGHT_W + 2, panelY + 240, 0x66202638);
+        context.fill(panelX + RIGHT_X - 2, panelY + 28, panelX + RIGHT_X + RIGHT_W + 2, panelY + 246, 0x66202638);
         drawBorder(context, panelX, panelY, PANEL_W, PANEL_H, 0xFFFFFFFF);
 
         context.drawText(this.textRenderer, Text.literal("Bladelow Builder (P)") , panelX + 10, panelY + 10, 0xFFFFFF, false);
@@ -290,8 +290,9 @@ public class BladelowHudScreen extends Screen {
         context.drawText(this.textRenderer, Text.literal("Top Y"), panelX + LEFT_X + 212, panelY + 138, 0xCFCFCF, false);
         context.drawText(this.textRenderer, Text.literal("Automation"), panelX + RIGHT_X, panelY + 32, 0xCFCFCF, false);
         context.drawText(this.textRenderer, Text.literal("Blueprint/Web"), panelX + RIGHT_X, panelY + 40, 0x9DB3D2, false);
-        context.fill(panelX + 6, panelY + 238, panelX + PANEL_W - 6, panelY + 258, 0x55303A4D);
-        context.drawText(this.textRenderer, Text.literal("Status: " + statusText), panelX + 10, panelY + 244, 0xB9D9FF, false);
+        context.drawText(this.textRenderer, Text.literal("idx/url (auto-load BP)"), panelX + RIGHT_X, panelY + 118, 0x8EA7C9, false);
+        context.fill(panelX + 6, panelY + 248, panelX + PANEL_W - 6, panelY + 268, 0x55303A4D);
+        context.drawText(this.textRenderer, Text.literal("Status: " + statusText), panelX + 10, panelY + 254, 0xB9D9FF, false);
 
         super.render(context, mouseX, mouseY, delta);
         drawBlockIcons(context, mouseX, mouseY);
@@ -388,7 +389,8 @@ public class BladelowHudScreen extends Screen {
 
     private void updateSlotButtonText(ButtonWidget button, int idx) {
         String prefix = activeSlot == idx ? ">" : "";
-        button.setMessage(Text.literal(prefix + "S" + (idx + 1)));
+        String label = selectedSlots[idx] == null ? "-" : shortBlockName(selectedSlots[idx], 3).toUpperCase(Locale.ROOT);
+        button.setMessage(Text.literal(prefix + "S" + (idx + 1) + ":" + label));
     }
 
     private void clearSlot(int idx) {
@@ -409,8 +411,10 @@ public class BladelowHudScreen extends Screen {
         }
 
         String blockId = filteredBlockIds.get(absolute);
-        selectedSlots[activeSlot] = blockId;
-        statusText = "Assigned to slot " + (activeSlot + 1);
+        int assignedSlot = activeSlot;
+        selectedSlots[assignedSlot] = blockId;
+        activeSlot = (activeSlot + 1) % selectedSlots.length;
+        statusText = "S" + (assignedSlot + 1) + " <- " + shortBlockName(blockId, 14) + " (next S" + (activeSlot + 1) + ")";
         updateSlotButtons();
         updateBlockButtons();
     }
@@ -528,21 +532,14 @@ public class BladelowHudScreen extends Screen {
             return;
         }
 
-        List<String> blocks = new ArrayList<>();
-        for (String slot : selectedSlots) {
-            if (slot != null && !slot.isBlank() && !blocks.contains(slot)) {
-                blocks.add(slot);
-            }
-        }
+        List<String> blocks = selectedBlockList();
         if (blocks.isEmpty()) {
             statusText = "Assign at least one slot";
             return;
         }
 
         String blockSpec = String.join(",", blocks);
-        String command = this.axis.equals("x")
-            ? String.format("bladeplace %s %d %d %d %d", blockSpec, x, y, z, count)
-            : String.format("bladeplace %s %d %d %d %d %s", blockSpec, x, y, z, count, this.axis);
+        String command = String.format(Locale.ROOT, "bladeplace %s %d %d %d %d %s", blockSpec, x, y, z, count, this.axis);
 
         sendCommand(command);
     }
@@ -653,12 +650,7 @@ public class BladelowHudScreen extends Screen {
             statusText = "Invalid TopY";
             return;
         }
-        List<String> blocks = new ArrayList<>();
-        for (String slot : selectedSlots) {
-            if (slot != null && !slot.isBlank() && !blocks.contains(slot)) {
-                blocks.add(slot);
-            }
-        }
+        List<String> blocks = selectedBlockList();
         if (blocks.isEmpty()) {
             statusText = "Assign at least one slot";
             return;
@@ -718,6 +710,17 @@ public class BladelowHudScreen extends Screen {
     }
 
     private void webCatalog() {
+        if (webField != null) {
+            Integer limit = parseInt(webField.getText().trim());
+            if (limit != null) {
+                if (limit < 1 || limit > 50) {
+                    statusText = "Catalog limit must be 1..50";
+                    return;
+                }
+                sendCommand("bladeweb catalog " + limit);
+                return;
+            }
+        }
         sendCommand("bladeweb catalog 12");
     }
 
@@ -726,30 +729,125 @@ public class BladelowHudScreen extends Screen {
             statusText = "No input field";
             return;
         }
+
         String value = webField.getText().trim();
         if (value.isEmpty()) {
-            statusText = "Input index or URL";
+            statusText = "Type catalog index or URL";
             return;
         }
+
         Integer index = parseInt(value);
         if (index != null) {
-            sendCommand("bladeweb import " + index);
+            if (index < 1 || index > 100) {
+                statusText = "Index must be 1..100";
+                return;
+            }
+            String importName = resolveImportName(defaultWebImportName(index));
+            if (importName == null) {
+                statusText = "Invalid import name";
+                return;
+            }
+            setBlueprintFieldName(importName);
+            sendCommand("bladeweb importload " + index + " " + importName);
             return;
         }
-        sendCommand("bladeweb import " + value);
+
+        String normalizedUrl = normalizeUrlInput(value);
+        if (normalizedUrl == null) {
+            statusText = "Invalid URL";
+            return;
+        }
+
+        String importName = resolveImportName(suggestWebNameFromUrl(normalizedUrl));
+        if (importName == null) {
+            statusText = "Set blueprint name for URL import";
+            return;
+        }
+
+        setBlueprintFieldName(importName);
+        sendCommand("bladeweb importloadurl " + importName + " " + normalizedUrl);
+    }
+
+    private String resolveImportName(String fallback) {
+        String fromField = null;
+        if (blueprintField != null) {
+            fromField = normalizeCommandName(blueprintField.getText());
+        }
+        if (fromField != null) {
+            return fromField;
+        }
+        return normalizeCommandName(fallback);
+    }
+
+    private String defaultWebImportName(int index) {
+        return "web_idx_" + index;
+    }
+
+    private String suggestWebNameFromUrl(String normalizedUrl) {
+        if (normalizedUrl == null) {
+            return null;
+        }
+        String cleaned = normalizedUrl.toLowerCase(Locale.ROOT)
+            .replace("https://", "")
+            .replace("http://", "")
+            .replaceAll("[^a-z0-9]+", "_");
+        if (cleaned.length() > 28) {
+            cleaned = cleaned.substring(0, 28);
+        }
+        if (cleaned.isBlank()) {
+            return null;
+        }
+        return "web_" + cleaned;
+    }
+
+    private void setBlueprintFieldName(String name) {
+        if (blueprintField == null || name == null || name.isBlank()) {
+            return;
+        }
+        blueprintField.setText(name);
     }
 
     private String selectedBlockSpec() {
-        List<String> blocks = new ArrayList<>();
-        for (String slot : selectedSlots) {
-            if (slot != null && !slot.isBlank() && !blocks.contains(slot)) {
-                blocks.add(slot);
-            }
-        }
+        List<String> blocks = selectedBlockList();
         if (blocks.isEmpty()) {
             return null;
         }
         return String.join(",", blocks);
+    }
+
+    private List<String> selectedBlockList() {
+        List<String> blocks = new ArrayList<>();
+        for (String slot : selectedSlots) {
+            if (slot != null && !slot.isBlank()) {
+                blocks.add(slot);
+            }
+        }
+        return blocks;
+    }
+
+    private String normalizeUrlInput(String raw) {
+        String value = raw == null ? "" : raw.trim();
+        if (value.isEmpty() || value.contains(" ")) {
+            return null;
+        }
+        if (value.startsWith("https://") || value.startsWith("http://")) {
+            return value;
+        }
+        return "https://" + value;
+    }
+
+    private String normalizeCommandName(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String cleaned = raw.trim().toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_-]+", "_");
+        if (cleaned.isBlank()) {
+            return null;
+        }
+        if (cleaned.length() > 32) {
+            cleaned = cleaned.substring(0, 32);
+        }
+        return cleaned;
     }
 
     private void sendCommand(String command) {
@@ -759,7 +857,38 @@ public class BladelowHudScreen extends Screen {
         }
 
         this.client.player.networkHandler.sendChatCommand(command);
-        statusText = "Ran: /" + command;
+        statusText = commandStatus(command);
+    }
+
+    private String commandStatus(String command) {
+        if (command.startsWith("bladeweb catalog")) {
+            return "Syncing web catalog...";
+        }
+        if (command.startsWith("bladeweb importloadurl")) {
+            return "Importing URL and loading blueprint...";
+        }
+        if (command.startsWith("bladeweb importload")) {
+            return "Importing catalog item and loading blueprint...";
+        }
+        if (command.startsWith("bladeweb importnamed")) {
+            return "Importing web blueprint with custom name...";
+        }
+        if (command.startsWith("bladeweb import")) {
+            return "Importing web blueprint...";
+        }
+        if (command.startsWith("bladeblueprint load")) {
+            return "Loading blueprint...";
+        }
+        if (command.startsWith("bladeblueprint build")) {
+            return "Queueing blueprint build...";
+        }
+        if (command.startsWith("bladeplace")) {
+            return "Queueing line build with " + selectedBlockList().size() + " slot block(s)...";
+        }
+        if (command.startsWith("bladeselect build")) {
+            return "Queueing selection build...";
+        }
+        return "Ran: /" + command;
     }
 
     private Integer parseInt(String value) {

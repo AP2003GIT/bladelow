@@ -61,7 +61,7 @@ public final class BladePlaceCommand {
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeselect addhere | add <x> <y> <z> | build <blocks_csv> <top_y>"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeselect export <name> <block_id>"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #blademove mode walk|auto|teleport ; reach <2.0..8.0> ; scheduler on|off ; lookahead <1..96> ; defer on|off ; maxdefer <0..8>"), false);
-                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeblueprint list|load|build ; #bladestatus ; #bladecancel"), false);
+                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeblueprint list|load|build ; #bladeweb importload <index> [name] ; #bladestatus ; #bladecancel"), false);
                 return 1;
             })
         );
@@ -70,11 +70,15 @@ public final class BladePlaceCommand {
     private static void registerBladePlace(CommandDispatcher<ServerCommandSource> dispatcher) {
         dispatcher.register(literal("bladeplace")
             .then(argument("block", StringArgumentType.word())
-                .then(argument("start", BlockPosArgumentType.blockPos())
-                    .then(argument("count", IntegerArgumentType.integer(1, 4096))
-                        .executes(ctx -> runBladePlaceWithAxis(ctx, "x"))
-                        .then(argument("axis", StringArgumentType.word())
-                            .executes(ctx -> runBladePlaceWithAxis(ctx, StringArgumentType.getString(ctx, "axis")))
+                .then(argument("x", IntegerArgumentType.integer(-30000000, 30000000))
+                    .then(argument("y", IntegerArgumentType.integer(-64, 320))
+                        .then(argument("z", IntegerArgumentType.integer(-30000000, 30000000))
+                            .then(argument("count", IntegerArgumentType.integer(1, 4096))
+                                .executes(ctx -> runBladePlaceWithAxis(ctx, "x"))
+                                .then(argument("axis", StringArgumentType.word())
+                                    .executes(ctx -> runBladePlaceWithAxis(ctx, StringArgumentType.getString(ctx, "axis")))
+                                )
+                            )
                         )
                     )
                 )
@@ -94,13 +98,10 @@ public final class BladePlaceCommand {
             return 0;
         }
 
-        BlockPos start;
-        try {
-            start = BlockPosArgumentType.getLoadedBlockPos(ctx, "start");
-        } catch (CommandSyntaxException ex) {
-            ctx.getSource().sendError(blueText("[Bladelow] invalid start position"));
-            return 0;
-        }
+        int x = IntegerArgumentType.getInteger(ctx, "x");
+        int y = IntegerArgumentType.getInteger(ctx, "y");
+        int z = IntegerArgumentType.getInteger(ctx, "z");
+        BlockPos start = new BlockPos(x, y, z);
         int count = IntegerArgumentType.getInteger(ctx, "count");
 
         PlacementAxis axis;
@@ -762,44 +763,9 @@ public final class BladePlaceCommand {
     private static void registerBladeWeb(CommandDispatcher<ServerCommandSource> dispatcher) {
         dispatcher.register(literal("bladeweb")
             .then(literal("catalog")
-                .executes(ctx -> {
-                    ServerPlayerEntity player = ctx.getSource().getPlayer();
-                    if (player == null) {
-                        ctx.getSource().sendError(blueText("Player context required."));
-                        return 0;
-                    }
-                    var res = BuildItWebService.syncCatalog(player.getUuid(), 12);
-                    if (!res.ok()) {
-                        ctx.getSource().sendError(blueText("[Bladelow] " + res.message()));
-                        return 0;
-                    }
-                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] " + res.message()), false);
-                    List<BuildItWebService.CatalogItem> list = BuildItWebService.catalog(player.getUuid());
-                    for (BuildItWebService.CatalogItem item : list) {
-                        ctx.getSource().sendFeedback(() -> blueText("[" + item.index() + "] " + item.title()), false);
-                    }
-                    return 1;
-                })
+                .executes(ctx -> runBladeWebCatalog(ctx, 12))
                 .then(argument("limit", IntegerArgumentType.integer(1, 50))
-                    .executes(ctx -> {
-                        ServerPlayerEntity player = ctx.getSource().getPlayer();
-                        if (player == null) {
-                            ctx.getSource().sendError(blueText("Player context required."));
-                            return 0;
-                        }
-                        int limit = IntegerArgumentType.getInteger(ctx, "limit");
-                        var res = BuildItWebService.syncCatalog(player.getUuid(), limit);
-                        if (!res.ok()) {
-                            ctx.getSource().sendError(blueText("[Bladelow] " + res.message()));
-                            return 0;
-                        }
-                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] " + res.message()), false);
-                        List<BuildItWebService.CatalogItem> list = BuildItWebService.catalog(player.getUuid());
-                        for (BuildItWebService.CatalogItem item : list) {
-                            ctx.getSource().sendFeedback(() -> blueText("[" + item.index() + "] " + item.title()), false);
-                        }
-                        return 1;
-                    })
+                    .executes(ctx -> runBladeWebCatalog(ctx, IntegerArgumentType.getInteger(ctx, "limit")))
                 )
             )
             .then(literal("import")
@@ -851,7 +817,136 @@ public final class BladePlaceCommand {
                     })
                 )
             )
+            .then(literal("importnamed")
+                .then(argument("name", StringArgumentType.word())
+                    .then(argument("url", StringArgumentType.greedyString())
+                        .executes(ctx -> {
+                            String name = StringArgumentType.getString(ctx, "name");
+                            String url = StringArgumentType.getString(ctx, "url");
+                            var res = BuildItWebService.importFromUrl(ctx.getSource().getServer(), url, name);
+                            if (!res.ok()) {
+                                ctx.getSource().sendError(blueText("[Bladelow] " + res.message()));
+                                return 0;
+                            }
+                            ctx.getSource().sendFeedback(() -> blueText("[Bladelow] " + res.message()), false);
+                            return 1;
+                        })
+                    )
+                )
+            )
+            .then(literal("importload")
+                .then(argument("index", IntegerArgumentType.integer(1, 100))
+                    .executes(ctx -> runBladeWebImportLoadByIndex(
+                        ctx,
+                        IntegerArgumentType.getInteger(ctx, "index"),
+                        ""
+                    ))
+                    .then(argument("name", StringArgumentType.word())
+                        .executes(ctx -> runBladeWebImportLoadByIndex(
+                            ctx,
+                            IntegerArgumentType.getInteger(ctx, "index"),
+                            StringArgumentType.getString(ctx, "name")
+                        ))
+                    )
+                )
+            )
+            .then(literal("importloadurl")
+                .then(argument("name", StringArgumentType.word())
+                    .then(argument("url", StringArgumentType.greedyString())
+                        .executes(ctx -> runBladeWebImportLoadFromUrl(
+                            ctx,
+                            StringArgumentType.getString(ctx, "url"),
+                            StringArgumentType.getString(ctx, "name")
+                        ))
+                    )
+                )
+            )
         );
+    }
+
+    private static int runBladeWebCatalog(com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx, int limit) {
+        ServerPlayerEntity player = ctx.getSource().getPlayer();
+        if (player == null) {
+            ctx.getSource().sendError(blueText("Player context required."));
+            return 0;
+        }
+
+        var res = BuildItWebService.syncCatalog(player.getUuid(), limit);
+        if (!res.ok()) {
+            ctx.getSource().sendError(blueText("[Bladelow] " + res.message()));
+            return 0;
+        }
+
+        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] " + res.message()), false);
+        List<BuildItWebService.CatalogItem> list = BuildItWebService.catalog(player.getUuid());
+        for (BuildItWebService.CatalogItem item : list) {
+            ctx.getSource().sendFeedback(() -> blueText("[" + item.index() + "] " + item.title()), false);
+        }
+        return 1;
+    }
+
+    private static int runBladeWebImportLoadByIndex(
+        com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx,
+        int index,
+        String requestedName
+    ) {
+        ServerPlayerEntity player = ctx.getSource().getPlayer();
+        if (player == null) {
+            ctx.getSource().sendError(blueText("Player context required."));
+            return 0;
+        }
+
+        String finalName = requestedName == null || requestedName.isBlank()
+            ? defaultWebImportNameForIndex(index)
+            : requestedName;
+
+        var res = BuildItWebService.importPicked(ctx.getSource().getServer(), player.getUuid(), index, finalName);
+        if (!res.ok()) {
+            ctx.getSource().sendError(blueText("[Bladelow] " + res.message()));
+            return 0;
+        }
+
+        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] " + res.message()), false);
+        boolean selected = BlueprintLibrary.select(player.getUuid(), finalName);
+        if (selected) {
+            ctx.getSource().sendFeedback(() -> blueText("[Bladelow] selected blueprint " + finalName), false);
+        } else {
+            ctx.getSource().sendError(blueText("[Bladelow] imported but failed to load blueprint " + finalName));
+            return 0;
+        }
+        return 1;
+    }
+
+    private static int runBladeWebImportLoadFromUrl(
+        com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx,
+        String url,
+        String name
+    ) {
+        ServerPlayerEntity player = ctx.getSource().getPlayer();
+        if (player == null) {
+            ctx.getSource().sendError(blueText("Player context required."));
+            return 0;
+        }
+
+        var res = BuildItWebService.importFromUrl(ctx.getSource().getServer(), url, name);
+        if (!res.ok()) {
+            ctx.getSource().sendError(blueText("[Bladelow] " + res.message()));
+            return 0;
+        }
+
+        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] " + res.message()), false);
+        boolean selected = BlueprintLibrary.select(player.getUuid(), name);
+        if (selected) {
+            ctx.getSource().sendFeedback(() -> blueText("[Bladelow] selected blueprint " + name), false);
+        } else {
+            ctx.getSource().sendError(blueText("[Bladelow] imported but failed to load blueprint " + name));
+            return 0;
+        }
+        return 1;
+    }
+
+    private static String defaultWebImportNameForIndex(int index) {
+        return "web_idx_" + index;
     }
 
     private static void registerBladeBlueprint(CommandDispatcher<ServerCommandSource> dispatcher) {

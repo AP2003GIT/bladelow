@@ -20,6 +20,7 @@ Clone + build:
 
 Installer scripts:
 - WSL + Lunar copy: `./scripts/install-lunar-wsl.sh`
+- Short one-command alias (WSL): `./scripts/deploy-lunar-wsl.sh`
 - Native Windows PowerShell installer: `./scripts/install-lunar-windows.ps1`
 
 Manual WSL copy:
@@ -30,6 +31,7 @@ Manual WSL copy:
 1. Block selection
 - Pick up to 3 block slots (`S1`, `S2`, `S3`) from visual block tiles.
 - Slots rotate during placement (`S1 -> S2 -> S3 -> repeat`).
+- Clicking a tile auto-advances to the next slot for faster 3-block setup.
 - Use search + page arrows to browse blocks.
 
 2. Build inputs
@@ -53,8 +55,9 @@ Manual WSL copy:
 
 5. Blueprint + Web
 - `BP Load` / `BP Build` for local blueprints.
-- `WebCat` syncs BuildIt catalog.
-- `WebImp` imports from catalog index or URL input (`idx/url`).
+- `Cat` syncs BuildIt catalog (defaults to 12, or uses numeric value typed in web field as limit).
+- `ImpLoad` imports and auto-loads blueprint from catalog index or URL input (`idx/url`).
+- URL imports auto-generate a safe blueprint name when BP name is blank.
 - `Prof` cycles movement profile presets.
 - `Mark` adds selection point from XYZ.
 - `Help` sends command help in chat.
@@ -116,6 +119,8 @@ Web import:
 - `#bladeweb catalog [limit]`
 - `#bladeweb import <index> [name]`
 - `#bladeweb import <url>`
+- `#bladeweb importload <index> [name]`
+- `#bladeweb importloadurl <name> <url>`
 
 Model:
 - `#blademodel show|configure|reset|save|load`
@@ -177,7 +182,10 @@ Pathing/scheduler tuning:
 
 - `bladeweb catalog` syncs a list from BuildIt WordPress API endpoints.
 - If remote catalog fails but local cache exists, cached entries are reused.
+- Catalog is persisted locally at `~/.bladelow/catalog-cache/<player-uuid>.json` for offline reuse.
 - `bladeweb import` accepts catalog index or URL.
+- `bladeweb importload` imports and selects blueprint for immediate `BP Build`.
+- `bladeweb importloadurl` does the same for URL-based imports with explicit name.
 - Import parser supports:
   - direct blueprint JSON
   - JSON links in pages (absolute/relative)
@@ -219,10 +227,19 @@ Example:
 - `#bladeconfirm` to start pending preview
 - `#bladecancel` to discard
 
-4. Missing blocks in picker
+4. Build doesn’t place expected blocks
+- Fill all slot blocks in HUD (`S1/S2/S3`) before `Run`.
+- `#bladeplace` now always accepts explicit `x y z count axis`.
+- Use `#bladestatus` to inspect `last=...` reason:
+  - `no_item`
+  - `out_of_reach`
+  - `blocked`
+  - `protected`
+
+5. Missing blocks in picker
 - Use search field and page arrows (registry-based block list).
 
-5. Selection disappears after dimension change
+6. Selection disappears after dimension change
 - Expected behavior: selection is scoped per player per dimension.
 
 ## Notes

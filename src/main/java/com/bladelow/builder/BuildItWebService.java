@@ -8,6 +8,7 @@ import com.google.gson.JsonParseException;
 import net.minecraft.server.MinecraftServer;
 
 import java.io.IOException;
+import java.io.Reader;
 import java.io.Writer;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -56,13 +57,14 @@ public final class BuildItWebService {
     };
 
     private static final Map<UUID, List<CatalogItem>> LAST_CATALOG = new ConcurrentHashMap<>();
+    private static final int MAX_CACHED_CATALOG_ENTRIES = 100;
 
     private BuildItWebService() {
     }
 
     public static Result syncCatalog(UUID playerId, int limit) {
         int size = Math.max(1, Math.min(50, limit));
-        List<CatalogItem> cached = LAST_CATALOG.getOrDefault(playerId, List.of());
+        List<CatalogItem> cached = catalog(playerId);
         StringBuilder reasons = new StringBuilder();
 
         for (String catalogUrl : CATALOG_URLS) {
@@ -77,6 +79,7 @@ public final class BuildItWebService {
                     continue;
                 }
                 LAST_CATALOG.put(playerId, out);
+                saveCatalogCache(playerId, out);
                 return Result.ok("catalog synced entries=" + out.size());
             } catch (IOException | InterruptedException | JsonParseException ex) {
                 if (!reasons.isEmpty()) {
@@ -96,11 +99,19 @@ public final class BuildItWebService {
     }
 
     public static List<CatalogItem> catalog(UUID playerId) {
-        return LAST_CATALOG.getOrDefault(playerId, List.of());
+        List<CatalogItem> inMemory = LAST_CATALOG.get(playerId);
+        if (inMemory != null && !inMemory.isEmpty()) {
+            return inMemory;
+        }
+        List<CatalogItem> cached = loadCatalogCache(playerId);
+        if (!cached.isEmpty()) {
+            LAST_CATALOG.put(playerId, cached);
+        }
+        return cached;
     }
 
     public static Result importPicked(MinecraftServer server, UUID playerId, int index, String name) {
-        List<CatalogItem> items = LAST_CATALOG.get(playerId);
+        List<CatalogItem> items = catalog(playerId);
         if (items == null || items.isEmpty()) {
             return Result.error("no catalog loaded; run /bladeweb catalog first");
         }
@@ -108,6 +119,69 @@ public final class BuildItWebService {
             return Result.error("index out of range 1.." + items.size());
         }
         return importFromUrl(server, items.get(index - 1).url(), name);
+    }
+
+    private static Path catalogCachePath(UUID playerId) {
+        return Path.of(System.getProperty("user.home"), ".bladelow", "catalog-cache", playerId + ".json");
+    }
+
+    private static void saveCatalogCache(UUID playerId, List<CatalogItem> items) {
+        if (items == null || items.isEmpty()) {
+            return;
+        }
+        try {
+            Path cachePath = catalogCachePath(playerId);
+            Files.createDirectories(cachePath.getParent());
+
+            List<CatalogItem> trimmed = new ArrayList<>(Math.min(items.size(), MAX_CACHED_CATALOG_ENTRIES));
+            for (int i = 0; i < items.size() && i < MAX_CACHED_CATALOG_ENTRIES; i++) {
+                CatalogItem item = items.get(i);
+                if (item == null || item.url() == null || item.url().isBlank()) {
+                    continue;
+                }
+                String title = item.title() == null || item.title().isBlank() ? ("Build " + (trimmed.size() + 1)) : item.title();
+                trimmed.add(new CatalogItem(trimmed.size() + 1, title, item.url()));
+            }
+            try (Writer writer = Files.newBufferedWriter(cachePath)) {
+                GSON.toJson(trimmed, writer);
+            }
+        } catch (IOException ignored) {
+            // Cache write failure should not break gameplay commands.
+        }
+    }
+
+    private static List<CatalogItem> loadCatalogCache(UUID playerId) {
+        Path cachePath = catalogCachePath(playerId);
+        if (!Files.exists(cachePath)) {
+            return List.of();
+        }
+        try (Reader reader = Files.newBufferedReader(cachePath)) {
+            JsonArray arr = GSON.fromJson(reader, JsonArray.class);
+            if (arr == null || arr.isEmpty()) {
+                return List.of();
+            }
+
+            List<CatalogItem> out = new ArrayList<>();
+            for (int i = 0; i < arr.size() && out.size() < MAX_CACHED_CATALOG_ENTRIES; i++) {
+                JsonElement el = arr.get(i);
+                if (el == null || !el.isJsonObject()) {
+                    continue;
+                }
+                JsonObject obj = el.getAsJsonObject();
+                String title = obj.has("title") ? obj.get("title").getAsString().trim() : "";
+                String url = obj.has("url") ? obj.get("url").getAsString().trim() : "";
+                if (url.isBlank()) {
+                    continue;
+                }
+                if (title.isBlank()) {
+                    title = "Build " + (out.size() + 1);
+                }
+                out.add(new CatalogItem(out.size() + 1, title, url));
+            }
+            return out;
+        } catch (IOException | RuntimeException ex) {
+            return List.of();
+        }
     }
 
     public static Result importFromUrl(MinecraftServer server, String sourceUrl, String name) {

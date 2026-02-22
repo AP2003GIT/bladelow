@@ -31,6 +31,7 @@ public class PlacementJob {
     private int mlRejected;
     private double totalScore;
     private int ticks;
+    private String lastEvent = "queued";
 
     public PlacementJob(
         UUID playerId,
@@ -160,38 +161,61 @@ public class PlacementJob {
 
     public void recordPlaced() {
         placed++;
+        noteEvent("placed");
     }
 
     public void recordSkipped() {
         skipped++;
+        noteEvent("skipped");
     }
 
     public void recordFailed() {
         failed++;
+        noteEvent("failed");
     }
 
     public void recordMoved() {
         moved++;
+        noteEvent("moved");
     }
 
     public void recordAlreadyPlaced() {
         alreadyPlaced++;
+        noteEvent("already");
     }
 
     public void recordBlocked() {
         blocked++;
+        noteEvent("blocked");
     }
 
     public void recordProtectedBlocked() {
         protectedBlocked++;
+        noteEvent("protected");
     }
 
     public void recordNoReach() {
         noReach++;
+        noteEvent("out_of_reach");
     }
 
     public void recordMlRejected() {
         mlRejected++;
+        noteEvent("ml_skip");
+    }
+
+    public void noteEvent(String event) {
+        if (event == null) {
+            return;
+        }
+        String trimmed = event.trim();
+        if (trimmed.isBlank()) {
+            return;
+        }
+        if (trimmed.length() > 96) {
+            trimmed = trimmed.substring(0, 96);
+        }
+        lastEvent = trimmed;
     }
 
     public void addScore(double score) {
@@ -225,6 +249,7 @@ public class PlacementJob {
             + " moved=" + moved
             + " deferred=" + deferred
             + " replan=" + reprioritized
+            + " last=" + lastEvent
             + current;
     }
 
@@ -246,6 +271,7 @@ public class PlacementJob {
             + " noReachPct=" + String.format(Locale.ROOT, "%.1f", noReachPct)
             + " mlSkip=" + mlRejected
             + " avgScore=" + String.format(Locale.ROOT, "%.3f", avgScore)
+            + " last=" + lastEvent
             + " " + runtimeSettings.summary();
     }
 

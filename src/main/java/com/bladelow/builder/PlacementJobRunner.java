@@ -2,6 +2,10 @@ package com.bladelow.builder;
 
 import com.bladelow.ml.BladelowLearning;
 import com.bladelow.ml.PlacementFeatureExtractor;
+import net.minecraft.item.Item;
+import net.minecraft.item.ItemStack;
+import net.minecraft.item.Items;
+import net.minecraft.registry.Registries;
 import net.minecraft.particle.ParticleTypes;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
@@ -132,8 +136,13 @@ public final class PlacementJobRunner {
                     job.recordNoReach();
                     if (!wasDeferred) {
                         job.recordSkipped();
+                        job.noteEvent("out_of_reach->skipped target=" + shortTarget(target));
                         job.advance();
+                    } else {
+                        job.noteEvent("out_of_reach->deferred target=" + shortTarget(target));
                     }
+                } else {
+                    job.noteEvent("out_of_reach retry=" + tries + "/" + MAX_RETRIES_PER_TARGET + " target=" + shortTarget(target));
                 }
                 if (job.shouldReportProgress()) {
                     player.sendMessage(blueText(job.progressSummary()), false);
@@ -142,6 +151,7 @@ public final class PlacementJobRunner {
             }
             if (moveStatus > 0) {
                 job.recordMoved();
+                job.noteEvent("moved target=" + shortTarget(target));
             }
 
             var desiredState = job.currentBlock().getDefaultState();
@@ -149,6 +159,7 @@ public final class PlacementJobRunner {
             if (existingState.isOf(job.currentBlock())) {
                 job.recordAlreadyPlaced();
                 job.recordSkipped();
+                job.noteEvent("already target=" + shortTarget(target));
                 job.advance();
                 if (job.shouldReportProgress()) {
                     player.sendMessage(blueText(job.progressSummary()), false);
@@ -158,6 +169,7 @@ public final class PlacementJobRunner {
             if (BuildSafetyPolicy.isProtected(existingState)) {
                 job.recordProtectedBlocked();
                 job.recordSkipped();
+                job.noteEvent("protected target=" + shortTarget(target));
                 job.advance();
                 if (job.shouldReportProgress()) {
                     player.sendMessage(blueText(job.progressSummary()), false);
@@ -167,6 +179,7 @@ public final class PlacementJobRunner {
             if (job.runtimeSettings().strictAirOnly() && !existingState.isAir()) {
                 job.recordBlocked();
                 job.recordSkipped();
+                job.noteEvent("blocked(strict_air) target=" + shortTarget(target));
                 job.advance();
                 if (job.shouldReportProgress()) {
                     player.sendMessage(blueText(job.progressSummary()), false);
@@ -176,6 +189,17 @@ public final class PlacementJobRunner {
             if (!existingState.isAir() && !existingState.isReplaceable()) {
                 job.recordBlocked();
                 job.recordSkipped();
+                job.noteEvent("blocked(non_replaceable) target=" + shortTarget(target));
+                job.advance();
+                if (job.shouldReportProgress()) {
+                    player.sendMessage(blueText(job.progressSummary()), false);
+                }
+                continue;
+            }
+
+            if (!hasPlacementItemIfNeeded(player, job.currentBlock())) {
+                job.recordSkipped();
+                job.noteEvent("no_item block=" + blockId(job) + " target=" + shortTarget(target));
                 job.advance();
                 if (job.shouldReportProgress()) {
                     player.sendMessage(blueText(job.progressSummary()), false);
@@ -191,6 +215,7 @@ public final class PlacementJobRunner {
             if (!model.shouldPlace(features)) {
                 job.recordMlRejected();
                 job.recordSkipped();
+                job.noteEvent("ml_skip target=" + shortTarget(target));
                 model.train(features, false);
                 job.advance();
                 if (job.shouldReportProgress()) {
@@ -201,13 +226,18 @@ public final class PlacementJobRunner {
 
             boolean changed = world.setBlockState(target, desiredState);
             if (changed) {
+                consumePlacementItemAfterSuccess(player, job.currentBlock());
                 job.recordPlaced();
+                job.noteEvent("placed block=" + blockId(job) + " target=" + shortTarget(target));
                 job.advance();
             } else {
                 int tries = job.incrementCurrentAttempts();
                 if (tries >= MAX_RETRIES_PER_TARGET) {
                     job.recordFailed();
+                    job.noteEvent("failed(set_block) block=" + blockId(job) + " target=" + shortTarget(target));
                     job.advance();
+                } else {
+                    job.noteEvent("set_block_retry=" + tries + "/" + MAX_RETRIES_PER_TARGET + " target=" + shortTarget(target));
                 }
             }
             model.train(features, changed);
@@ -250,6 +280,55 @@ public final class PlacementJobRunner {
             shown++;
         }
         player.sendMessage(blueText("[Bladelow] preview markers shown: " + shown), false);
+    }
+
+    private static boolean hasPlacementItemIfNeeded(ServerPlayerEntity player, net.minecraft.block.Block block) {
+        if (player.getAbilities().creativeMode) {
+            return true;
+        }
+        Item item = block.asItem();
+        if (item == Items.AIR) {
+            return false;
+        }
+
+        var inv = player.getInventory();
+        for (int i = 0; i < inv.size(); i++) {
+            ItemStack stack = inv.getStack(i);
+            if (stack.isEmpty() || !stack.isOf(item)) {
+                continue;
+            }
+            return true;
+        }
+        return false;
+    }
+
+    private static void consumePlacementItemAfterSuccess(ServerPlayerEntity player, net.minecraft.block.Block block) {
+        if (player.getAbilities().creativeMode) {
+            return;
+        }
+        Item item = block.asItem();
+        if (item == Items.AIR) {
+            return;
+        }
+
+        var inv = player.getInventory();
+        for (int i = 0; i < inv.size(); i++) {
+            ItemStack stack = inv.getStack(i);
+            if (stack.isEmpty() || !stack.isOf(item)) {
+                continue;
+            }
+            stack.decrement(1);
+            inv.markDirty();
+            return;
+        }
+    }
+
+    private static String blockId(PlacementJob job) {
+        return Registries.BLOCK.getId(job.currentBlock()).toString();
+    }
+
+    private static String shortTarget(BlockPos pos) {
+        return pos.getX() + "," + pos.getY() + "," + pos.getZ();
     }
 
     private static Text blueText(String message) {

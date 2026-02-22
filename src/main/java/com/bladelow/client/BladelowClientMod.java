@@ -53,6 +53,12 @@ public class BladelowClientMod implements ClientModInitializer {
             if (command.isEmpty()) {
                 return true;
             }
+            if (command.startsWith("/")) {
+                command = command.substring(1).trim();
+            }
+            if (command.isEmpty()) {
+                return true;
+            }
 
             String[] parts = command.split("\\s+", 2);
             String root = parts[0].toLowerCase(Locale.ROOT);
