@@ -47,7 +47,6 @@ public final class BladePlaceCommand {
         registerBladeWeb(dispatcher);
         registerBladeBlueprint(dispatcher);
         registerBladeSelect(dispatcher);
-        registerBladeShape(dispatcher);
     }
 
     private static void registerBladePlace(CommandDispatcher<ServerCommandSource> dispatcher) {
@@ -170,121 +169,6 @@ public final class BladePlaceCommand {
                 )
             )
         );
-    }
-
-    private static void registerBladeShape(CommandDispatcher<ServerCommandSource> dispatcher) {
-        dispatcher.register(literal("bladeshape")
-            .then(literal("hollow79")
-                .then(argument("block", StringArgumentType.word())
-                    .then(argument("start", BlockPosArgumentType.blockPos())
-                        .executes(ctx -> {
-                            ServerPlayerEntity player = ctx.getSource().getPlayer();
-                            if (player == null) {
-                                ctx.getSource().sendError(Text.literal("Player context required."));
-                                return 0;
-                            }
-
-                            List<Block> blocks = parseBlockSpec(StringArgumentType.getString(ctx, "block"), ctx.getSource());
-                            if (blocks.isEmpty()) {
-                                return 0;
-                            }
-
-                            BlockPos start = BlockPosArgumentType.getLoadedBlockPos(ctx, "start");
-                            List<BlockPos> targets = new ArrayList<>();
-                            int w = 7;
-                            int d = 9;
-                            for (int dx = 0; dx < w; dx++) {
-                                for (int dz = 0; dz < d; dz++) {
-                                    boolean edge = dx == 0 || dz == 0 || dx == w - 1 || dz == d - 1;
-                                    if (edge) {
-                                        targets.add(start.add(dx, 0, dz));
-                                    }
-                                }
-                            }
-
-                            return runPlacement(ctx.getSource(), player, blocks, targets, "hollow79");
-                        })
-                    )
-                )
-            )
-            .then(literal("pattern")
-                .then(argument("shape", StringArgumentType.word())
-                    .then(argument("block", StringArgumentType.word())
-                        .then(argument("start", BlockPosArgumentType.blockPos())
-                            .executes(ctx -> {
-                                ServerPlayerEntity player = ctx.getSource().getPlayer();
-                                if (player == null) {
-                                    ctx.getSource().sendError(Text.literal("Player context required."));
-                                    return 0;
-                                }
-
-                                String shape = StringArgumentType.getString(ctx, "shape").toLowerCase();
-                                List<BlockPos> offsets = patternOffsets(shape);
-                                if (offsets.isEmpty()) {
-                                    ctx.getSource().sendError(Text.literal("[Bladelow] unknown shape: " + shape));
-                                    return 0;
-                                }
-
-                                List<Block> blocks = parseBlockSpec(StringArgumentType.getString(ctx, "block"), ctx.getSource());
-                                if (blocks.isEmpty()) {
-                                    return 0;
-                                }
-
-                                BlockPos start = BlockPosArgumentType.getLoadedBlockPos(ctx, "start");
-                                List<BlockPos> targets = new ArrayList<>();
-                                for (BlockPos off : offsets) {
-                                    targets.add(start.add(off));
-                                }
-
-                                return runPlacement(ctx.getSource(), player, blocks, targets, shape + "9");
-                            })
-                        )
-                    )
-                )
-            )
-        );
-    }
-
-    private static List<BlockPos> patternOffsets(String shape) {
-        String[] rows = switch (shape) {
-            case "square9", "square" -> new String[] {
-                "#########", "#########", "#########", "#########", "#########", "#########", "#########", "#########", "#########"
-            };
-            case "circle9", "circle" -> new String[] {
-                "..#####..", ".#######.", "#########", "#########", "#########", "#########", "#########", ".#######.", "..#####.."
-            };
-            case "round9", "round" -> new String[] {
-                "...###...", ".#######.", "#########", "#########", "#########", "#########", "#########", ".#######.", "...###..."
-            };
-            case "diamond9", "diamond" -> new String[] {
-                "....#....", "...###...", "..#####..", ".#######.", "#########", ".#######.", "..#####..", "...###...", "....#...."
-            };
-            case "triangle9", "triangle" -> new String[] {
-                "....#....", "...###...", "...###...", "..#####..", "..#####..", ".#######.", ".#######.", "#########", "#########"
-            };
-            case "star9", "star" -> new String[] {
-                "....#....", ".#..#..#.", "..#####..", "#########", "..#####..", ".#######.", "##.....##", "#.......#", "........."
-            };
-            case "heart9", "heart" -> new String[] {
-                ".##...##.", "####.####", "#########", "#########", ".#######.", "..#####..", "...###...", "....#....", "........."
-            };
-            default -> null;
-        };
-
-        if (rows == null) {
-            return List.of();
-        }
-
-        List<BlockPos> out = new ArrayList<>();
-        for (int z = 0; z < rows.length; z++) {
-            String row = rows[z];
-            for (int x = 0; x < row.length(); x++) {
-                if (row.charAt(x) == '#') {
-                    out.add(new BlockPos(x, 0, z));
-                }
-            }
-        }
-        return out;
     }
 
     private static int runPlacement(ServerCommandSource source, ServerPlayerEntity player, List<Block> blocks, List<BlockPos> targets, String tag) {

@@ -43,9 +43,7 @@ public class BladelowHudScreen extends Screen {
     private static final int SLOT_Y = 126;
     private static final int FIELD_Y = 148;
     private static final int ACTION_Y = 198;
-    private static final String[] SHAPE_MODES = {
-        "line", "edge_7x9", "square9", "circle9", "diamond9", "round9", "triangle9", "star9", "heart9", "selection"
-    };
+    private static final String[] SHAPE_MODES = {"line", "selection"};
     private static final String[] BLUEPRINT_PRESETS = {"square9", "ring79"};
 
     private final List<ButtonWidget> blockButtons = new ArrayList<>();
@@ -586,8 +584,6 @@ public class BladelowHudScreen extends Screen {
     private void buildShapeAction() {
         switch (this.shapeMode) {
             case "line" -> startBuild();
-            case "edge_7x9" -> build7x9Edge();
-            case "square9", "circle9", "diamond9", "round9", "triangle9", "star9", "heart9" -> buildPattern(this.shapeMode);
             case "selection" -> buildSelection();
         }
     }
@@ -595,15 +591,7 @@ public class BladelowHudScreen extends Screen {
     private String shapeLabel(String mode) {
         return switch (mode) {
             case "line" -> "Shape: LINE";
-            case "edge_7x9" -> "Shape: EDGE";
             case "selection" -> "Shape: SEL";
-            case "square9" -> "Shape: SQ9";
-            case "circle9" -> "Shape: CIR";
-            case "diamond9" -> "Shape: DIA";
-            case "round9" -> "Shape: RND";
-            case "triangle9" -> "Shape: TRI";
-            case "star9" -> "Shape: STR";
-            case "heart9" -> "Shape: HRT";
             default -> "Shape: ?";
         };
     }
@@ -636,27 +624,6 @@ public class BladelowHudScreen extends Screen {
             return;
         }
         sendCommand("bladeselect build " + String.join(",", blocks) + " " + topY);
-    }
-
-    private void build7x9Edge() {
-        Integer x = parseInt(xField.getText());
-        Integer y = parseInt(yField.getText());
-        Integer z = parseInt(zField.getText());
-        if (x == null || y == null || z == null) {
-            statusText = "Invalid XYZ";
-            return;
-        }
-        List<String> blocks = new ArrayList<>();
-        for (String slot : selectedSlots) {
-            if (slot != null && !slot.isBlank() && !blocks.contains(slot)) {
-                blocks.add(slot);
-            }
-        }
-        if (blocks.isEmpty()) {
-            statusText = "Assign at least one slot";
-            return;
-        }
-        sendCommand("bladeshape hollow79 " + String.join(",", blocks) + " " + x + " " + y + " " + z);
     }
 
     private void loadBlueprint() {
@@ -730,29 +697,6 @@ public class BladelowHudScreen extends Screen {
             return;
         }
         sendCommand("bladeweb import " + value);
-    }
-
-    private void buildPattern(String shape) {
-        Integer x = parseInt(xField.getText());
-        Integer y = parseInt(yField.getText());
-        Integer z = parseInt(zField.getText());
-        if (x == null || y == null || z == null) {
-            statusText = "Invalid XYZ";
-            return;
-        }
-
-        List<String> blocks = new ArrayList<>();
-        for (String slot : selectedSlots) {
-            if (slot != null && !slot.isBlank() && !blocks.contains(slot)) {
-                blocks.add(slot);
-            }
-        }
-        if (blocks.isEmpty()) {
-            statusText = "Assign at least one slot";
-            return;
-        }
-
-        sendCommand("bladeshape pattern " + shape + " " + String.join(",", blocks) + " " + x + " " + y + " " + z);
     }
 
     private String selectedBlockSpec() {
