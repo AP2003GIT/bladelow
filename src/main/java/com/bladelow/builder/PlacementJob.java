@@ -139,15 +139,22 @@ public class PlacementJob {
     }
 
     public String progressSummary() {
+        String current = "";
+        if (!isComplete()) {
+            BlockPos t = currentTarget();
+            current = " target=(" + t.getX() + "," + t.getY() + "," + t.getZ() + ")";
+        }
         return "[Bladelow] " + tag + " progress " + cursor + "/" + totalTargets()
             + " placed=" + placed
             + " skipped=" + skipped
             + " failed=" + failed
-            + " moved=" + moved;
+            + " moved=" + moved
+            + current;
     }
 
     public String completionSummary() {
         double avgScore = totalScore / Math.max(1, totalTargets());
+        double noReachPct = (noReach * 100.0) / Math.max(1, totalTargets());
         return "[Bladelow] " + tag
             + " targets=" + totalTargets()
             + " placed=" + placed
@@ -158,6 +165,7 @@ public class PlacementJob {
             + " blocked=" + blocked
             + " protected=" + protectedBlocked
             + " noReach=" + noReach
+            + " noReachPct=" + String.format("%.1f", noReachPct)
             + " mlSkip=" + mlRejected
             + " avgScore=" + String.format("%.3f", avgScore)
             + " " + BuildRuntimeSettings.summary();

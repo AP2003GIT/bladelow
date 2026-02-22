@@ -188,9 +188,32 @@ public final class BladePlaceCommand {
             return targets;
         }
 
-        List<BlockPos> ordered = new ArrayList<>(targets);
-        ordered.sort(Comparator.comparingDouble(pos -> pos.getSquaredDistance(player.getX(), player.getY(), player.getZ())));
+        List<BlockPos> remaining = new ArrayList<>(targets);
+        List<BlockPos> ordered = new ArrayList<>(targets.size());
+
+        BlockPos current = nearestTo(remaining, player.getX(), player.getY(), player.getZ());
+        if (current == null) {
+            return targets;
+        }
+        ordered.add(current);
+        remaining.remove(current);
+
+        while (!remaining.isEmpty()) {
+            BlockPos next = nearestTo(remaining, current.getX() + 0.5, current.getY() + 0.5, current.getZ() + 0.5);
+            ordered.add(next);
+            remaining.remove(next);
+            current = next;
+        }
         return ordered;
+    }
+
+    private static BlockPos nearestTo(List<BlockPos> points, double x, double y, double z) {
+        if (points.isEmpty()) {
+            return null;
+        }
+        return points.stream()
+            .min(Comparator.comparingDouble(p -> p.getSquaredDistance(x, y, z)))
+            .orElse(null);
     }
 
     private static int queuePlacement(ServerCommandSource source, ServerPlayerEntity player, List<Block> perTargetBlocks, List<BlockPos> targets, String tag) {

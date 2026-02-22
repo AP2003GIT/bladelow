@@ -11,21 +11,6 @@ import java.util.Map;
 import java.util.PriorityQueue;
 
 public final class BuildNavigation {
-    private static final double[] APPROACH_OFFSETS = {
-        1.6, 0.0,
-        -1.6, 0.0,
-        0.0, 1.6,
-        0.0, -1.6,
-        1.4, 1.4,
-        -1.4, 1.4,
-        1.4, -1.4,
-        -1.4, -1.4,
-        2.2, 0.0,
-        -2.2, 0.0,
-        0.0, 2.2,
-        0.0, -2.2
-    };
-
     private BuildNavigation() {
     }
 
@@ -233,23 +218,27 @@ public final class BuildNavigation {
         double bestScore = Double.MAX_VALUE;
         double[] best = null;
 
-        for (int i = 0; i < APPROACH_OFFSETS.length; i += 2) {
-            double x = targetX + APPROACH_OFFSETS[i];
-            double z = targetZ + APPROACH_OFFSETS[i + 1];
-            if (!canStandAt(world, x, py, z)) {
-                continue;
-            }
+        for (double radius = 1.4; radius <= Math.min(reach + 0.8, 6.4); radius += 0.55) {
+            int samples = Math.max(8, (int) Math.ceil(radius * 7.0));
+            for (int i = 0; i < samples; i++) {
+                double angle = (Math.PI * 2.0 * i) / samples;
+                double x = targetX + Math.cos(angle) * radius;
+                double z = targetZ + Math.sin(angle) * radius;
+                if (!canStandAt(world, x, py, z)) {
+                    continue;
+                }
 
-            double distTarget = Math.sqrt(square(x - targetX) + square(py + 1.0 - targetY) + square(z - targetZ));
-            if (distTarget > reach + 0.35) {
-                continue;
-            }
+                double distTarget = Math.sqrt(square(x - targetX) + square(py + 1.0 - targetY) + square(z - targetZ));
+                if (distTarget > reach + 0.35) {
+                    continue;
+                }
 
-            double distPlayer = Math.sqrt(player.squaredDistanceTo(x, py, z));
-            double score = distPlayer + distTarget * 0.4;
-            if (score < bestScore) {
-                bestScore = score;
-                best = new double[] {x, py, z};
+                double distPlayer = Math.sqrt(player.squaredDistanceTo(x, py, z));
+                double score = distPlayer + distTarget * 0.45 + Math.abs(radius - (reach - 0.35)) * 0.05;
+                if (score < bestScore) {
+                    bestScore = score;
+                    best = new double[] {x, py, z};
+                }
             }
         }
 
