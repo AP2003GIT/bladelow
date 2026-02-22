@@ -120,7 +120,7 @@ BuildIt website integration:
 Example blueprint format:
 ```json
 {
-  "name": "square9",
+  "name": "line20",
   "placements": [
     { "x": 0, "y": 0, "z": 0, "block": "minecraft:stone" }
   ]

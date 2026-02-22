@@ -173,8 +173,8 @@ public final class BlueprintLibrary {
     }
 
     private static void ensureExampleFiles(Path dir) throws IOException {
-        ensureExampleIfMissing(dir.resolve("square9.json"), exampleSquare9());
-        ensureExampleIfMissing(dir.resolve("ring79.json"), exampleRing79());
+        ensureExampleIfMissing(dir.resolve("line20.json"), exampleLine20());
+        ensureExampleIfMissing(dir.resolve("wall5x5.json"), exampleWall5x5());
     }
 
     private static void ensureExampleIfMissing(Path file, BlueprintJson example) throws IOException {
@@ -186,30 +186,23 @@ public final class BlueprintLibrary {
         }
     }
 
-    private static BlueprintJson exampleSquare9() {
+    private static BlueprintJson exampleLine20() {
         BlueprintJson json = new BlueprintJson();
-        json.name = "square9";
+        json.name = "line20";
         json.placements = new ArrayList<>();
-        for (int z = 0; z < 9; z++) {
-            for (int x = 0; x < 9; x++) {
-                json.placements.add(new PlacementJson(x, 0, z, "minecraft:stone"));
-            }
+        for (int x = 0; x < 20; x++) {
+            json.placements.add(new PlacementJson(x, 0, 0, "minecraft:stone"));
         }
         return json;
     }
 
-    private static BlueprintJson exampleRing79() {
+    private static BlueprintJson exampleWall5x5() {
         BlueprintJson json = new BlueprintJson();
-        json.name = "ring79";
+        json.name = "wall5x5";
         json.placements = new ArrayList<>();
-        int w = 7;
-        int d = 9;
-        for (int z = 0; z < d; z++) {
-            for (int x = 0; x < w; x++) {
-                boolean edge = x == 0 || z == 0 || x == w - 1 || z == d - 1;
-                if (edge) {
-                    json.placements.add(new PlacementJson(x, 0, z, "minecraft:stone"));
-                }
+        for (int y = 0; y < 5; y++) {
+            for (int x = 0; x < 5; x++) {
+                json.placements.add(new PlacementJson(x, y, 0, "minecraft:stone"));
             }
         }
         return json;

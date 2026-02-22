@@ -44,7 +44,7 @@ public class BladelowHudScreen extends Screen {
     private static final int FIELD_Y = 148;
     private static final int ACTION_Y = 198;
     private static final String[] SHAPE_MODES = {"line", "selection"};
-    private static final String[] BLUEPRINT_PRESETS = {"square9", "ring79"};
+    private static final String[] BLUEPRINT_PRESETS = {"line20", "wall5x5"};
 
     private final List<ButtonWidget> blockButtons = new ArrayList<>();
     private final List<String> filteredBlockIds = new ArrayList<>();
@@ -200,7 +200,7 @@ public class BladelowHudScreen extends Screen {
             .build());
 
         this.blueprintField = new TextFieldWidget(this.textRenderer, panelX + RIGHT_X + 14, panelY + 48, RIGHT_W - 28, 18, Text.literal("Blueprint"));
-        this.blueprintField.setText("square9");
+        this.blueprintField.setText("line20");
         addDrawableChild(this.blueprintField);
         addDrawableChild(ButtonWidget.builder(Text.literal("<"), btn -> cycleBlueprint(-1))
             .dimensions(panelX + RIGHT_X, panelY + 48, 12, 18)
