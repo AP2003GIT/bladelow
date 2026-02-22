@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "bladelow",
+  "version": "${version}",
+  "name": "Bladelow Builder",
+  "description": "Prototype automated building tools for Minecraft Java Edition.",
+  "authors": [
+    "Bladelow"
+  ],
+  "contact": {},
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "com.bladelow.BladelowMod"
+    ],
+    "client": [
+      "com.bladelow.client.BladelowClientMod"
+    ]
+  },
+  "mixins": [
+    "bladelow.client.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.18.0",
+    "minecraft": "~1.21.11",
+    "java": ">=21",
+    "fabric-command-api-v2": "*",
+    "fabric-key-binding-api-v1": "*",
+    "fabric-lifecycle-events-v1": "*"
+  }
+}

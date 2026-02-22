@@ -1,0 +1,15 @@
+# Gradle
+.gradle/
+build/
+
+# Loom/Fabric run dir
+run/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db

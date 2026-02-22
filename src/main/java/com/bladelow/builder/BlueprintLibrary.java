@@ -1,0 +1,266 @@
+package com.bladelow.builder;
+
+import com.google.gson.Gson;
+import com.google.gson.JsonParseException;
+import net.minecraft.block.Block;
+import net.minecraft.registry.Registries;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.util.Identifier;
+import net.minecraft.util.math.BlockPos;
+
+import java.io.IOException;
+import java.io.Reader;
+import java.io.Writer;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.stream.Stream;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+
+public final class BlueprintLibrary {
+    private static final Gson GSON = new Gson();
+    private static final Map<String, BlueprintTemplate> TEMPLATES = new ConcurrentHashMap<>();
+    private static final Map<UUID, String> SELECTED_BY_PLAYER = new ConcurrentHashMap<>();
+
+    private BlueprintLibrary() {
+    }
+
+    public static synchronized String reload(MinecraftServer server) {
+        TEMPLATES.clear();
+        Path dir = blueprintDir(server);
+        try {
+            Files.createDirectories(dir);
+            ensureExampleFiles(dir);
+            loadDirectory(dir);
+            return "loaded blueprints=" + TEMPLATES.size();
+        } catch (IOException ex) {
+            return "load failed: " + ex.getMessage();
+        }
+    }
+
+    public static synchronized List<String> listNames() {
+        return TEMPLATES.keySet().stream().sorted().toList();
+    }
+
+    public static synchronized boolean select(UUID playerId, String name) {
+        String key = normalize(name);
+        if (!TEMPLATES.containsKey(key)) {
+            return false;
+        }
+        SELECTED_BY_PLAYER.put(playerId, key);
+        return true;
+    }
+
+    public static synchronized String selected(UUID playerId) {
+        return SELECTED_BY_PLAYER.get(playerId);
+    }
+
+    public static synchronized BuildPlan resolveSelected(UUID playerId, BlockPos start) {
+        String key = SELECTED_BY_PLAYER.get(playerId);
+        if (key == null) {
+            return BuildPlan.error("no selected blueprint; use /bladeblueprint load <name>");
+        }
+        BlueprintTemplate template = TEMPLATES.get(key);
+        if (template == null) {
+            return BuildPlan.error("selected blueprint not loaded; run /bladeblueprint reload");
+        }
+        return resolveTemplate(template, start);
+    }
+
+    public static synchronized BuildPlan resolveByName(String name, BlockPos start) {
+        BlueprintTemplate template = TEMPLATES.get(normalize(name));
+        if (template == null) {
+            return BuildPlan.error("unknown blueprint: " + name);
+        }
+        return resolveTemplate(template, start);
+    }
+
+    public static synchronized BlueprintInfo info(String name) {
+        BlueprintTemplate template = TEMPLATES.get(normalize(name));
+        if (template == null) {
+            return null;
+        }
+        return toInfo(template);
+    }
+
+    public static synchronized BlueprintInfo infoSelected(UUID playerId) {
+        String key = SELECTED_BY_PLAYER.get(playerId);
+        if (key == null) {
+            return null;
+        }
+        BlueprintTemplate template = TEMPLATES.get(key);
+        if (template == null) {
+            return null;
+        }
+        return toInfo(template);
+    }
+
+    private static BuildPlan resolveTemplate(BlueprintTemplate template, BlockPos start) {
+        List<Block> blocks = new ArrayList<>(template.placements().size());
+        List<BlockPos> targets = new ArrayList<>(template.placements().size());
+        for (PlacementEntry p : template.placements()) {
+            Identifier id = Identifier.tryParse(p.block());
+            if (id == null || !Registries.BLOCK.containsId(id)) {
+                return BuildPlan.error("invalid block in blueprint: " + p.block());
+            }
+            targets.add(start.add(p.x(), p.y(), p.z()));
+            blocks.add(Registries.BLOCK.get(id));
+        }
+        return BuildPlan.ok(template.name(), blocks, targets);
+    }
+
+    private static BlueprintInfo toInfo(BlueprintTemplate template) {
+        int minX = Integer.MAX_VALUE;
+        int minY = Integer.MAX_VALUE;
+        int minZ = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE;
+        int maxY = Integer.MIN_VALUE;
+        int maxZ = Integer.MIN_VALUE;
+        for (PlacementEntry p : template.placements()) {
+            minX = Math.min(minX, p.x());
+            minY = Math.min(minY, p.y());
+            minZ = Math.min(minZ, p.z());
+            maxX = Math.max(maxX, p.x());
+            maxY = Math.max(maxY, p.y());
+            maxZ = Math.max(maxZ, p.z());
+        }
+        return new BlueprintInfo(template.name(), template.placements().size(), minX, minY, minZ, maxX, maxY, maxZ);
+    }
+
+    private static void loadDirectory(Path dir) throws IOException {
+        if (!Files.isDirectory(dir)) {
+            return;
+        }
+        List<Path> files;
+        try (Stream<Path> stream = Files.list(dir)) {
+            files = stream
+                .filter(path -> path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".json"))
+                .sorted(Comparator.comparing(path -> path.getFileName().toString()))
+                .toList();
+        }
+
+        for (Path file : files) {
+            try (Reader reader = Files.newBufferedReader(file)) {
+                BlueprintJson parsed = GSON.fromJson(reader, BlueprintJson.class);
+                if (parsed == null || parsed.name == null || parsed.name.isBlank() || parsed.placements == null || parsed.placements.isEmpty()) {
+                    continue;
+                }
+                List<PlacementEntry> entries = new ArrayList<>();
+                for (PlacementJson placement : parsed.placements) {
+                    if (placement == null || placement.block == null || placement.block.isBlank()) {
+                        continue;
+                    }
+                    entries.add(new PlacementEntry(placement.x, placement.y, placement.z, placement.block.trim()));
+                }
+                if (entries.isEmpty()) {
+                    continue;
+                }
+                String key = normalize(parsed.name);
+                TEMPLATES.put(key, new BlueprintTemplate(parsed.name.trim(), entries));
+            } catch (JsonParseException ex) {
+                // Ignore invalid file and continue loading others.
+            }
+        }
+    }
+
+    private static Path blueprintDir(MinecraftServer server) {
+        return server.getRunDirectory().resolve("config").resolve("bladelow").resolve("blueprints");
+    }
+
+    private static void ensureExampleFiles(Path dir) throws IOException {
+        ensureExampleIfMissing(dir.resolve("square9.json"), exampleSquare9());
+        ensureExampleIfMissing(dir.resolve("ring79.json"), exampleRing79());
+    }
+
+    private static void ensureExampleIfMissing(Path file, BlueprintJson example) throws IOException {
+        if (Files.exists(file)) {
+            return;
+        }
+        try (Writer writer = Files.newBufferedWriter(file)) {
+            GSON.toJson(example, writer);
+        }
+    }
+
+    private static BlueprintJson exampleSquare9() {
+        BlueprintJson json = new BlueprintJson();
+        json.name = "square9";
+        json.placements = new ArrayList<>();
+        for (int z = 0; z < 9; z++) {
+            for (int x = 0; x < 9; x++) {
+                json.placements.add(new PlacementJson(x, 0, z, "minecraft:stone"));
+            }
+        }
+        return json;
+    }
+
+    private static BlueprintJson exampleRing79() {
+        BlueprintJson json = new BlueprintJson();
+        json.name = "ring79";
+        json.placements = new ArrayList<>();
+        int w = 7;
+        int d = 9;
+        for (int z = 0; z < d; z++) {
+            for (int x = 0; x < w; x++) {
+                boolean edge = x == 0 || z == 0 || x == w - 1 || z == d - 1;
+                if (edge) {
+                    json.placements.add(new PlacementJson(x, 0, z, "minecraft:stone"));
+                }
+            }
+        }
+        return json;
+    }
+
+    private static String normalize(String input) {
+        return input.trim().toLowerCase(Locale.ROOT);
+    }
+
+    public record BuildPlan(boolean ok, String message, List<Block> blocks, List<BlockPos> targets) {
+        public static BuildPlan ok(String name, List<Block> blocks, List<BlockPos> targets) {
+            return new BuildPlan(true, name, blocks, targets);
+        }
+
+        public static BuildPlan error(String message) {
+            return new BuildPlan(false, message, List.of(), List.of());
+        }
+    }
+
+    public record BlueprintInfo(String name, int count, int minX, int minY, int minZ, int maxX, int maxY, int maxZ) {
+        public String summary() {
+            int width = maxX - minX + 1;
+            int height = maxY - minY + 1;
+            int depth = maxZ - minZ + 1;
+            return "name=" + name + " blocks=" + count + " size=" + width + "x" + height + "x" + depth
+                + " min=(" + minX + "," + minY + "," + minZ + ") max=(" + maxX + "," + maxY + "," + maxZ + ")";
+        }
+    }
+
+    private record BlueprintTemplate(String name, List<PlacementEntry> placements) {
+    }
+
+    private record PlacementEntry(int x, int y, int z, String block) {
+    }
+
+    private static class BlueprintJson {
+        String name;
+        List<PlacementJson> placements;
+    }
+
+    private static class PlacementJson {
+        int x;
+        int y;
+        int z;
+        String block;
+
+        PlacementJson(int x, int y, int z, String block) {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+            this.block = block;
+        }
+    }
+}
