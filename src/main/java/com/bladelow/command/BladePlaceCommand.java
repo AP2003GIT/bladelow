@@ -61,7 +61,7 @@ public final class BladePlaceCommand {
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeselect addhere | add <x> <y> <z> | build <blocks_csv> <top_y>"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeselect export <name> <block_id>"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #blademove mode walk|auto|teleport ; reach <2.0..8.0> ; scheduler on|off ; lookahead <1..96> ; defer on|off ; maxdefer <0..8>"), false);
-                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeblueprint list|load|build ; #bladeweb importload <index> [name] ; #bladestatus ; #bladecancel"), false);
+                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeblueprint list|load|build ; #bladeweb importload <index> [name] ; #bladestatus [detail] ; #bladecancel"), false);
                 return 1;
             })
         );
@@ -585,6 +585,18 @@ public final class BladePlaceCommand {
                 ctx.getSource().sendFeedback(() -> blueText(message), false);
                 return 1;
             })
+            .then(literal("detail")
+                .executes(ctx -> {
+                    ServerPlayerEntity player = ctx.getSource().getPlayer();
+                    if (player == null) {
+                        ctx.getSource().sendError(blueText("Player context required."));
+                        return 0;
+                    }
+                    String message = PlacementJobRunner.statusDetail(player.getUuid());
+                    ctx.getSource().sendFeedback(() -> blueText(message), false);
+                    return 1;
+                })
+            )
         );
     }
 

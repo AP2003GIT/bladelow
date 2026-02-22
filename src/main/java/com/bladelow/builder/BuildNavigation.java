@@ -44,7 +44,14 @@ public final class BuildNavigation {
 
         return switch (settings.moveMode()) {
             case TELEPORT -> moveTeleport(player, approach[0], approach[1], approach[2], targetX, targetY, targetZ, reach);
-            case WALK -> moveWalk(world, player, approach[0], approach[1], approach[2], targetX, targetY, targetZ, reach);
+            case WALK -> {
+                int walk = moveWalk(world, player, approach[0], approach[1], approach[2], targetX, targetY, targetZ, reach);
+                if (walk >= 0) {
+                    yield walk;
+                }
+                // Reliability fallback: if walking solver cannot approach, do a single teleport fallback.
+                yield moveTeleport(player, approach[0], approach[1], approach[2], targetX, targetY, targetZ, reach);
+            }
             case AUTO -> {
                 int walk = moveWalk(world, player, approach[0], approach[1], approach[2], targetX, targetY, targetZ, reach);
                 if (walk >= 0) {

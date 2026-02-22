@@ -84,6 +84,18 @@ public final class PlacementJobRunner {
         return "[Bladelow] no active build";
     }
 
+    public static String statusDetail(UUID playerId) {
+        PlacementJob active = JOBS.get(playerId);
+        if (active != null) {
+            return detailSummary("active", active);
+        }
+        PlacementJob pending = PENDING.get(playerId);
+        if (pending != null) {
+            return detailSummary("pending", pending);
+        }
+        return "[Bladelow] no active build";
+    }
+
     public static boolean hasActive(UUID playerId) {
         return JOBS.containsKey(playerId);
     }
@@ -250,6 +262,19 @@ public final class PlacementJobRunner {
                 it.remove();
             }
         }
+    }
+
+    private static String detailSummary(String state, PlacementJob job) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("[Bladelow] ").append(state).append(" ").append(job.progressSummary());
+        if (!job.isComplete()) {
+            BlockPos target = job.currentTarget();
+            sb.append(" nextBlock=").append(blockId(job));
+            sb.append(" nextTarget=").append(shortTarget(target));
+            sb.append(" attempts=").append(job.currentAttempts());
+            sb.append(" defers=").append(job.currentDeferrals());
+        }
+        return sb.toString();
     }
 
     private static void finishJob(ServerPlayerEntity player, PlacementJob job) {

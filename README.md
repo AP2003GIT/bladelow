@@ -55,18 +55,19 @@ Manual WSL copy:
 
 5. Blueprint + Web
 - `BP Load` / `BP Build` for local blueprints.
-- `Cat` syncs BuildIt catalog (defaults to 12, or uses numeric value typed in web field as limit).
+- `Cat` syncs BuildIt catalog using the `lim` field (`1..50`).
 - `ImpLoad` imports and auto-loads blueprint from catalog index or URL input (`idx/url`).
 - URL imports auto-generate a safe blueprint name when BP name is blank.
 - `Prof` cycles movement profile presets.
 - `Mark` adds selection point from XYZ.
-- `Help` sends command help in chat.
+- `Stat` runs `#bladestatus detail` in chat.
 
 ## Chat Commands (Manual)
 
 Core:
 - `#bladehelp`
 - `#bladestatus`
+- `#bladestatus detail`
 - `#bladecancel`
 - `#bladeconfirm`
 - `#bladepreview show`
@@ -235,6 +236,7 @@ Example:
   - `out_of_reach`
   - `blocked`
   - `protected`
+  - `attempts/defers` in `#bladestatus detail`
 
 5. Missing blocks in picker
 - Use search field and page arrows (registry-based block list).

@@ -59,6 +59,7 @@ public class BladelowHudScreen extends Screen {
     private TextFieldWidget topYField;
     private TextFieldWidget blueprintField;
     private TextFieldWidget webField;
+    private TextFieldWidget catalogLimitField;
 
     private ButtonWidget axisButton;
     private ButtonWidget smartMoveButton;
@@ -242,12 +243,17 @@ public class BladelowHudScreen extends Screen {
         this.webField.setPlaceholder(Text.literal("index or URL"));
         addDrawableChild(this.webField);
 
+        this.catalogLimitField = new TextFieldWidget(this.textRenderer, panelX + RIGHT_X, panelY + 128, 24, 18, Text.literal("Limit"));
+        this.catalogLimitField.setText("12");
+        this.catalogLimitField.setPlaceholder(Text.literal("12"));
+        addDrawableChild(this.catalogLimitField);
+
         addDrawableChild(ButtonWidget.builder(Text.literal("Cat"), btn -> webCatalog())
-            .dimensions(panelX + RIGHT_X, panelY + 128, 34, 18)
+            .dimensions(panelX + RIGHT_X + 26, panelY + 128, 26, 18)
             .build());
 
         addDrawableChild(ButtonWidget.builder(Text.literal("ImpLoad"), btn -> webImport())
-            .dimensions(panelX + RIGHT_X + 36, panelY + 128, 60, 18)
+            .dimensions(panelX + RIGHT_X + 54, panelY + 128, 42, 18)
             .build());
 
         this.profileButton = addDrawableChild(ButtonWidget.builder(Text.literal("Prof"), btn -> cycleProfile())
@@ -258,7 +264,7 @@ public class BladelowHudScreen extends Screen {
             .dimensions(panelX + RIGHT_X + 33, panelY + 148, 30, 18)
             .build());
 
-        addDrawableChild(ButtonWidget.builder(Text.literal("Help"), btn -> sendCommand("bladehelp"))
+        addDrawableChild(ButtonWidget.builder(Text.literal("Stat"), btn -> sendCommand("bladestatus detail"))
             .dimensions(panelX + RIGHT_X + 66, panelY + 148, 30, 18)
             .build());
 
@@ -290,7 +296,7 @@ public class BladelowHudScreen extends Screen {
         context.drawText(this.textRenderer, Text.literal("Top Y"), panelX + LEFT_X + 212, panelY + 138, 0xCFCFCF, false);
         context.drawText(this.textRenderer, Text.literal("Automation"), panelX + RIGHT_X, panelY + 32, 0xCFCFCF, false);
         context.drawText(this.textRenderer, Text.literal("Blueprint/Web"), panelX + RIGHT_X, panelY + 40, 0x9DB3D2, false);
-        context.drawText(this.textRenderer, Text.literal("idx/url (auto-load BP)"), panelX + RIGHT_X, panelY + 118, 0x8EA7C9, false);
+        context.drawText(this.textRenderer, Text.literal("idx/url + lim"), panelX + RIGHT_X, panelY + 118, 0x8EA7C9, false);
         context.fill(panelX + 6, panelY + 248, panelX + PANEL_W - 6, panelY + 268, 0x55303A4D);
         context.drawText(this.textRenderer, Text.literal("Status: " + statusText), panelX + 10, panelY + 254, 0xB9D9FF, false);
 
@@ -710,16 +716,14 @@ public class BladelowHudScreen extends Screen {
     }
 
     private void webCatalog() {
-        if (webField != null) {
-            Integer limit = parseInt(webField.getText().trim());
-            if (limit != null) {
-                if (limit < 1 || limit > 50) {
-                    statusText = "Catalog limit must be 1..50";
-                    return;
-                }
-                sendCommand("bladeweb catalog " + limit);
+        if (catalogLimitField != null) {
+            Integer limit = parseInt(catalogLimitField.getText().trim());
+            if (limit == null || limit < 1 || limit > 50) {
+                statusText = "Limit must be 1..50";
                 return;
             }
+            sendCommand("bladeweb catalog " + limit);
+            return;
         }
         sendCommand("bladeweb catalog 12");
     }
@@ -862,13 +866,13 @@ public class BladelowHudScreen extends Screen {
 
     private String commandStatus(String command) {
         if (command.startsWith("bladeweb catalog")) {
-            return "Syncing web catalog...";
+            return "Syncing web catalog with selected limit...";
         }
         if (command.startsWith("bladeweb importloadurl")) {
             return "Importing URL and loading blueprint...";
         }
         if (command.startsWith("bladeweb importload")) {
-            return "Importing catalog item and loading blueprint...";
+            return "Importing item and loading blueprint...";
         }
         if (command.startsWith("bladeweb importnamed")) {
             return "Importing web blueprint with custom name...";
