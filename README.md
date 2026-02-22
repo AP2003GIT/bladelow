@@ -28,39 +28,42 @@ Manual WSL copy:
 
 ## HUD Guide
 
-1. Block selection
-- Pick up to 3 block slots (`S1`, `S2`, `S3`) from visual block tiles.
-- Slots rotate during placement (`S1 -> S2 -> S3 -> repeat`).
-- Clicking a tile auto-advances to the next slot for faster 3-block setup.
-- Use search + page arrows to browse blocks.
+1. Picker + slots
+- Pick up to 3 slot blocks (`S1`, `S2`, `S3`) from the visual block grid.
+- `Favorites` and `Recent` rows are above the grid for fast re-selection.
+- `+F` adds active-slot block to favorites, `-F` removes it.
+- Slot badges show inventory readiness (`OK`/`MISS`) per slot.
 
-2. Build inputs
-- `X Y Z`: start position.
-- `Count`: line length.
-- `Height`: selection column height above each marked point.
-- `Axis`: line direction (`X/Y/Z`).
+2. Modes and inputs
+- Tabs: `LINE`, `SEL`, `BP`.
+- `LINE` uses `X Y Z`, `Count`, and `Axis` (`X/Y/Z`).
+- `SEL` uses `Height` and marked selection points (`Mark`).
+- `BP` uses `X Y Z`, blueprint name, and optional block slots for override.
 
-3. Main actions
-- `Run`: run active mode (`LINE`, `SEL`, or `BP`).
-- `Prev`: preview mode toggle.
-- `OK`: confirm pending preview.
-- `Stop`: cancel active/pending job.
-- `Mark`: add selection point from current XYZ fields.
+3. Run controls
+- Cluster: `Run`, `Prev`, `Confirm`, `Cancel`.
+- `Run` is guarded: it stays disabled until required inputs are valid.
+- Inline validation tells you exactly what is missing (for example `count 1..4096`).
 
-4. Automation controls
+4. Automation + presets
 - `Mode`: `WALK / AUTO / TELEPORT`
 - `Smart`: smart movement on/off
-- `Reach`: adjust reach distance
-- Tabs: `LINE / SEL / BP`
+- `Reach`: placement reach
+- `Prof`: movement profile cycle
+- Presets: `L20X`, `L20Z`, `SEL6`, `BP20`
 
-5. Blueprint + Web
+5. Status + hotkeys
+- Bottom panel shows compact progress and the latest Bladelow log lines.
+- Hotkeys in HUD: `P` close, `R` run, `M` mark, `C` cancel, `V` preview toggle.
+
+6. Scale + persistence
+- `Scale: S/M/L` cycles HUD size.
+- HUD state now saves per world/server profile (`config/bladelow/hud-state.properties`).
+
+7. Blueprint + Web
 - `BP Load` / `BP Build` for local blueprints.
-- `Cat` syncs BuildIt catalog using the `lim` field (`1..50`).
-- `ImpLoad` imports and auto-loads blueprint from catalog index or URL input (`idx/url`).
-- URL imports auto-generate a safe blueprint name when BP name is blank.
-- `Prof` cycles movement profile presets.
-- `Mark` adds selection point from XYZ.
-- `Stat` runs `#bladestatus detail` in chat.
+- `Cat` syncs BuildIt catalog with limit field (`1..50`).
+- `Imp` imports by catalog index or URL and loads it.
 
 ## Chat Commands (Manual)
 

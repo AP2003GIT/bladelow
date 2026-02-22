@@ -3,6 +3,7 @@ package com.bladelow.client;
 import com.bladelow.client.ui.BladelowHudScreen;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
+import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents;
 import net.fabricmc.fabric.api.client.message.v1.ClientSendMessageEvents;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.option.KeyBinding;
@@ -43,6 +44,13 @@ public class BladelowClientMod implements ClientModInitializer {
             KeyBinding.Category.MISC
         ));
 
+        ClientReceiveMessageEvents.CHAT.register((message, signedMessage, sender, params, timestamp) ->
+            BladelowHudTelemetry.recordServerMessage(message.getString())
+        );
+        ClientReceiveMessageEvents.GAME.register((message, overlay) ->
+            BladelowHudTelemetry.recordServerMessage(message.getString())
+        );
+
         ClientSendMessageEvents.ALLOW_CHAT.register(message -> {
             String trimmed = message == null ? "" : message.trim();
             if (!trimmed.startsWith("#")) {
@@ -76,6 +84,7 @@ public class BladelowClientMod implements ClientModInitializer {
             }
 
             client.player.networkHandler.sendChatCommand(command);
+            BladelowHudTelemetry.recordLocalMessage("/" + command);
             client.player.sendMessage(Text.literal("[Bladelow] ran: /" + command).formatted(Formatting.AQUA), false);
             return false;
         });
