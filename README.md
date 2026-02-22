@@ -37,21 +37,21 @@ Manual WSL copy:
 2. Build inputs
 - `X Y Z`: start position.
 - `Count`: line length.
-- `TopY`: selection column top.
+- `Height`: selection column height above each marked point.
 - `Axis`: line direction (`X/Y/Z`).
 
 3. Main actions
-- `Run`: run current shape.
+- `Run`: run active mode (`LINE`, `SEL`, or `BP`).
 - `Prev`: preview mode toggle.
 - `OK`: confirm pending preview.
 - `Stop`: cancel active/pending job.
-- `Here`: set XYZ to player position + add selection point (`bladeselect addhere`).
+- `Mark`: add selection point from current XYZ fields.
 
 4. Automation controls
 - `Mode`: `WALK / AUTO / TELEPORT`
 - `Smart`: smart movement on/off
 - `Reach`: adjust reach distance
-- `Shape`: `LINE / SELECTION`
+- Tabs: `LINE / SEL / BP`
 
 5. Blueprint + Web
 - `BP Load` / `BP Build` for local blueprints.
@@ -73,7 +73,7 @@ Core:
 - `#bladepreview show`
 
 Placement:
-- `#bladeplace <blocks_csv> <x> <y> <z> <count> [axis]`
+- `#bladeplace <x> <y> <z> <count> [axis] <blocks_csv>`
 
 Selection:
 - `#bladeselect addhere`
@@ -84,7 +84,7 @@ Selection:
 - `#bladeselect size`
 - `#bladeselect list`
 - `#bladeselect box <x1> <y1> <z1> <x2> <y2> <z2> [solid|hollow]`
-- `#bladeselect build <blocks_csv> <top_y>`
+- `#bladeselect buildh <height> <blocks_csv>`
 - `#bladeselect export <name> <block_id>`
 
 Movement/runtime tuning:
@@ -142,14 +142,14 @@ Selection workflow:
 #bladeselect addhere
 #bladeselect box 8 -60 8 12 -60 12 hollow
 #bladeselect list
-#bladeselect build minecraft:stone,minecraft:glass -50
+#bladeselect buildh 10 minecraft:stone,minecraft:glass
 #bladeselect export my_selection minecraft:stone
 ```
 
 Line build:
 
 ```text
-#bladeplace minecraft:stone,minecraft:cobblestone 10 -60 10 20 x
+#bladeplace 10 -60 10 20 x minecraft:stone,minecraft:cobblestone
 ```
 
 Blueprint build:
@@ -213,8 +213,8 @@ Example:
 
 1. Parsing errors (`trailing data`)
 - Use command format exactly:
-  - `#bladeplace minecraft:stone 10 -60 10 20`
-  - optional axis: `#bladeplace minecraft:stone 10 -60 10 20 z`
+  - `#bladeplace 10 -60 10 20 minecraft:stone`
+  - optional axis: `#bladeplace 10 -60 10 20 z minecraft:stone`
 
 2. Many `noReach` skips
 - Try:
@@ -230,7 +230,7 @@ Example:
 
 4. Build doesn’t place expected blocks
 - Fill all slot blocks in HUD (`S1/S2/S3`) before `Run`.
-- `#bladeplace` now always accepts explicit `x y z count axis`.
+- `#bladeplace` expects `x y z count [axis] blocks_csv`.
 - Use `#bladestatus` to inspect `last=...` reason:
   - `no_item`
   - `out_of_reach`

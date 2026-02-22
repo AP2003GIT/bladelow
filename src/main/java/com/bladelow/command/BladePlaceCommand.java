@@ -57,8 +57,8 @@ public final class BladePlaceCommand {
         dispatcher.register(literal("bladehelp")
             .executes(ctx -> {
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] Quick commands:"), false);
-                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeplace <blocks_csv> <x> <y> <z> <count> [axis]"), false);
-                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeselect addhere | add <x> <y> <z> | build <blocks_csv> <top_y>"), false);
+                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeplace <x> <y> <z> <count> [axis] <blocks_csv>"), false);
+                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeselect addhere | add <x> <y> <z> | buildh <height> <blocks_csv>"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeselect export <name> <block_id>"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #blademove mode walk|auto|teleport ; reach <2.0..8.0> ; scheduler on|off ; lookahead <1..96> ; defer on|off ; maxdefer <0..8>"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeblueprint list|load|build ; #bladeweb importload <index> [name] ; #bladestatus [detail] ; #bladecancel"), false);
@@ -69,15 +69,12 @@ public final class BladePlaceCommand {
 
     private static void registerBladePlace(CommandDispatcher<ServerCommandSource> dispatcher) {
         dispatcher.register(literal("bladeplace")
-            .then(argument("block", StringArgumentType.word())
-                .then(argument("x", IntegerArgumentType.integer(-30000000, 30000000))
-                    .then(argument("y", IntegerArgumentType.integer(-64, 320))
-                        .then(argument("z", IntegerArgumentType.integer(-30000000, 30000000))
-                            .then(argument("count", IntegerArgumentType.integer(1, 4096))
-                                .executes(ctx -> runBladePlaceWithAxis(ctx, "x"))
-                                .then(argument("axis", StringArgumentType.word())
-                                    .executes(ctx -> runBladePlaceWithAxis(ctx, StringArgumentType.getString(ctx, "axis")))
-                                )
+            .then(argument("x", IntegerArgumentType.integer(-30000000, 30000000))
+                .then(argument("y", IntegerArgumentType.integer(-64, 320))
+                    .then(argument("z", IntegerArgumentType.integer(-30000000, 30000000))
+                        .then(argument("count", IntegerArgumentType.integer(1, 4096))
+                            .then(argument("tail", StringArgumentType.greedyString())
+                                .executes(BladePlaceCommand::runBladePlaceFromTail)
                             )
                         )
                     )
@@ -86,14 +83,31 @@ public final class BladePlaceCommand {
         );
     }
 
-    private static int runBladePlaceWithAxis(com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx, String axisText) {
+    private static int runBladePlaceFromTail(com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx) {
         ServerPlayerEntity player = ctx.getSource().getPlayer();
         if (player == null) {
             ctx.getSource().sendError(blueText("Player context required."));
             return 0;
         }
 
-        List<Block> blocks = parseBlockSpec(StringArgumentType.getString(ctx, "block"), ctx.getSource());
+        String tail = StringArgumentType.getString(ctx, "tail").trim();
+        if (tail.isBlank()) {
+            ctx.getSource().sendError(blueText("[Bladelow] missing blocks spec"));
+            return 0;
+        }
+
+        String axisText = "x";
+        String blockSpec = tail;
+        String[] split = tail.split("\\s+", 2);
+        if (split.length == 2 && isAxisToken(split[0])) {
+            axisText = split[0];
+            blockSpec = split[1].trim();
+        } else if (split.length == 1 && isAxisToken(split[0])) {
+            ctx.getSource().sendError(blueText("[Bladelow] missing blocks after axis"));
+            return 0;
+        }
+
+        List<Block> blocks = parseBlockSpec(blockSpec, ctx.getSource());
         if (blocks.isEmpty()) {
             return 0;
         }
@@ -118,6 +132,10 @@ public final class BladePlaceCommand {
         }
 
         return runPlacement(ctx.getSource(), player, blocks, targets, "bladeplace");
+    }
+
+    private static boolean isAxisToken(String text) {
+        return text.equalsIgnoreCase("x") || text.equalsIgnoreCase("y") || text.equalsIgnoreCase("z");
     }
 
     private static void registerBladeSelect(CommandDispatcher<ServerCommandSource> dispatcher) {
@@ -270,8 +288,8 @@ public final class BladePlaceCommand {
                 })
             )
             .then(literal("build")
-                .then(argument("block", StringArgumentType.word())
-                    .then(argument("top_y", IntegerArgumentType.integer(-64, 320))
+                .then(argument("top_y", IntegerArgumentType.integer(-64, 320))
+                    .then(argument("block", StringArgumentType.greedyString())
                         .executes(ctx -> {
                             ServerPlayerEntity player = ctx.getSource().getPlayer();
                             if (player == null) {
@@ -305,6 +323,46 @@ public final class BladePlaceCommand {
                             }
 
                             return runPlacement(ctx.getSource(), player, blocks, targets, "selection");
+                        })
+                    )
+                )
+            )
+            .then(literal("buildh")
+                .then(argument("height", IntegerArgumentType.integer(1, 256))
+                    .then(argument("block", StringArgumentType.greedyString())
+                        .executes(ctx -> {
+                            ServerPlayerEntity player = ctx.getSource().getPlayer();
+                            if (player == null) {
+                                ctx.getSource().sendError(blueText("Player context required."));
+                                return 0;
+                            }
+
+                            List<Block> blocks = parseBlockSpec(StringArgumentType.getString(ctx, "block"), ctx.getSource());
+                            if (blocks.isEmpty()) {
+                                return 0;
+                            }
+
+                            int height = IntegerArgumentType.getInteger(ctx, "height");
+                            var worldKey = ctx.getSource().getWorld().getRegistryKey();
+                            List<BlockPos> base = SelectionState.snapshot(player.getUuid(), worldKey);
+                            if (base.isEmpty()) {
+                                ctx.getSource().sendError(blueText("[Bladelow] selection is empty; use /bladeselect add"));
+                                return 0;
+                            }
+
+                            List<BlockPos> targets = new ArrayList<>();
+                            for (BlockPos p : base) {
+                                for (int step = 1; step <= height; step++) {
+                                    targets.add(p.add(0, step, 0));
+                                }
+                            }
+
+                            if (targets.isEmpty()) {
+                                ctx.getSource().sendError(blueText("[Bladelow] no targets for selection height"));
+                                return 0;
+                            }
+
+                            return runPlacement(ctx.getSource(), player, blocks, targets, "selectionh");
                         })
                     )
                 )
@@ -1045,7 +1103,7 @@ public final class BladePlaceCommand {
                         }
                         return queuePlacement(ctx.getSource(), player, plan.blocks(), plan.targets(), "blueprint:" + plan.message());
                     })
-                    .then(argument("block", StringArgumentType.word())
+                    .then(argument("block", StringArgumentType.greedyString())
                         .executes(ctx -> {
                             ServerPlayerEntity player = ctx.getSource().getPlayer();
                             if (player == null) {
@@ -1088,7 +1146,7 @@ public final class BladePlaceCommand {
                             BlueprintLibrary.select(player.getUuid(), name);
                             return queuePlacement(ctx.getSource(), player, plan.blocks(), plan.targets(), "blueprint:" + plan.message());
                         })
-                        .then(argument("block", StringArgumentType.word())
+                        .then(argument("block", StringArgumentType.greedyString())
                             .executes(ctx -> {
                                 ServerPlayerEntity player = ctx.getSource().getPlayer();
                                 if (player == null) {
