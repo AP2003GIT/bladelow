@@ -21,6 +21,7 @@ import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.Formatting;
 import net.minecraft.util.math.BlockPos;
 
 import java.util.ArrayList;
@@ -67,7 +68,7 @@ public final class BladePlaceCommand {
     private static int runBladePlaceWithAxis(com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx, String axisText) {
         ServerPlayerEntity player = ctx.getSource().getPlayer();
         if (player == null) {
-            ctx.getSource().sendError(Text.literal("Player context required."));
+            ctx.getSource().sendError(blueText("Player context required."));
             return 0;
         }
 
@@ -80,7 +81,7 @@ public final class BladePlaceCommand {
         try {
             start = BlockPosArgumentType.getLoadedBlockPos(ctx, "start");
         } catch (CommandSyntaxException ex) {
-            ctx.getSource().sendError(Text.literal("[Bladelow] invalid start position"));
+            ctx.getSource().sendError(blueText("[Bladelow] invalid start position"));
             return 0;
         }
         int count = IntegerArgumentType.getInteger(ctx, "count");
@@ -89,7 +90,7 @@ public final class BladePlaceCommand {
         try {
             axis = PlacementAxis.fromInput(axisText);
         } catch (IllegalArgumentException ex) {
-            ctx.getSource().sendError(Text.literal(ex.getMessage()));
+            ctx.getSource().sendError(blueText(ex.getMessage()));
             return 0;
         }
 
@@ -106,26 +107,110 @@ public final class BladePlaceCommand {
             .then(literal("add")
                 .then(argument("pos", BlockPosArgumentType.blockPos())
                     .executes(ctx -> {
+                        ServerPlayerEntity player = ctx.getSource().getPlayer();
+                        if (player == null) {
+                            ctx.getSource().sendError(blueText("Player context required."));
+                            return 0;
+                        }
+                        var worldKey = ctx.getSource().getWorld().getRegistryKey();
                         BlockPos pos = BlockPosArgumentType.getLoadedBlockPos(ctx, "pos");
-                        boolean added = SelectionState.add(pos);
-                        int total = SelectionState.size();
-                        ctx.getSource().sendFeedback(() -> Text.literal(
+                        boolean added = SelectionState.add(player.getUuid(), worldKey, pos);
+                        int total = SelectionState.size(player.getUuid(), worldKey);
+                        ctx.getSource().sendFeedback(() -> blueText(
                             "[Bladelow] selection " + (added ? "added" : "already had") + " " + pos.toShortString() + " total=" + total
                         ), false);
                         return 1;
                     })
                 )
             )
+            .then(literal("remove")
+                .then(argument("pos", BlockPosArgumentType.blockPos())
+                    .executes(ctx -> {
+                        ServerPlayerEntity player = ctx.getSource().getPlayer();
+                        if (player == null) {
+                            ctx.getSource().sendError(blueText("Player context required."));
+                            return 0;
+                        }
+                        var worldKey = ctx.getSource().getWorld().getRegistryKey();
+                        BlockPos pos = BlockPosArgumentType.getLoadedBlockPos(ctx, "pos");
+                        boolean removed = SelectionState.remove(player.getUuid(), worldKey, pos);
+                        int total = SelectionState.size(player.getUuid(), worldKey);
+                        ctx.getSource().sendFeedback(() -> blueText(
+                            "[Bladelow] selection " + (removed ? "removed" : "missing") + " " + pos.toShortString() + " total=" + total
+                        ), false);
+                        return removed ? 1 : 0;
+                    })
+                )
+            )
+            .then(literal("undo")
+                .executes(ctx -> {
+                    ServerPlayerEntity player = ctx.getSource().getPlayer();
+                    if (player == null) {
+                        ctx.getSource().sendError(blueText("Player context required."));
+                        return 0;
+                    }
+                    var worldKey = ctx.getSource().getWorld().getRegistryKey();
+                    BlockPos removed = SelectionState.popLast(player.getUuid(), worldKey);
+                    if (removed == null) {
+                        ctx.getSource().sendError(blueText("[Bladelow] selection is empty"));
+                        return 0;
+                    }
+                    int total = SelectionState.size(player.getUuid(), worldKey);
+                    ctx.getSource().sendFeedback(() -> blueText(
+                        "[Bladelow] selection removed last " + removed.toShortString() + " total=" + total
+                    ), false);
+                    return 1;
+                })
+            )
             .then(literal("clear")
                 .executes(ctx -> {
-                    SelectionState.clear();
-                    ctx.getSource().sendFeedback(() -> Text.literal("[Bladelow] selection cleared"), false);
+                    ServerPlayerEntity player = ctx.getSource().getPlayer();
+                    if (player == null) {
+                        ctx.getSource().sendError(blueText("Player context required."));
+                        return 0;
+                    }
+                    var worldKey = ctx.getSource().getWorld().getRegistryKey();
+                    SelectionState.clear(player.getUuid(), worldKey);
+                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] selection cleared"), false);
                     return 1;
                 })
             )
             .then(literal("size")
                 .executes(ctx -> {
-                    ctx.getSource().sendFeedback(() -> Text.literal("[Bladelow] selection size=" + SelectionState.size()), false);
+                    ServerPlayerEntity player = ctx.getSource().getPlayer();
+                    if (player == null) {
+                        ctx.getSource().sendError(blueText("Player context required."));
+                        return 0;
+                    }
+                    var worldKey = ctx.getSource().getWorld().getRegistryKey();
+                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] selection size=" + SelectionState.size(player.getUuid(), worldKey)), false);
+                    return 1;
+                })
+            )
+            .then(literal("list")
+                .executes(ctx -> {
+                    ServerPlayerEntity player = ctx.getSource().getPlayer();
+                    if (player == null) {
+                        ctx.getSource().sendError(blueText("Player context required."));
+                        return 0;
+                    }
+                    var worldKey = ctx.getSource().getWorld().getRegistryKey();
+                    List<BlockPos> points = SelectionState.snapshot(player.getUuid(), worldKey);
+                    if (points.isEmpty()) {
+                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] selection list is empty"), false);
+                        return 1;
+                    }
+                    int shown = Math.min(8, points.size());
+                    for (int i = 0; i < shown; i++) {
+                        BlockPos p = points.get(i);
+                        int idx = i + 1;
+                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #" + idx + " " + p.toShortString()), false);
+                    }
+                    if (points.size() > shown) {
+                        ctx.getSource().sendFeedback(() -> blueText(
+                            "[Bladelow] ... +" + (points.size() - shown) + " more (use remove/undo/clear)"
+                        ), false);
+                    }
                     return 1;
                 })
             )
@@ -135,7 +220,7 @@ public final class BladePlaceCommand {
                         .executes(ctx -> {
                             ServerPlayerEntity player = ctx.getSource().getPlayer();
                             if (player == null) {
-                                ctx.getSource().sendError(Text.literal("Player context required."));
+                                ctx.getSource().sendError(blueText("Player context required."));
                                 return 0;
                             }
 
@@ -145,9 +230,10 @@ public final class BladePlaceCommand {
                             }
 
                             int topY = IntegerArgumentType.getInteger(ctx, "top_y");
-                            List<BlockPos> base = SelectionState.snapshot();
+                            var worldKey = ctx.getSource().getWorld().getRegistryKey();
+                            List<BlockPos> base = SelectionState.snapshot(player.getUuid(), worldKey);
                             if (base.isEmpty()) {
-                                ctx.getSource().sendError(Text.literal("[Bladelow] selection is empty; use /bladeselect add"));
+                                ctx.getSource().sendError(blueText("[Bladelow] selection is empty; use /bladeselect add"));
                                 return 0;
                             }
 
@@ -159,7 +245,7 @@ public final class BladePlaceCommand {
                             }
 
                             if (targets.isEmpty()) {
-                                ctx.getSource().sendError(Text.literal("[Bladelow] no targets: top_y must be above selected blocks"));
+                                ctx.getSource().sendError(blueText("[Bladelow] no targets: top_y must be above selected blocks"));
                                 return 0;
                             }
 
@@ -235,14 +321,14 @@ public final class BladePlaceCommand {
             + " " + BuildRuntimeSettings.summary()
             + (previewMode ? " [pending]" : " [active]")
             + (replaced ? " (replaced previous pending job)" : "");
-        source.sendFeedback(() -> Text.literal(queuedMessage), false);
+        source.sendFeedback(() -> blueText(queuedMessage), false);
         return 1;
     }
 
     private static List<Block> parseBlockSpec(String blockSpec, ServerCommandSource source) {
         String[] tokens = blockSpec.split(",");
         if (tokens.length < 1 || tokens.length > 3) {
-            source.sendError(Text.literal("Block list must have 1 to 3 ids (comma-separated)."));
+            source.sendError(blueText("Block list must have 1 to 3 ids (comma-separated)."));
             return List.of();
         }
 
@@ -251,7 +337,7 @@ public final class BladePlaceCommand {
             String blockIdText = token.trim();
             Identifier id = Identifier.tryParse(blockIdText);
             if (id == null || !Registries.BLOCK.containsId(id)) {
-                source.sendError(Text.literal("Invalid block id: " + blockIdText));
+                source.sendError(blueText("Invalid block id: " + blockIdText));
                 return List.of();
             }
             blocks.add(Registries.BLOCK.get(id));
@@ -264,14 +350,14 @@ public final class BladePlaceCommand {
             .executes(ctx -> {
                 ServerPlayerEntity player = ctx.getSource().getPlayer();
                 if (player == null) {
-                    ctx.getSource().sendError(Text.literal("Player context required."));
+                    ctx.getSource().sendError(blueText("Player context required."));
                     return 0;
                 }
                 boolean canceled = PlacementJobRunner.cancel(player.getUuid());
                 if (canceled) {
-                    ctx.getSource().sendFeedback(() -> Text.literal("[Bladelow] active build canceled."), false);
+                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] active build canceled."), false);
                 } else {
-                    ctx.getSource().sendFeedback(() -> Text.literal("[Bladelow] no active build to cancel."), false);
+                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] no active build to cancel."), false);
                 }
                 return 1;
             })
@@ -283,19 +369,19 @@ public final class BladePlaceCommand {
             .executes(ctx -> {
                 ServerPlayerEntity player = ctx.getSource().getPlayer();
                 if (player == null) {
-                    ctx.getSource().sendError(Text.literal("Player context required."));
+                    ctx.getSource().sendError(blueText("Player context required."));
                     return 0;
                 }
                 if (PlacementJobRunner.hasActive(player.getUuid())) {
-                    ctx.getSource().sendError(Text.literal("[Bladelow] active build is running; cancel it before confirm"));
+                    ctx.getSource().sendError(blueText("[Bladelow] active build is running; cancel it before confirm"));
                     return 0;
                 }
                 boolean ok = PlacementJobRunner.confirm(player.getUuid());
                 if (!ok) {
-                    ctx.getSource().sendError(Text.literal("[Bladelow] no pending preview to confirm"));
+                    ctx.getSource().sendError(blueText("[Bladelow] no pending preview to confirm"));
                     return 0;
                 }
-                ctx.getSource().sendFeedback(() -> Text.literal("[Bladelow] preview confirmed; build started"), false);
+                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] preview confirmed; build started"), false);
                 return 1;
             })
         );
@@ -307,12 +393,12 @@ public final class BladePlaceCommand {
                 .executes(ctx -> {
                     ServerPlayerEntity player = ctx.getSource().getPlayer();
                     if (player == null) {
-                        ctx.getSource().sendError(Text.literal("Player context required."));
+                        ctx.getSource().sendError(blueText("Player context required."));
                         return 0;
                     }
                     boolean shown = PlacementJobRunner.previewPending(player.getUuid(), ctx.getSource().getServer());
                     if (!shown) {
-                        ctx.getSource().sendError(Text.literal("[Bladelow] no pending preview"));
+                        ctx.getSource().sendError(blueText("[Bladelow] no pending preview"));
                         return 0;
                     }
                     return 1;
@@ -326,11 +412,11 @@ public final class BladePlaceCommand {
             .executes(ctx -> {
                 ServerPlayerEntity player = ctx.getSource().getPlayer();
                 if (player == null) {
-                    ctx.getSource().sendError(Text.literal("Player context required."));
+                    ctx.getSource().sendError(blueText("Player context required."));
                     return 0;
                 }
                 String message = PlacementJobRunner.status(player.getUuid());
-                ctx.getSource().sendFeedback(() -> Text.literal(message), false);
+                ctx.getSource().sendFeedback(() -> blueText(message), false);
                 return 1;
             })
         );
@@ -340,21 +426,21 @@ public final class BladePlaceCommand {
         dispatcher.register(literal("blademove")
             .then(literal("show")
                 .executes(ctx -> {
-                    ctx.getSource().sendFeedback(() -> Text.literal("[Bladelow] " + BuildRuntimeSettings.summary()), false);
+                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] " + BuildRuntimeSettings.summary()), false);
                     return 1;
                 })
             )
             .then(literal("on")
                 .executes(ctx -> {
                     BuildRuntimeSettings.setSmartMoveEnabled(true);
-                    ctx.getSource().sendFeedback(() -> Text.literal("[Bladelow] smart move enabled"), false);
+                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] smart move enabled"), false);
                     return 1;
                 })
             )
             .then(literal("off")
                 .executes(ctx -> {
                     BuildRuntimeSettings.setSmartMoveEnabled(false);
-                    ctx.getSource().sendFeedback(() -> Text.literal("[Bladelow] smart move disabled"), false);
+                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] smart move disabled"), false);
                     return 1;
                 })
             )
@@ -363,10 +449,10 @@ public final class BladePlaceCommand {
                     .executes(ctx -> {
                         String mode = StringArgumentType.getString(ctx, "type");
                         if (!BuildRuntimeSettings.setMoveMode(mode)) {
-                            ctx.getSource().sendError(Text.literal("[Bladelow] mode must be walk, auto, or teleport"));
+                            ctx.getSource().sendError(blueText("[Bladelow] mode must be walk, auto, or teleport"));
                             return 0;
                         }
-                        ctx.getSource().sendFeedback(() -> Text.literal("[Bladelow] mode set to " + mode), false);
+                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] mode set to " + mode), false);
                         return 1;
                     })
                 )
@@ -375,7 +461,7 @@ public final class BladePlaceCommand {
                 .then(argument("distance", DoubleArgumentType.doubleArg(2.0, 8.0))
                     .executes(ctx -> {
                         BuildRuntimeSettings.setReachDistance(DoubleArgumentType.getDouble(ctx, "distance"));
-                        ctx.getSource().sendFeedback(() -> Text.literal(
+                        ctx.getSource().sendFeedback(() -> blueText(
                             "[Bladelow] reach distance set to " + String.format("%.2f", BuildRuntimeSettings.reachDistance())
                         ), false);
                         return 1;
@@ -389,7 +475,7 @@ public final class BladePlaceCommand {
         dispatcher.register(literal("bladesafety")
             .then(literal("show")
                 .executes(ctx -> {
-                    ctx.getSource().sendFeedback(() -> Text.literal("[Bladelow] " + BuildRuntimeSettings.summary()), false);
+                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] " + BuildRuntimeSettings.summary()), false);
                     return 1;
                 })
             )
@@ -398,11 +484,11 @@ public final class BladePlaceCommand {
                     .executes(ctx -> {
                         String enabled = StringArgumentType.getString(ctx, "enabled");
                         if (!enabled.equalsIgnoreCase("on") && !enabled.equalsIgnoreCase("off")) {
-                            ctx.getSource().sendError(Text.literal("[Bladelow] use on|off"));
+                            ctx.getSource().sendError(blueText("[Bladelow] use on|off"));
                             return 0;
                         }
                         BuildRuntimeSettings.setStrictAirOnly(enabled.equalsIgnoreCase("on"));
-                        ctx.getSource().sendFeedback(() -> Text.literal("[Bladelow] strictAir set to " + enabled), false);
+                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] strictAir set to " + enabled), false);
                         return 1;
                     })
                 )
@@ -412,11 +498,11 @@ public final class BladePlaceCommand {
                     .executes(ctx -> {
                         String enabled = StringArgumentType.getString(ctx, "enabled");
                         if (!enabled.equalsIgnoreCase("on") && !enabled.equalsIgnoreCase("off")) {
-                            ctx.getSource().sendError(Text.literal("[Bladelow] use on|off"));
+                            ctx.getSource().sendError(blueText("[Bladelow] use on|off"));
                             return 0;
                         }
                         BuildRuntimeSettings.setPreviewBeforeBuild(enabled.equalsIgnoreCase("on"));
-                        ctx.getSource().sendFeedback(() -> Text.literal("[Bladelow] preview-before-build set to " + enabled), false);
+                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] preview-before-build set to " + enabled), false);
                         return 1;
                     })
                 )
@@ -429,7 +515,7 @@ public final class BladePlaceCommand {
             .then(literal("list")
                 .executes(ctx -> {
                     List<String> names = BuildProfileStore.list(ctx.getSource().getServer());
-                    ctx.getSource().sendFeedback(() -> Text.literal("[Bladelow] profiles: " + String.join(", ", names)), false);
+                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] profiles: " + String.join(", ", names)), false);
                     return 1;
                 })
             )
@@ -438,7 +524,7 @@ public final class BladePlaceCommand {
                     .executes(ctx -> {
                         String name = StringArgumentType.getString(ctx, "name");
                         String status = BuildProfileStore.save(ctx.getSource().getServer(), name);
-                        ctx.getSource().sendFeedback(() -> Text.literal("[Bladelow] " + status), false);
+                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] " + status), false);
                         return 1;
                     })
                 )
@@ -448,7 +534,7 @@ public final class BladePlaceCommand {
                     .executes(ctx -> {
                         String name = StringArgumentType.getString(ctx, "name");
                         String status = BuildProfileStore.load(ctx.getSource().getServer(), name);
-                        ctx.getSource().sendFeedback(() -> Text.literal("[Bladelow] " + status + " => " + BuildRuntimeSettings.summary()), false);
+                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] " + status + " => " + BuildRuntimeSettings.summary()), false);
                         return 1;
                     })
                 )
@@ -462,18 +548,18 @@ public final class BladePlaceCommand {
                 .executes(ctx -> {
                     ServerPlayerEntity player = ctx.getSource().getPlayer();
                     if (player == null) {
-                        ctx.getSource().sendError(Text.literal("Player context required."));
+                        ctx.getSource().sendError(blueText("Player context required."));
                         return 0;
                     }
                     var res = BuildItWebService.syncCatalog(player.getUuid(), 12);
                     if (!res.ok()) {
-                        ctx.getSource().sendError(Text.literal("[Bladelow] " + res.message()));
+                        ctx.getSource().sendError(blueText("[Bladelow] " + res.message()));
                         return 0;
                     }
-                    ctx.getSource().sendFeedback(() -> Text.literal("[Bladelow] " + res.message()), false);
+                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] " + res.message()), false);
                     List<BuildItWebService.CatalogItem> list = BuildItWebService.catalog(player.getUuid());
                     for (BuildItWebService.CatalogItem item : list) {
-                        ctx.getSource().sendFeedback(() -> Text.literal("[" + item.index() + "] " + item.title()), false);
+                        ctx.getSource().sendFeedback(() -> blueText("[" + item.index() + "] " + item.title()), false);
                     }
                     return 1;
                 })
@@ -481,19 +567,19 @@ public final class BladePlaceCommand {
                     .executes(ctx -> {
                         ServerPlayerEntity player = ctx.getSource().getPlayer();
                         if (player == null) {
-                            ctx.getSource().sendError(Text.literal("Player context required."));
+                            ctx.getSource().sendError(blueText("Player context required."));
                             return 0;
                         }
                         int limit = IntegerArgumentType.getInteger(ctx, "limit");
                         var res = BuildItWebService.syncCatalog(player.getUuid(), limit);
                         if (!res.ok()) {
-                            ctx.getSource().sendError(Text.literal("[Bladelow] " + res.message()));
+                            ctx.getSource().sendError(blueText("[Bladelow] " + res.message()));
                             return 0;
                         }
-                        ctx.getSource().sendFeedback(() -> Text.literal("[Bladelow] " + res.message()), false);
+                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] " + res.message()), false);
                         List<BuildItWebService.CatalogItem> list = BuildItWebService.catalog(player.getUuid());
                         for (BuildItWebService.CatalogItem item : list) {
-                            ctx.getSource().sendFeedback(() -> Text.literal("[" + item.index() + "] " + item.title()), false);
+                            ctx.getSource().sendFeedback(() -> blueText("[" + item.index() + "] " + item.title()), false);
                         }
                         return 1;
                     })
@@ -504,33 +590,33 @@ public final class BladePlaceCommand {
                     .executes(ctx -> {
                         ServerPlayerEntity player = ctx.getSource().getPlayer();
                         if (player == null) {
-                            ctx.getSource().sendError(Text.literal("Player context required."));
+                            ctx.getSource().sendError(blueText("Player context required."));
                             return 0;
                         }
                         int index = IntegerArgumentType.getInteger(ctx, "index");
                         var res = BuildItWebService.importPicked(ctx.getSource().getServer(), player.getUuid(), index, "");
                         if (!res.ok()) {
-                            ctx.getSource().sendError(Text.literal("[Bladelow] " + res.message()));
+                            ctx.getSource().sendError(blueText("[Bladelow] " + res.message()));
                             return 0;
                         }
-                        ctx.getSource().sendFeedback(() -> Text.literal("[Bladelow] " + res.message()), false);
+                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] " + res.message()), false);
                         return 1;
                     })
                     .then(argument("name", StringArgumentType.word())
                         .executes(ctx -> {
                             ServerPlayerEntity player = ctx.getSource().getPlayer();
                             if (player == null) {
-                                ctx.getSource().sendError(Text.literal("Player context required."));
+                                ctx.getSource().sendError(blueText("Player context required."));
                                 return 0;
                             }
                             int index = IntegerArgumentType.getInteger(ctx, "index");
                             String name = StringArgumentType.getString(ctx, "name");
                             var res = BuildItWebService.importPicked(ctx.getSource().getServer(), player.getUuid(), index, name);
                             if (!res.ok()) {
-                                ctx.getSource().sendError(Text.literal("[Bladelow] " + res.message()));
+                                ctx.getSource().sendError(blueText("[Bladelow] " + res.message()));
                                 return 0;
                             }
-                            ctx.getSource().sendFeedback(() -> Text.literal("[Bladelow] " + res.message()), false);
+                            ctx.getSource().sendFeedback(() -> blueText("[Bladelow] " + res.message()), false);
                             return 1;
                         })
                     )
@@ -540,10 +626,10 @@ public final class BladePlaceCommand {
                         String url = StringArgumentType.getString(ctx, "url");
                         var res = BuildItWebService.importFromUrl(ctx.getSource().getServer(), url, "");
                         if (!res.ok()) {
-                            ctx.getSource().sendError(Text.literal("[Bladelow] " + res.message()));
+                            ctx.getSource().sendError(blueText("[Bladelow] " + res.message()));
                             return 0;
                         }
-                        ctx.getSource().sendFeedback(() -> Text.literal("[Bladelow] " + res.message()), false);
+                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] " + res.message()), false);
                         return 1;
                     })
                 )
@@ -556,7 +642,7 @@ public final class BladePlaceCommand {
             .then(literal("reload")
                 .executes(ctx -> {
                     String result = BlueprintLibrary.reload(ctx.getSource().getServer());
-                    ctx.getSource().sendFeedback(() -> Text.literal("[Bladelow] blueprint " + result), false);
+                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] blueprint " + result), false);
                     return 1;
                 })
             )
@@ -564,10 +650,10 @@ public final class BladePlaceCommand {
                 .executes(ctx -> {
                     List<String> names = BlueprintLibrary.listNames();
                     if (names.isEmpty()) {
-                        ctx.getSource().sendFeedback(() -> Text.literal("[Bladelow] no blueprints loaded; run /bladeblueprint reload"), false);
+                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] no blueprints loaded; run /bladeblueprint reload"), false);
                         return 1;
                     }
-                    ctx.getSource().sendFeedback(() -> Text.literal("[Bladelow] blueprints: " + String.join(", ", names)), false);
+                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] blueprints: " + String.join(", ", names)), false);
                     return 1;
                 })
             )
@@ -576,16 +662,16 @@ public final class BladePlaceCommand {
                     .executes(ctx -> {
                         ServerPlayerEntity player = ctx.getSource().getPlayer();
                         if (player == null) {
-                            ctx.getSource().sendError(Text.literal("Player context required."));
+                            ctx.getSource().sendError(blueText("Player context required."));
                             return 0;
                         }
                         String name = StringArgumentType.getString(ctx, "name");
                         boolean ok = BlueprintLibrary.select(player.getUuid(), name);
                         if (!ok) {
-                            ctx.getSource().sendError(Text.literal("[Bladelow] unknown blueprint: " + name + " (run /bladeblueprint list)"));
+                            ctx.getSource().sendError(blueText("[Bladelow] unknown blueprint: " + name + " (run /bladeblueprint list)"));
                             return 0;
                         }
-                        ctx.getSource().sendFeedback(() -> Text.literal("[Bladelow] selected blueprint " + name), false);
+                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] selected blueprint " + name), false);
                         return 1;
                     })
                 )
@@ -594,15 +680,15 @@ public final class BladePlaceCommand {
                 .executes(ctx -> {
                     ServerPlayerEntity player = ctx.getSource().getPlayer();
                     if (player == null) {
-                        ctx.getSource().sendError(Text.literal("Player context required."));
+                        ctx.getSource().sendError(blueText("Player context required."));
                         return 0;
                     }
                     var info = BlueprintLibrary.infoSelected(player.getUuid());
                     if (info == null) {
-                        ctx.getSource().sendError(Text.literal("[Bladelow] no selected blueprint"));
+                        ctx.getSource().sendError(blueText("[Bladelow] no selected blueprint"));
                         return 0;
                     }
-                    ctx.getSource().sendFeedback(() -> Text.literal("[Bladelow] " + info.summary()), false);
+                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] " + info.summary()), false);
                     return 1;
                 })
                 .then(argument("name", StringArgumentType.word())
@@ -610,10 +696,10 @@ public final class BladePlaceCommand {
                         String name = StringArgumentType.getString(ctx, "name");
                         var info = BlueprintLibrary.info(name);
                         if (info == null) {
-                            ctx.getSource().sendError(Text.literal("[Bladelow] unknown blueprint: " + name));
+                            ctx.getSource().sendError(blueText("[Bladelow] unknown blueprint: " + name));
                             return 0;
                         }
-                        ctx.getSource().sendFeedback(() -> Text.literal("[Bladelow] " + info.summary()), false);
+                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] " + info.summary()), false);
                         return 1;
                     })
                 )
@@ -623,14 +709,14 @@ public final class BladePlaceCommand {
                     .executes(ctx -> {
                         ServerPlayerEntity player = ctx.getSource().getPlayer();
                         if (player == null) {
-                            ctx.getSource().sendError(Text.literal("Player context required."));
+                            ctx.getSource().sendError(blueText("Player context required."));
                             return 0;
                         }
 
                         BlockPos start = BlockPosArgumentType.getLoadedBlockPos(ctx, "start");
                         BlueprintLibrary.BuildPlan plan = BlueprintLibrary.resolveSelected(player.getUuid(), start);
                         if (!plan.ok()) {
-                            ctx.getSource().sendError(Text.literal("[Bladelow] " + plan.message()));
+                            ctx.getSource().sendError(blueText("[Bladelow] " + plan.message()));
                             return 0;
                         }
                         return queuePlacement(ctx.getSource(), player, plan.blocks(), plan.targets(), "blueprint:" + plan.message());
@@ -639,14 +725,14 @@ public final class BladePlaceCommand {
                         .executes(ctx -> {
                             ServerPlayerEntity player = ctx.getSource().getPlayer();
                             if (player == null) {
-                                ctx.getSource().sendError(Text.literal("Player context required."));
+                                ctx.getSource().sendError(blueText("Player context required."));
                                 return 0;
                             }
 
                             BlockPos start = BlockPosArgumentType.getLoadedBlockPos(ctx, "start");
                             BlueprintLibrary.BuildPlan plan = BlueprintLibrary.resolveSelected(player.getUuid(), start);
                             if (!plan.ok()) {
-                                ctx.getSource().sendError(Text.literal("[Bladelow] " + plan.message()));
+                                ctx.getSource().sendError(blueText("[Bladelow] " + plan.message()));
                                 return 0;
                             }
 
@@ -664,7 +750,7 @@ public final class BladePlaceCommand {
                         .executes(ctx -> {
                             ServerPlayerEntity player = ctx.getSource().getPlayer();
                             if (player == null) {
-                                ctx.getSource().sendError(Text.literal("Player context required."));
+                                ctx.getSource().sendError(blueText("Player context required."));
                                 return 0;
                             }
 
@@ -672,7 +758,7 @@ public final class BladePlaceCommand {
                             BlockPos start = BlockPosArgumentType.getLoadedBlockPos(ctx, "start");
                             BlueprintLibrary.BuildPlan plan = BlueprintLibrary.resolveByName(name, start);
                             if (!plan.ok()) {
-                                ctx.getSource().sendError(Text.literal("[Bladelow] " + plan.message()));
+                                ctx.getSource().sendError(blueText("[Bladelow] " + plan.message()));
                                 return 0;
                             }
                             BlueprintLibrary.select(player.getUuid(), name);
@@ -682,7 +768,7 @@ public final class BladePlaceCommand {
                             .executes(ctx -> {
                                 ServerPlayerEntity player = ctx.getSource().getPlayer();
                                 if (player == null) {
-                                    ctx.getSource().sendError(Text.literal("Player context required."));
+                                    ctx.getSource().sendError(blueText("Player context required."));
                                     return 0;
                                 }
 
@@ -690,7 +776,7 @@ public final class BladePlaceCommand {
                                 BlockPos start = BlockPosArgumentType.getLoadedBlockPos(ctx, "start");
                                 BlueprintLibrary.BuildPlan plan = BlueprintLibrary.resolveByName(name, start);
                                 if (!plan.ok()) {
-                                    ctx.getSource().sendError(Text.literal("[Bladelow] " + plan.message()));
+                                    ctx.getSource().sendError(blueText("[Bladelow] " + plan.message()));
                                     return 0;
                                 }
 
@@ -725,7 +811,7 @@ public final class BladePlaceCommand {
             .then(literal("show")
                 .executes(ctx -> {
                     String message = "[Bladelow] " + BladelowLearning.model().summary() + " " + BuildRuntimeSettings.summary();
-                    ctx.getSource().sendFeedback(() -> Text.literal(message), false);
+                    ctx.getSource().sendFeedback(() -> blueText(message), false);
                     return 1;
                 })
             )
@@ -733,21 +819,21 @@ public final class BladePlaceCommand {
                 .executes(ctx -> {
                     BladelowLearning.model().reset();
                     String saveStatus = BladelowLearning.save();
-                    ctx.getSource().sendFeedback(() -> Text.literal("[Bladelow] model reset; " + saveStatus), false);
+                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] model reset; " + saveStatus), false);
                     return 1;
                 })
             )
             .then(literal("save")
                 .executes(ctx -> {
                     String saveStatus = BladelowLearning.save();
-                    ctx.getSource().sendFeedback(() -> Text.literal("[Bladelow] model " + saveStatus), false);
+                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] model " + saveStatus), false);
                     return 1;
                 })
             )
             .then(literal("load")
                 .executes(ctx -> {
                     String loadStatus = BladelowLearning.load();
-                    ctx.getSource().sendFeedback(() -> Text.literal("[Bladelow] model " + loadStatus), false);
+                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] model " + loadStatus), false);
                     return 1;
                 })
             )
@@ -759,7 +845,7 @@ public final class BladePlaceCommand {
                             double learningRate = DoubleArgumentType.getDouble(ctx, "learning_rate");
                             BladelowLearning.model().configure(threshold, learningRate);
                             String saveStatus = BladelowLearning.save();
-                            ctx.getSource().sendFeedback(() -> Text.literal(
+                            ctx.getSource().sendFeedback(() -> blueText(
                                 "[Bladelow] model configured: threshold=" + threshold + " lr=" + learningRate + "; " + saveStatus
                             ), false);
                             return 1;
@@ -768,5 +854,9 @@ public final class BladePlaceCommand {
                 )
             )
         );
+    }
+
+    private static Text blueText(String message) {
+        return Text.literal(message).formatted(Formatting.AQUA);
     }
 }

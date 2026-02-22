@@ -69,6 +69,7 @@ public class BladelowHudScreen extends Screen {
     private ButtonWidget slot2Button;
     private ButtonWidget slot3Button;
     private ButtonWidget shapeModeButton;
+    private ButtonWidget reachButton;
 
     private int pageIndex = 0;
     private int activeSlot = 0;
@@ -78,6 +79,7 @@ public class BladelowHudScreen extends Screen {
     private boolean smartMoveEnabled = true;
     private boolean previewBeforeBuild = false;
     private String moveMode = "walk";
+    private double reachDistance = 4.5;
     private String shapeMode = "line";
     private String hoveredBlockId;
     private int profileIndex = 0;
@@ -188,15 +190,28 @@ public class BladelowHudScreen extends Screen {
             .build());
 
         this.shapeModeButton = addDrawableChild(ButtonWidget.builder(Text.literal(shapeLabel(this.shapeMode)), btn -> toggleShapeMode())
-            .dimensions(panelX + RIGHT_X, panelY + 170, RIGHT_W, 20)
+            .dimensions(panelX + RIGHT_X, panelY + 170, RIGHT_W, 18)
+            .build());
+
+        addDrawableChild(ButtonWidget.builder(Text.literal("-"), btn -> adjustReach(-0.25))
+            .dimensions(panelX + RIGHT_X, panelY + 190, 20, 18)
+            .build());
+
+        this.reachButton = addDrawableChild(ButtonWidget.builder(Text.literal(reachLabel()), btn -> {
+        })
+            .dimensions(panelX + RIGHT_X + 22, panelY + 190, 52, 18)
+            .build());
+
+        addDrawableChild(ButtonWidget.builder(Text.literal("+"), btn -> adjustReach(0.25))
+            .dimensions(panelX + RIGHT_X + 76, panelY + 190, 20, 18)
             .build());
 
         this.moveModeButton = addDrawableChild(ButtonWidget.builder(Text.literal("Mode: WALK"), btn -> toggleMoveMode())
-            .dimensions(panelX + RIGHT_X, panelY + 194, RIGHT_W, 20)
+            .dimensions(panelX + RIGHT_X, panelY + 200, RIGHT_W, 18)
             .build());
 
         this.smartMoveButton = addDrawableChild(ButtonWidget.builder(Text.literal("Smart: ON"), btn -> toggleSmartMove())
-            .dimensions(panelX + RIGHT_X, panelY + 218, RIGHT_W, 20)
+            .dimensions(panelX + RIGHT_X, panelY + 220, RIGHT_W, 18)
             .build());
 
         this.blueprintField = new TextFieldWidget(this.textRenderer, panelX + RIGHT_X + 14, panelY + 48, RIGHT_W - 28, 18, Text.literal("Blueprint"));
@@ -559,6 +574,18 @@ public class BladelowHudScreen extends Screen {
         this.previewBeforeBuild = !this.previewBeforeBuild;
         this.previewModeButton.setMessage(Text.literal(this.previewBeforeBuild ? "Prev:ON" : "Prev:OFF"));
         sendCommand("bladesafety preview " + (this.previewBeforeBuild ? "on" : "off"));
+    }
+
+    private void adjustReach(double delta) {
+        this.reachDistance = Math.max(2.0, Math.min(8.0, this.reachDistance + delta));
+        if (this.reachButton != null) {
+            this.reachButton.setMessage(Text.literal(reachLabel()));
+        }
+        sendCommand("blademove reach " + String.format(Locale.ROOT, "%.2f", this.reachDistance));
+    }
+
+    private String reachLabel() {
+        return "R:" + String.format(Locale.ROOT, "%.2f", this.reachDistance);
     }
 
     private void cycleProfile() {

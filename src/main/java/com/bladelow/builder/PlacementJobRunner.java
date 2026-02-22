@@ -6,6 +6,7 @@ import net.minecraft.particle.ParticleTypes;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
+import net.minecraft.util.Formatting;
 import net.minecraft.util.math.BlockPos;
 
 import java.util.Iterator;
@@ -27,13 +28,14 @@ public final class PlacementJobRunner {
 
     public static void queueOrPreview(MinecraftServer server, PlacementJob job) {
         if (!BuildRuntimeSettings.previewBeforeBuild()) {
+            PENDING.remove(job.playerId());
             submit(job);
             return;
         }
         PENDING.put(job.playerId(), job);
         ServerPlayerEntity player = server.getPlayerManager().getPlayer(job.playerId());
         if (player != null) {
-            player.sendMessage(Text.literal("[Bladelow] preview ready. Use /bladeconfirm to start or /bladecancel to discard."), false);
+            player.sendMessage(blueText("[Bladelow] preview ready. Use /bladeconfirm to start or /bladecancel to discard."), false);
             preview(job, server, player);
         }
     }
@@ -67,15 +69,15 @@ public final class PlacementJobRunner {
     }
 
     public static String status(UUID playerId) {
+        PlacementJob job = JOBS.get(playerId);
+        if (job != null) {
+            return job.progressSummary();
+        }
         PlacementJob pending = PENDING.get(playerId);
         if (pending != null) {
             return "[Bladelow] pending preview " + pending.progressSummary().replace(" progress 0/", " ");
         }
-        PlacementJob job = JOBS.get(playerId);
-        if (job == null) {
-            return "[Bladelow] no active build";
-        }
-        return job.progressSummary();
+        return "[Bladelow] no active build";
     }
 
     public static boolean hasActive(UUID playerId) {
@@ -107,7 +109,7 @@ public final class PlacementJobRunner {
 
             var world = server.getWorld(job.worldKey());
             if (world == null) {
-                player.sendMessage(Text.literal("[Bladelow] Target world unavailable. Build canceled."), false);
+                player.sendMessage(blueText("[Bladelow] Target world unavailable. Build canceled."), false);
                 it.remove();
                 continue;
             }
@@ -122,7 +124,7 @@ public final class PlacementJobRunner {
                     job.advance();
                 }
                 if (job.shouldReportProgress()) {
-                    player.sendMessage(Text.literal(job.progressSummary()), false);
+                    player.sendMessage(blueText(job.progressSummary()), false);
                 }
                 continue;
             }
@@ -137,7 +139,7 @@ public final class PlacementJobRunner {
                 job.recordSkipped();
                 job.advance();
                 if (job.shouldReportProgress()) {
-                    player.sendMessage(Text.literal(job.progressSummary()), false);
+                    player.sendMessage(blueText(job.progressSummary()), false);
                 }
                 continue;
             }
@@ -146,7 +148,7 @@ public final class PlacementJobRunner {
                 job.recordSkipped();
                 job.advance();
                 if (job.shouldReportProgress()) {
-                    player.sendMessage(Text.literal(job.progressSummary()), false);
+                    player.sendMessage(blueText(job.progressSummary()), false);
                 }
                 continue;
             }
@@ -155,7 +157,7 @@ public final class PlacementJobRunner {
                 job.recordSkipped();
                 job.advance();
                 if (job.shouldReportProgress()) {
-                    player.sendMessage(Text.literal(job.progressSummary()), false);
+                    player.sendMessage(blueText(job.progressSummary()), false);
                 }
                 continue;
             }
@@ -164,7 +166,7 @@ public final class PlacementJobRunner {
                 job.recordSkipped();
                 job.advance();
                 if (job.shouldReportProgress()) {
-                    player.sendMessage(Text.literal(job.progressSummary()), false);
+                    player.sendMessage(blueText(job.progressSummary()), false);
                 }
                 continue;
             }
@@ -180,7 +182,7 @@ public final class PlacementJobRunner {
                 model.train(features, false);
                 job.advance();
                 if (job.shouldReportProgress()) {
-                    player.sendMessage(Text.literal(job.progressSummary()), false);
+                    player.sendMessage(blueText(job.progressSummary()), false);
                 }
                 continue;
             }
@@ -198,7 +200,7 @@ public final class PlacementJobRunner {
             }
             model.train(features, changed);
             if (job.shouldReportProgress()) {
-                player.sendMessage(Text.literal(job.progressSummary()), false);
+                player.sendMessage(blueText(job.progressSummary()), false);
             }
 
             if (job.isComplete()) {
@@ -209,9 +211,9 @@ public final class PlacementJobRunner {
     }
 
     private static void finishJob(ServerPlayerEntity player, PlacementJob job) {
-        player.sendMessage(Text.literal(job.completionSummary()), false);
+        player.sendMessage(blueText(job.completionSummary()), false);
         String saveStatus = BladelowLearning.save();
-        player.sendMessage(Text.literal("[Bladelow] model " + saveStatus), false);
+        player.sendMessage(blueText("[Bladelow] model " + saveStatus), false);
     }
 
     private static void preview(PlacementJob job, MinecraftServer server, ServerPlayerEntity player) {
@@ -235,6 +237,10 @@ public final class PlacementJobRunner {
             );
             shown++;
         }
-        player.sendMessage(Text.literal("[Bladelow] preview markers shown: " + shown), false);
+        player.sendMessage(blueText("[Bladelow] preview markers shown: " + shown), false);
+    }
+
+    private static Text blueText(String message) {
+        return Text.literal(message).formatted(Formatting.AQUA);
     }
 }

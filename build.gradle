@@ -23,6 +23,7 @@ dependencies {
     modImplementation "net.fabricmc.fabric-api:fabric-command-api-v2:2.4.6+4ebb5c0821"
     modImplementation "net.fabricmc.fabric-api:fabric-key-binding-api-v1:1.1.7+4fc5413f21"
     modImplementation "net.fabricmc.fabric-api:fabric-lifecycle-events-v1:2.6.15+4ebb5c0821"
+    modImplementation "net.fabricmc.fabric-api:fabric-message-api-v1:6.1.12+4ebb5c0821"
 }
 
 java {

@@ -26,9 +26,13 @@ TARGET_DIR="/mnt/c/Users/${WIN_USER}/.lunarclient/profiles/vanilla/${MC_PROFILE_
 echo "Building jar..."
 ./gradlew clean build
 
-JAR_PATH="$(ls -1t build/libs/minecraft-bladelow-*.jar | head -n 1)"
+JAR_PATH="$(
+  ls -1t build/libs/minecraft-bladelow-*.jar 2>/dev/null \
+    | grep -v -- '-sources\.jar$' \
+    | head -n 1 || true
+)"
 if [[ -z "${JAR_PATH}" ]]; then
-  echo "Build succeeded but no jar was found in build/libs."
+  echo "Build succeeded but no runtime jar was found in build/libs."
   exit 1
 fi
 

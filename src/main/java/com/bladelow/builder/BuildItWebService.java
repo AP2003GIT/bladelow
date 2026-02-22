@@ -161,9 +161,16 @@ public final class BuildItWebService {
     }
 
     private static boolean isAllowedHost(String host) {
-        return host.endsWith("builditapp.com")
-            || host.endsWith("githubusercontent.com")
-            || host.endsWith("gist.github.com");
+        if (host == null || host.isBlank()) {
+            return false;
+        }
+        return hostMatches(host, "builditapp.com")
+            || hostMatches(host, "githubusercontent.com")
+            || hostMatches(host, "gist.github.com");
+    }
+
+    private static boolean hostMatches(String host, String domain) {
+        return host.equals(domain) || host.endsWith("." + domain);
     }
 
     private static String httpGet(String url) throws IOException, InterruptedException {
