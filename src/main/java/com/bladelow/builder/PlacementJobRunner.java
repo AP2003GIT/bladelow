@@ -27,7 +27,7 @@ public final class PlacementJobRunner {
     }
 
     public static void queueOrPreview(MinecraftServer server, PlacementJob job) {
-        if (!BuildRuntimeSettings.previewBeforeBuild()) {
+        if (!job.runtimeSettings().previewBeforeBuild()) {
             PENDING.remove(job.playerId());
             submit(job);
             return;
@@ -114,14 +114,26 @@ public final class PlacementJobRunner {
                 continue;
             }
 
+            if (job.runtimeSettings().targetSchedulerEnabled()) {
+                job.selectBestTargetNear(player.getBlockPos(), job.runtimeSettings().schedulerLookahead());
+            }
+
             var target = job.currentTarget();
-            int moveStatus = BuildNavigation.ensureInRangeForPlacement(world, player, target);
+            int moveStatus = BuildNavigation.ensureInRangeForPlacement(world, player, target, job.runtimeSettings());
             if (moveStatus < 0) {
                 int tries = job.incrementCurrentAttempts();
                 if (tries >= MAX_RETRIES_PER_TARGET) {
+                    boolean wasDeferred = false;
+                    if (job.runtimeSettings().deferUnreachableTargets()
+                        && job.currentDeferrals() < job.runtimeSettings().maxTargetDeferrals()) {
+                        wasDeferred = job.deferCurrentToTail();
+                    }
+
                     job.recordNoReach();
-                    job.recordSkipped();
-                    job.advance();
+                    if (!wasDeferred) {
+                        job.recordSkipped();
+                        job.advance();
+                    }
                 }
                 if (job.shouldReportProgress()) {
                     player.sendMessage(blueText(job.progressSummary()), false);
@@ -152,7 +164,7 @@ public final class PlacementJobRunner {
                 }
                 continue;
             }
-            if (BuildRuntimeSettings.strictAirOnly() && !existingState.isAir()) {
+            if (job.runtimeSettings().strictAirOnly() && !existingState.isAir()) {
                 job.recordBlocked();
                 job.recordSkipped();
                 job.advance();

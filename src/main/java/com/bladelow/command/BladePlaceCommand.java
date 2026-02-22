@@ -32,10 +32,13 @@ import static net.minecraft.server.command.CommandManager.argument;
 import static net.minecraft.server.command.CommandManager.literal;
 
 public final class BladePlaceCommand {
+    private static final int MAX_SELECTION_BOX_BLOCKS = 131072;
+
     private BladePlaceCommand() {
     }
 
     public static void register(CommandDispatcher<ServerCommandSource> dispatcher) {
+        registerBladeHelp(dispatcher);
         registerBladePlace(dispatcher);
         registerBladeCancel(dispatcher);
         registerBladeConfirm(dispatcher);
@@ -48,6 +51,20 @@ public final class BladePlaceCommand {
         registerBladeWeb(dispatcher);
         registerBladeBlueprint(dispatcher);
         registerBladeSelect(dispatcher);
+    }
+
+    private static void registerBladeHelp(CommandDispatcher<ServerCommandSource> dispatcher) {
+        dispatcher.register(literal("bladehelp")
+            .executes(ctx -> {
+                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] Quick commands:"), false);
+                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeplace <blocks_csv> <x> <y> <z> <count> [axis]"), false);
+                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeselect addhere | add <x> <y> <z> | build <blocks_csv> <top_y>"), false);
+                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeselect export <name> <block_id>"), false);
+                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #blademove mode walk|auto|teleport ; reach <2.0..8.0> ; scheduler on|off ; lookahead <1..96> ; defer on|off ; maxdefer <0..8>"), false);
+                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeblueprint list|load|build ; #bladestatus ; #bladecancel"), false);
+                return 1;
+            })
+        );
     }
 
     private static void registerBladePlace(CommandDispatcher<ServerCommandSource> dispatcher) {
@@ -121,6 +138,43 @@ public final class BladePlaceCommand {
                         ), false);
                         return 1;
                     })
+                )
+            )
+            .then(literal("addhere")
+                .executes(ctx -> {
+                    ServerPlayerEntity player = ctx.getSource().getPlayer();
+                    if (player == null) {
+                        ctx.getSource().sendError(blueText("Player context required."));
+                        return 0;
+                    }
+                    var worldKey = ctx.getSource().getWorld().getRegistryKey();
+                    BlockPos pos = player.getBlockPos();
+                    boolean added = SelectionState.add(player.getUuid(), worldKey, pos);
+                    int total = SelectionState.size(player.getUuid(), worldKey);
+                    ctx.getSource().sendFeedback(() -> blueText(
+                        "[Bladelow] selection " + (added ? "added" : "already had") + " " + pos.toShortString() + " total=" + total
+                    ), false);
+                    return 1;
+                })
+            )
+            .then(literal("box")
+                .then(argument("from", BlockPosArgumentType.blockPos())
+                    .then(argument("to", BlockPosArgumentType.blockPos())
+                        .executes(ctx -> runSelectBox(ctx, false))
+                        .then(argument("mode", StringArgumentType.word())
+                            .executes(ctx -> {
+                                String mode = StringArgumentType.getString(ctx, "mode");
+                                if ("solid".equalsIgnoreCase(mode)) {
+                                    return runSelectBox(ctx, false);
+                                }
+                                if ("hollow".equalsIgnoreCase(mode)) {
+                                    return runSelectBox(ctx, true);
+                                }
+                                ctx.getSource().sendError(blueText("[Bladelow] box mode must be solid|hollow"));
+                                return 0;
+                            })
+                        )
+                    )
                 )
             )
             .then(literal("remove")
@@ -254,7 +308,116 @@ public final class BladePlaceCommand {
                     )
                 )
             )
+            .then(literal("export")
+                .then(argument("name", StringArgumentType.word())
+                    .then(argument("block", StringArgumentType.word())
+                        .executes(ctx -> {
+                            ServerPlayerEntity player = ctx.getSource().getPlayer();
+                            if (player == null) {
+                                ctx.getSource().sendError(blueText("Player context required."));
+                                return 0;
+                            }
+                            var worldKey = ctx.getSource().getWorld().getRegistryKey();
+                            List<BlockPos> points = SelectionState.snapshot(player.getUuid(), worldKey);
+                            if (points.isEmpty()) {
+                                ctx.getSource().sendError(blueText("[Bladelow] selection is empty; use /bladeselect addhere or add"));
+                                return 0;
+                            }
+
+                            String blockText = StringArgumentType.getString(ctx, "block");
+                            Identifier id = Identifier.tryParse(blockText);
+                            if (id == null || !Registries.BLOCK.containsId(id)) {
+                                ctx.getSource().sendError(blueText("[Bladelow] invalid block id: " + blockText));
+                                return 0;
+                            }
+
+                            String name = StringArgumentType.getString(ctx, "name");
+                            var result = BlueprintLibrary.saveSelectionAsBlueprint(
+                                ctx.getSource().getServer(),
+                                name,
+                                points,
+                                id.toString()
+                            );
+                            if (!result.ok()) {
+                                ctx.getSource().sendError(blueText("[Bladelow] " + result.message()));
+                                return 0;
+                            }
+                            ctx.getSource().sendFeedback(() -> blueText("[Bladelow] " + result.message()), false);
+                            return 1;
+                        })
+                    )
+                )
+            )
         );
+    }
+
+    private static int runSelectBox(com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx, boolean hollow) {
+        ServerPlayerEntity player = ctx.getSource().getPlayer();
+        if (player == null) {
+            ctx.getSource().sendError(blueText("Player context required."));
+            return 0;
+        }
+
+        BlockPos from;
+        BlockPos to;
+        try {
+            from = BlockPosArgumentType.getLoadedBlockPos(ctx, "from");
+            to = BlockPosArgumentType.getLoadedBlockPos(ctx, "to");
+        } catch (CommandSyntaxException ex) {
+            ctx.getSource().sendError(blueText("[Bladelow] invalid box positions"));
+            return 0;
+        }
+
+        int minX = Math.min(from.getX(), to.getX());
+        int maxX = Math.max(from.getX(), to.getX());
+        int minY = Math.min(from.getY(), to.getY());
+        int maxY = Math.max(from.getY(), to.getY());
+        int minZ = Math.min(from.getZ(), to.getZ());
+        int maxZ = Math.max(from.getZ(), to.getZ());
+
+        long sizeX = (long) maxX - minX + 1L;
+        long sizeY = (long) maxY - minY + 1L;
+        long sizeZ = (long) maxZ - minZ + 1L;
+        long volume = sizeX * sizeY * sizeZ;
+        if (volume > MAX_SELECTION_BOX_BLOCKS) {
+            ctx.getSource().sendError(blueText(
+                "[Bladelow] box too large (" + volume + " blocks). limit=" + MAX_SELECTION_BOX_BLOCKS
+            ));
+            return 0;
+        }
+
+        var worldKey = ctx.getSource().getWorld().getRegistryKey();
+        int added = 0;
+        int duplicate = 0;
+        for (int x = minX; x <= maxX; x++) {
+            for (int y = minY; y <= maxY; y++) {
+                for (int z = minZ; z <= maxZ; z++) {
+                    boolean boundary = x == minX || x == maxX || y == minY || y == maxY || z == minZ || z == maxZ;
+                    if (hollow && !boundary) {
+                        continue;
+                    }
+                    boolean wasAdded = SelectionState.add(player.getUuid(), worldKey, new BlockPos(x, y, z));
+                    if (wasAdded) {
+                        added++;
+                    } else {
+                        duplicate++;
+                    }
+                }
+            }
+        }
+
+        int total = SelectionState.size(player.getUuid(), worldKey);
+        String mode = hollow ? "hollow" : "solid";
+        int addedCount = added;
+        int duplicateCount = duplicate;
+        ctx.getSource().sendFeedback(() -> blueText(
+            "[Bladelow] selection box " + mode
+                + " size=" + sizeX + "x" + sizeY + "x" + sizeZ
+                + " added=" + addedCount
+                + " duplicate=" + duplicateCount
+                + " total=" + total
+        ), false);
+        return addedCount > 0 ? 1 : 0;
     }
 
     private static int runPlacement(ServerCommandSource source, ServerPlayerEntity player, List<Block> blocks, List<BlockPos> targets, String tag) {
@@ -303,22 +466,24 @@ public final class BladePlaceCommand {
     }
 
     private static int queuePlacement(ServerCommandSource source, ServerPlayerEntity player, List<Block> perTargetBlocks, List<BlockPos> targets, String tag) {
+        BuildRuntimeSettings.Snapshot snapshot = BuildRuntimeSettings.snapshot();
         PlacementJob job = new PlacementJob(
             player.getUuid(),
             source.getWorld().getRegistryKey(),
             perTargetBlocks,
             targets,
-            tag
+            tag,
+            snapshot
         );
         var server = source.getServer();
-        boolean previewMode = BuildRuntimeSettings.previewBeforeBuild();
+        boolean previewMode = snapshot.previewBeforeBuild();
         boolean replaced = previewMode
             ? PlacementJobRunner.hasPending(player.getUuid())
             : PlacementJobRunner.hasActive(player.getUuid());
         PlacementJobRunner.queueOrPreview(server, job);
         String queuedMessage = "[Bladelow] queued " + tag + " targets=" + targets.size()
             + " blocks=" + perTargetBlocks.size()
-            + " " + BuildRuntimeSettings.summary()
+            + " " + snapshot.summary()
             + (previewMode ? " [pending]" : " [active]")
             + (replaced ? " (replaced previous pending job)" : "");
         source.sendFeedback(() -> blueText(queuedMessage), false);
@@ -463,6 +628,58 @@ public final class BladePlaceCommand {
                         BuildRuntimeSettings.setReachDistance(DoubleArgumentType.getDouble(ctx, "distance"));
                         ctx.getSource().sendFeedback(() -> blueText(
                             "[Bladelow] reach distance set to " + String.format("%.2f", BuildRuntimeSettings.reachDistance())
+                        ), false);
+                        return 1;
+                    })
+                )
+            )
+            .then(literal("scheduler")
+                .then(argument("enabled", StringArgumentType.word())
+                    .executes(ctx -> {
+                        String enabled = StringArgumentType.getString(ctx, "enabled");
+                        if (!enabled.equalsIgnoreCase("on") && !enabled.equalsIgnoreCase("off")) {
+                            ctx.getSource().sendError(blueText("[Bladelow] use on|off"));
+                            return 0;
+                        }
+                        BuildRuntimeSettings.setTargetSchedulerEnabled(enabled.equalsIgnoreCase("on"));
+                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] scheduler set to " + enabled), false);
+                        return 1;
+                    })
+                )
+            )
+            .then(literal("lookahead")
+                .then(argument("size", IntegerArgumentType.integer(1, 96))
+                    .executes(ctx -> {
+                        int size = IntegerArgumentType.getInteger(ctx, "size");
+                        BuildRuntimeSettings.setSchedulerLookahead(size);
+                        ctx.getSource().sendFeedback(() -> blueText(
+                            "[Bladelow] scheduler lookahead set to " + BuildRuntimeSettings.schedulerLookahead()
+                        ), false);
+                        return 1;
+                    })
+                )
+            )
+            .then(literal("defer")
+                .then(argument("enabled", StringArgumentType.word())
+                    .executes(ctx -> {
+                        String enabled = StringArgumentType.getString(ctx, "enabled");
+                        if (!enabled.equalsIgnoreCase("on") && !enabled.equalsIgnoreCase("off")) {
+                            ctx.getSource().sendError(blueText("[Bladelow] use on|off"));
+                            return 0;
+                        }
+                        BuildRuntimeSettings.setDeferUnreachableTargets(enabled.equalsIgnoreCase("on"));
+                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] defer-unreachable set to " + enabled), false);
+                        return 1;
+                    })
+                )
+            )
+            .then(literal("maxdefer")
+                .then(argument("count", IntegerArgumentType.integer(0, 8))
+                    .executes(ctx -> {
+                        int count = IntegerArgumentType.getInteger(ctx, "count");
+                        BuildRuntimeSettings.setMaxTargetDeferrals(count);
+                        ctx.getSource().sendFeedback(() -> blueText(
+                            "[Bladelow] max deferrals per target set to " + BuildRuntimeSettings.maxTargetDeferrals()
                         ), false);
                         return 1;
                     })

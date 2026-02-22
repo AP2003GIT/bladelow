@@ -53,12 +53,15 @@ Manual install (if you do not use the script):
 
 ## Chat Commands (Manual)
 
+- `#bladehelp`
 - `#bladeplace <blocks_csv> <x> <y> <z> <count> [axis]`
+- `#bladeselect addhere`
 - `#bladeselect add <x> <y> <z>`
 - `#bladeselect remove <x> <y> <z>`
 - `#bladeselect undo`
 - `#bladeselect list`
 - `#bladeselect build <blocks_csv> <top_y>`
+- `#bladeselect export <name> <block_id>`
 - `#bladeselect clear`
 - `#blademove on|off|show`
 - `#blademove mode walk|auto|teleport`
@@ -85,7 +88,9 @@ Manual install (if you do not use the script):
 - `#bladeweb import <index> [name]`
 - `#bladeweb import <url>`
 
-`#` messages are auto-converted by Bladelow into real commands. Slash commands still work.
+`#` messages are auto-converted by Bladelow into real commands for known Blade commands.
+Slash commands still work.
+`#bladelow` is a quick alias for `#bladehelp`.
 
 `<blocks_csv>` supports 1 to 3 blocks, example:
 - `minecraft:stone,minecraft:glass,minecraft:oak_planks`
@@ -98,10 +103,12 @@ Manual install (if you do not use the script):
 #bladeselect add 10 -60 10
 #bladeselect add 11 -60 10
 #bladeselect add 12 -60 10
+#bladeselect addhere
 #bladeselect list
 #bladeselect undo
 #bladeselect remove 11 -60 10
 #bladeselect build minecraft:stone,minecraft:glass -50
+#bladeselect export my_selection minecraft:stone
 ```
 
 Basic line build example:

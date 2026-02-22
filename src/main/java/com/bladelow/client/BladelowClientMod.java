@@ -12,9 +12,25 @@ import net.minecraft.util.Formatting;
 import org.lwjgl.glfw.GLFW;
 
 import java.util.Locale;
+import java.util.Set;
 
 public class BladelowClientMod implements ClientModInitializer {
     private static final String KEY_OPEN_HUD = "key.bladelow.open_hud";
+    private static final Set<String> HASH_COMMAND_ROOTS = Set.of(
+        "bladehelp",
+        "bladeplace",
+        "bladeselect",
+        "bladecancel",
+        "bladeconfirm",
+        "bladepreview",
+        "bladestatus",
+        "blademove",
+        "bladesafety",
+        "bladeprofile",
+        "bladeblueprint",
+        "bladeweb",
+        "blademodel"
+    );
 
     private static KeyBinding openHudKey;
 
@@ -38,8 +54,13 @@ public class BladelowClientMod implements ClientModInitializer {
                 return true;
             }
 
-            String lower = command.toLowerCase(Locale.ROOT);
-            if (!lower.startsWith("blade") && !lower.startsWith("bladelow")) {
+            String[] parts = command.split("\\s+", 2);
+            String root = parts[0].toLowerCase(Locale.ROOT);
+            if ("bladelow".equals(root)) {
+                command = "bladehelp";
+                root = "bladehelp";
+            }
+            if (!HASH_COMMAND_ROOTS.contains(root)) {
                 return true;
             }
 

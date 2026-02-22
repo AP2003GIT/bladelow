@@ -11,23 +11,29 @@ import java.util.Map;
 import java.util.PriorityQueue;
 
 public final class BuildNavigation {
-    private static final int MAX_PATH_EXPANDED = 3200;
+    private static final int BASE_MAX_PATH_EXPANDED = 3200;
+    private static final int HARD_MAX_PATH_EXPANDED = 12000;
 
     private BuildNavigation() {
     }
 
-    public static int ensureInRangeForPlacement(ServerWorld world, ServerPlayerEntity player, BlockPos target) {
+    public static int ensureInRangeForPlacement(
+        ServerWorld world,
+        ServerPlayerEntity player,
+        BlockPos target,
+        BuildRuntimeSettings.Snapshot settings
+    ) {
         double targetX = target.getX() + 0.5;
         double targetY = target.getY() + 0.5;
         double targetZ = target.getZ() + 0.5;
 
-        double reach = BuildRuntimeSettings.reachDistance();
+        double reach = settings.reachDistance();
         double dist = Math.sqrt(player.squaredDistanceTo(targetX, targetY, targetZ));
         if (dist <= reach) {
             return 0;
         }
 
-        if (!BuildRuntimeSettings.smartMoveEnabled()) {
+        if (!settings.smartMoveEnabled()) {
             return -1;
         }
 
@@ -36,7 +42,7 @@ public final class BuildNavigation {
             return -1;
         }
 
-        return switch (BuildRuntimeSettings.moveMode()) {
+        return switch (settings.moveMode()) {
             case TELEPORT -> moveTeleport(player, approach[0], approach[1], approach[2], targetX, targetY, targetZ, reach);
             case WALK -> moveWalk(world, player, approach[0], approach[1], approach[2], targetX, targetY, targetZ, reach);
             case AUTO -> {
@@ -86,9 +92,28 @@ public final class BuildNavigation {
         double horizontalToGoal = Math.sqrt(square(goal.getX() - start.getX()) + square(goal.getZ() - start.getZ()));
         int adaptiveRadius = Math.max(18, Math.min(64, (int) Math.ceil(horizontalToGoal * 1.8) + 10));
         int verticalWindow = Math.max(4, Math.min(14, Math.abs(goal.getY() - start.getY()) + 5));
-        List<BlockPos> path = findPath(world, start, goal, adaptiveRadius, verticalWindow);
+        int maxExpanded = computeExpandedBudget(start, goal, adaptiveRadius, verticalWindow);
+
+        List<BlockPos> path = findPath(world, start, goal, adaptiveRadius, verticalWindow, maxExpanded);
         if (path.isEmpty()) {
-            return -1;
+            int widerRadius = Math.min(96, adaptiveRadius + 14);
+            int widerVertical = Math.min(20, verticalWindow + 4);
+            int widerBudget = Math.min(HARD_MAX_PATH_EXPANDED, maxExpanded + 2800);
+            path = findPath(world, start, goal, widerRadius, widerVertical, widerBudget);
+
+            if (path.isEmpty()) {
+                BlockPos fallback = greedyFallbackStep(world, start, goal, widerRadius, widerVertical);
+                if (fallback == null) {
+                    return -1;
+                }
+                double beforeDist = Math.sqrt(player.squaredDistanceTo(targetX, targetY, targetZ));
+                player.requestTeleport(fallback.getX() + 0.5, fallback.getY(), fallback.getZ() + 0.5);
+                double afterDist = Math.sqrt(player.squaredDistanceTo(targetX, targetY, targetZ));
+                if (afterDist > beforeDist + 0.35) {
+                    return -1;
+                }
+                return 1;
+            }
         }
 
         int movedSteps = 0;
@@ -112,7 +137,61 @@ public final class BuildNavigation {
         return movedSteps > 0 ? 1 : -1;
     }
 
-    private static List<BlockPos> findPath(ServerWorld world, BlockPos start, BlockPos goal, int maxRadius, int maxVerticalOffset) {
+    private static int computeExpandedBudget(BlockPos start, BlockPos goal, int maxRadius, int maxVerticalOffset) {
+        int dx = Math.abs(goal.getX() - start.getX());
+        int dz = Math.abs(goal.getZ() - start.getZ());
+        int dy = Math.abs(goal.getY() - start.getY());
+        int taxi = dx + dz;
+        int budget = BASE_MAX_PATH_EXPANDED
+            + taxi * 36
+            + dy * 120
+            + maxRadius * 14
+            + maxVerticalOffset * 85;
+        return Math.min(HARD_MAX_PATH_EXPANDED, Math.max(BASE_MAX_PATH_EXPANDED, budget));
+    }
+
+    private static BlockPos greedyFallbackStep(
+        ServerWorld world,
+        BlockPos start,
+        BlockPos goal,
+        int maxRadius,
+        int maxVerticalOffset
+    ) {
+        PathKey startKey = new PathKey(start.getX(), start.getY(), start.getZ());
+        PathKey goalKey = new PathKey(goal.getX(), goal.getY(), goal.getZ());
+        List<PathKey> options = neighbors(world, startKey, startKey, maxRadius, maxVerticalOffset);
+        if (options.isEmpty()) {
+            return null;
+        }
+
+        double baseline = heuristic(startKey, goalKey);
+        PathKey best = null;
+        double bestScore = Double.POSITIVE_INFINITY;
+        for (PathKey option : options) {
+            double h = heuristic(option, goalKey);
+            if (h >= baseline + 0.8) {
+                continue;
+            }
+            double score = h + Math.abs(option.y - startKey.y) * 0.45;
+            if (score < bestScore) {
+                bestScore = score;
+                best = option;
+            }
+        }
+        if (best == null) {
+            return null;
+        }
+        return new BlockPos(best.x, best.y, best.z);
+    }
+
+    private static List<BlockPos> findPath(
+        ServerWorld world,
+        BlockPos start,
+        BlockPos goal,
+        int maxRadius,
+        int maxVerticalOffset,
+        int maxExpanded
+    ) {
         if (start.equals(goal)) {
             return List.of();
         }
@@ -129,7 +208,7 @@ public final class BuildNavigation {
         gScore.put(startKey, 0.0);
 
         int expanded = 0;
-        while (!open.isEmpty() && expanded < MAX_PATH_EXPANDED) {
+        while (!open.isEmpty() && expanded < maxExpanded) {
             PathNode current = open.poll();
             expanded++;
 

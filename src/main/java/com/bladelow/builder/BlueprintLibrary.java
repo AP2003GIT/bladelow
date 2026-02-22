@@ -100,6 +100,62 @@ public final class BlueprintLibrary {
         return toInfo(template);
     }
 
+    public static synchronized SaveResult saveSelectionAsBlueprint(
+        MinecraftServer server,
+        String name,
+        List<BlockPos> points,
+        String blockId
+    ) {
+        if (points == null || points.isEmpty()) {
+            return SaveResult.error("selection is empty");
+        }
+        Identifier id = Identifier.tryParse(blockId);
+        if (id == null || !Registries.BLOCK.containsId(id)) {
+            return SaveResult.error("invalid block id: " + blockId);
+        }
+        String normalizedName = normalize(name);
+        if (normalizedName.isBlank()) {
+            return SaveResult.error("invalid blueprint name");
+        }
+
+        int minX = points.stream().mapToInt(BlockPos::getX).min().orElse(0);
+        int minY = points.stream().mapToInt(BlockPos::getY).min().orElse(0);
+        int minZ = points.stream().mapToInt(BlockPos::getZ).min().orElse(0);
+
+        List<BlockPos> sorted = points.stream()
+            .sorted(
+                Comparator.comparingInt(BlockPos::getY)
+                    .thenComparingInt(BlockPos::getX)
+                    .thenComparingInt(BlockPos::getZ)
+            )
+            .toList();
+
+        BlueprintJson out = new BlueprintJson();
+        out.name = normalizedName;
+        out.placements = new ArrayList<>(sorted.size());
+        for (BlockPos p : sorted) {
+            out.placements.add(new PlacementJson(
+                p.getX() - minX,
+                p.getY() - minY,
+                p.getZ() - minZ,
+                id.toString()
+            ));
+        }
+
+        Path dir = blueprintDir(server);
+        try {
+            Files.createDirectories(dir);
+            Path file = dir.resolve(normalizedName + ".json");
+            try (Writer writer = Files.newBufferedWriter(file)) {
+                GSON.toJson(out, writer);
+            }
+            String reloadStatus = reload(server);
+            return SaveResult.ok("saved blueprint '" + normalizedName + "' blocks=" + sorted.size() + "; " + reloadStatus);
+        } catch (IOException ex) {
+            return SaveResult.error("save failed: " + ex.getMessage());
+        }
+    }
+
     private static BuildPlan resolveTemplate(BlueprintTemplate template, BlockPos start) {
         List<Block> blocks = new ArrayList<>(template.placements().size());
         List<BlockPos> targets = new ArrayList<>(template.placements().size());
@@ -229,6 +285,16 @@ public final class BlueprintLibrary {
             int depth = maxZ - minZ + 1;
             return "name=" + name + " blocks=" + count + " size=" + width + "x" + height + "x" + depth
                 + " min=(" + minX + "," + minY + "," + minZ + ") max=(" + maxX + "," + maxY + "," + maxZ + ")";
+        }
+    }
+
+    public record SaveResult(boolean ok, String message) {
+        public static SaveResult ok(String message) {
+            return new SaveResult(true, message);
+        }
+
+        public static SaveResult error(String message) {
+            return new SaveResult(false, message);
         }
     }
 

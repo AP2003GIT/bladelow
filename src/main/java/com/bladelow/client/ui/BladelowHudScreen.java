@@ -173,20 +173,26 @@ public class BladelowHudScreen extends Screen {
             .dimensions(panelX + LEFT_X + 106, panelY + 172, 100, 18)
             .build());
 
+        int actionW = 44;
+        int actionGap = 4;
         addDrawableChild(ButtonWidget.builder(Text.literal("Run"), btn -> buildShapeAction())
-            .dimensions(panelX + LEFT_X, panelY + ACTION_Y, 56, 20)
+            .dimensions(panelX + LEFT_X, panelY + ACTION_Y, actionW, 20)
             .build());
 
         this.previewModeButton = addDrawableChild(ButtonWidget.builder(Text.literal("Prev:OFF"), btn -> togglePreviewMode())
-            .dimensions(panelX + LEFT_X + 60, panelY + ACTION_Y, 56, 20)
+            .dimensions(panelX + LEFT_X + (actionW + actionGap), panelY + ACTION_Y, actionW, 20)
             .build());
 
-        addDrawableChild(ButtonWidget.builder(Text.literal("Confirm"), btn -> sendCommand("bladeconfirm"))
-            .dimensions(panelX + LEFT_X + 120, panelY + ACTION_Y, 56, 20)
+        addDrawableChild(ButtonWidget.builder(Text.literal("OK"), btn -> sendCommand("bladeconfirm"))
+            .dimensions(panelX + LEFT_X + 2 * (actionW + actionGap), panelY + ACTION_Y, actionW, 20)
             .build());
 
-        addDrawableChild(ButtonWidget.builder(Text.literal("Cancel"), btn -> sendCommand("bladecancel"))
-            .dimensions(panelX + LEFT_X + 180, panelY + ACTION_Y, 56, 20)
+        addDrawableChild(ButtonWidget.builder(Text.literal("Stop"), btn -> sendCommand("bladecancel"))
+            .dimensions(panelX + LEFT_X + 3 * (actionW + actionGap), panelY + ACTION_Y, actionW, 20)
+            .build());
+
+        addDrawableChild(ButtonWidget.builder(Text.literal("Here"), btn -> markSelectionHere())
+            .dimensions(panelX + LEFT_X + 4 * (actionW + actionGap), panelY + ACTION_Y, actionW, 20)
             .build());
 
         this.shapeModeButton = addDrawableChild(ButtonWidget.builder(Text.literal(shapeLabel(this.shapeMode)), btn -> toggleShapeMode())
@@ -252,11 +258,7 @@ public class BladelowHudScreen extends Screen {
             .dimensions(panelX + RIGHT_X + 33, panelY + 148, 30, 18)
             .build());
 
-        addDrawableChild(ButtonWidget.builder(Text.literal("Close"), btn -> {
-                if (this.client != null) {
-                    this.client.setScreen(null);
-                }
-            })
+        addDrawableChild(ButtonWidget.builder(Text.literal("Help"), btn -> sendCommand("bladehelp"))
             .dimensions(panelX + RIGHT_X + 66, panelY + 148, 30, 18)
             .build());
 
@@ -632,6 +634,17 @@ public class BladelowHudScreen extends Screen {
             return;
         }
         sendCommand("bladeselect add " + x + " " + y + " " + z);
+    }
+
+    private void markSelectionHere() {
+        if (this.client == null || this.client.player == null) {
+            statusText = "No player";
+            return;
+        }
+        this.xField.setText(Integer.toString(this.client.player.getBlockX()));
+        this.yField.setText(Integer.toString(this.client.player.getBlockY()));
+        this.zField.setText(Integer.toString(this.client.player.getBlockZ()));
+        sendCommand("bladeselect addhere");
     }
 
     private void buildSelection() {
