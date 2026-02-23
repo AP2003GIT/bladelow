@@ -85,6 +85,7 @@ public class BladelowClientMod implements ClientModInitializer {
                 return false;
             }
 
+            BladelowSelectionOverlay.handleCommand(command);
             client.player.networkHandler.sendChatCommand(command);
             BladelowHudTelemetry.recordLocalMessage("/" + command);
             client.player.sendMessage(Text.literal("[Bladelow] ran: /" + command).formatted(Formatting.AQUA), false);
@@ -96,6 +97,7 @@ public class BladelowClientMod implements ClientModInitializer {
         if (openHudKey == null) {
             return;
         }
+        BladelowSelectionOverlay.tick(client);
 
         while (openHudKey.wasPressed()) {
             if (client.currentScreen instanceof BladelowHudScreen) {

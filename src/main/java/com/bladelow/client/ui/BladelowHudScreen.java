@@ -1,6 +1,7 @@
 package com.bladelow.client.ui;
 
 import com.bladelow.client.BladelowHudTelemetry;
+import com.bladelow.client.BladelowSelectionOverlay;
 import net.minecraft.block.Block;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
@@ -236,6 +237,8 @@ public class BladelowHudScreen extends Screen {
         this.profileIndex = UiState.profileIndex;
         this.markerA = decodePos(UiState.markerA);
         this.markerB = decodePos(UiState.markerB);
+        Integer savedHeight = parseInt(UiState.height);
+        BladelowSelectionOverlay.setDraftMarkers(markerA, markerB, savedHeight == null ? 1 : savedHeight);
 
         this.pageIndex = UiState.pageIndex;
         this.activeSlot = UiState.activeSlot;
@@ -371,7 +374,10 @@ public class BladelowHudScreen extends Screen {
 
         this.heightField = new TextFieldWidget(this.textRenderer, leftX, valueY, valueFieldW, buttonH, Text.literal("Height"));
         this.heightField.setText(UiState.height);
-        this.heightField.setChangedListener(v -> updateRunGuard());
+        this.heightField.setChangedListener(v -> {
+            updateRunGuard();
+            syncOverlayDraft();
+        });
         addDrawableChild(this.heightField);
 
         int axisBaseX = leftX + valueFieldW + rowGap + sx(14) + rowGap + sx(14) + rowGap;
@@ -1182,11 +1188,13 @@ public class BladelowHudScreen extends Screen {
         if (markerA == null) {
             markerA = marker;
             updateMarkerButtonLabels();
+            syncOverlayDraft();
             statusText = "Marker A set: " + shortTarget(markerA);
             return;
         }
         markerB = marker;
         updateMarkerButtonLabels();
+        syncOverlayDraft();
         statusText = "Marker B set: " + shortTarget(markerB);
         applyMarkerBox();
     }
@@ -1199,6 +1207,7 @@ public class BladelowHudScreen extends Screen {
         }
         markerA = new BlockPos(c.x, c.y, c.z);
         updateMarkerButtonLabels();
+        syncOverlayDraft();
         statusText = "Marker A set: " + shortTarget(markerA);
     }
 
@@ -1210,6 +1219,7 @@ public class BladelowHudScreen extends Screen {
         }
         markerB = new BlockPos(c.x, c.y, c.z);
         updateMarkerButtonLabels();
+        syncOverlayDraft();
         statusText = "Marker B set: " + shortTarget(markerB);
     }
 
@@ -1229,14 +1239,21 @@ public class BladelowHudScreen extends Screen {
             markerB.getX(), markerB.getY(), markerB.getZ(),
             height
         ));
+        BladelowSelectionOverlay.setMarkers(markerA, markerB, height);
     }
 
     private void clearMarkers() {
         markerA = null;
         markerB = null;
         updateMarkerButtonLabels();
+        BladelowSelectionOverlay.clear();
         sendCommand("bladeselect clear");
         statusText = "Markers cleared";
+    }
+
+    private void syncOverlayDraft() {
+        Integer height = parseInt(heightField == null ? null : heightField.getText());
+        BladelowSelectionOverlay.setDraftMarkers(markerA, markerB, height == null ? 1 : height);
     }
 
     private String shortTarget(BlockPos pos) {
@@ -1525,6 +1542,7 @@ public class BladelowHudScreen extends Screen {
             statusText = "No player/network";
             return;
         }
+        BladelowSelectionOverlay.handleCommand(command);
         this.client.player.networkHandler.sendChatCommand(command);
         BladelowHudTelemetry.recordLocalMessage("/" + command);
         statusText = commandStatus(command);
