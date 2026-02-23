@@ -763,10 +763,7 @@ public final class BladePlaceCommand {
 
     private static int runPlacement(ServerCommandSource source, ServerPlayerEntity player, List<Block> blocks, List<BlockPos> targets, String tag) {
         List<BlockPos> orderedTargets = orderTargetsForExecution(player, targets, tag);
-        List<Block> perTargetBlocks = new ArrayList<>(orderedTargets.size());
-        for (int i = 0; i < orderedTargets.size(); i++) {
-            perTargetBlocks.add(blocks.get(i % blocks.size()));
-        }
+        List<Block> perTargetBlocks = assignPaletteForTargets(blocks, orderedTargets, tag);
         return queuePlacement(source, player, perTargetBlocks, orderedTargets, tag);
     }
 
@@ -1450,7 +1447,7 @@ public final class BladePlaceCommand {
                             if (override.isEmpty()) {
                                 return 0;
                             }
-                            List<Block> blocks = applyPaletteOverride(plan.blocks(), override);
+                            List<Block> blocks = applyPaletteOverride(plan.blocks(), plan.targets(), override);
                             return queuePlacement(ctx.getSource(), player, blocks, plan.targets(), "blueprint:" + plan.message());
                         })
                     )
@@ -1494,7 +1491,7 @@ public final class BladePlaceCommand {
                                 if (override.isEmpty()) {
                                     return 0;
                                 }
-                                List<Block> blocks = applyPaletteOverride(plan.blocks(), override);
+                                List<Block> blocks = applyPaletteOverride(plan.blocks(), plan.targets(), override);
                                 BlueprintLibrary.select(player.getUuid(), name);
                                 return queuePlacement(ctx.getSource(), player, blocks, plan.targets(), "blueprint:" + plan.message());
                             })
@@ -1505,10 +1502,24 @@ public final class BladePlaceCommand {
         );
     }
 
-    private static List<Block> applyPaletteOverride(List<Block> targets, List<Block> palette) {
+    private static List<Block> applyPaletteOverride(List<Block> targets, List<BlockPos> positions, List<Block> palette) {
         if (palette.isEmpty()) {
             return targets;
         }
+        if (targets.size() != positions.size()) {
+            return targets;
+        }
+
+        // If the source blueprint is mono-material, distribute selected palette
+        // across geometry roles so slot 1/2/3 can all be used in one build.
+        Map<Block, Integer> unique = new LinkedHashMap<>();
+        for (Block source : targets) {
+            unique.putIfAbsent(source, unique.size());
+        }
+        if (unique.size() <= 1 && palette.size() > 1) {
+            return assignPaletteBySpatialRoles(palette, positions, "blueprint");
+        }
+
         // Map each original block type to a selected palette slot so repeated source
         // materials stay consistent across the entire blueprint.
         Map<Block, Block> mapping = new LinkedHashMap<>();
@@ -1522,6 +1533,78 @@ public final class BladePlaceCommand {
                 next++;
             }
             out.add(mapped);
+        }
+        return out;
+    }
+
+    private static List<Block> assignPaletteForTargets(List<Block> palette, List<BlockPos> targets, String tag) {
+        if (palette.isEmpty() || targets.isEmpty()) {
+            return List.of();
+        }
+        if (palette.size() == 1) {
+            List<Block> out = new ArrayList<>(targets.size());
+            for (int i = 0; i < targets.size(); i++) {
+                out.add(palette.get(0));
+            }
+            return out;
+        }
+
+        if ("bladeplace".equals(tag)) {
+            return assignPaletteLineCycle(palette, targets.size());
+        }
+        if (tag.startsWith("selection")) {
+            return assignPaletteBySpatialRoles(palette, targets, tag);
+        }
+        return assignPaletteLineCycle(palette, targets.size());
+    }
+
+    private static List<Block> assignPaletteLineCycle(List<Block> palette, int count) {
+        List<Block> out = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            out.add(palette.get(i % palette.size()));
+        }
+        return out;
+    }
+
+    private static List<Block> assignPaletteBySpatialRoles(List<Block> palette, List<BlockPos> targets, String tag) {
+        int minX = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE;
+        int minY = Integer.MAX_VALUE;
+        int maxY = Integer.MIN_VALUE;
+        int minZ = Integer.MAX_VALUE;
+        int maxZ = Integer.MIN_VALUE;
+        for (BlockPos pos : targets) {
+            minX = Math.min(minX, pos.getX());
+            maxX = Math.max(maxX, pos.getX());
+            minY = Math.min(minY, pos.getY());
+            maxY = Math.max(maxY, pos.getY());
+            minZ = Math.min(minZ, pos.getZ());
+            maxZ = Math.max(maxZ, pos.getZ());
+        }
+
+        boolean hasInterior2d = (maxX - minX) >= 2 && (maxZ - minZ) >= 2;
+        boolean hasHeight = (maxY - minY) >= 1;
+
+        List<Block> out = new ArrayList<>(targets.size());
+        for (BlockPos pos : targets) {
+            boolean edge2d = pos.getX() == minX || pos.getX() == maxX || pos.getZ() == minZ || pos.getZ() == maxZ;
+            int slot = 0;
+            if (!edge2d && hasInterior2d && palette.size() >= 2) {
+                if (palette.size() == 2) {
+                    slot = 1;
+                } else if (hasHeight) {
+                    int interiorSlots = palette.size() - 1;
+                    slot = 1 + Math.floorMod(pos.getY() - minY, interiorSlots);
+                } else {
+                    int interiorSlots = palette.size() - 1;
+                    int hash = pos.getX() + pos.getZ();
+                    slot = 1 + Math.floorMod(hash, interiorSlots);
+                }
+            } else if (palette.size() >= 3 && hasHeight && pos.getY() == maxY && !"selection".equals(tag)) {
+                // For stacked columns/blueprints, give top surfaces a distinct accent when available.
+                slot = 2;
+            }
+            out.add(palette.get(Math.min(slot, palette.size() - 1)));
         }
         return out;
     }
