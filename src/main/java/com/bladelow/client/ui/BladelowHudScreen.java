@@ -44,14 +44,13 @@ public class BladelowHudScreen extends Screen {
     );
 
     private static final int GRID_COLS = 4;
-    private static final int GRID_ROWS = 3;
+    private static final int GRID_ROWS = 2;
     private static final int GRID_CAPACITY = GRID_COLS * GRID_ROWS;
     private static final int QUICK_CAPACITY = 4;
     private static final int SLOT_COUNT = 3;
     private static final int MAX_FAVORITES = 4;
     private static final int MAX_RECENT = 4;
 
-    private static final String MODE_LINE = "line";
     private static final String MODE_SELECTION = "selection";
     private static final String MODE_BLUEPRINT = "blueprint";
 
@@ -59,13 +58,18 @@ public class BladelowHudScreen extends Screen {
     private static final String[] PROFILE_PRESETS = {"builder", "safe", "fast"};
     private static final String[] SCALE_LABELS = {"S", "M", "L"};
     private static final double[] SCALE_VALUES = {0.90, 1.00, 1.12};
+    private static final int PANEL_BASE_WIDTH = 620;
+    private static final int PANEL_BASE_HEIGHT = 390;
+    private static final int PANEL_MIN_WIDTH = 560;
+    private static final int PANEL_MIN_HEIGHT = 332;
+    private static final int RIGHT_PANEL_BASE_WIDTH = 182;
 
     private static final Path HUD_STATE_PATH = Path.of("config", "bladelow", "hud-state.properties");
     private static final Properties HUD_STORE = new Properties();
     private static boolean hudStoreLoaded;
 
     private static final class UiState {
-        private static String mode = MODE_LINE;
+        private static String mode = MODE_SELECTION;
         private static String axis = "x";
         private static boolean manualCoords = false;
 
@@ -93,6 +97,7 @@ public class BladelowHudScreen extends Screen {
         private static String favorites = "minecraft:stone|minecraft:cobblestone|minecraft:oak_planks|minecraft:glass";
         private static String recent = "";
         private static int scaleIndex = 1;
+        private static boolean slotMiniIcons = true;
     }
 
     private final String profileKey;
@@ -120,10 +125,10 @@ public class BladelowHudScreen extends Screen {
     private TextFieldWidget webField;
     private TextFieldWidget catalogLimitField;
 
-    private ButtonWidget modeLineButton;
     private ButtonWidget modeSelectionButton;
     private ButtonWidget modeBlueprintButton;
     private ButtonWidget scaleButton;
+    private ButtonWidget slotMiniButton;
 
     private ButtonWidget addFavoriteButton;
     private ButtonWidget removeFavoriteButton;
@@ -197,6 +202,7 @@ public class BladelowHudScreen extends Screen {
     private boolean manualCoords;
     private boolean smartMoveEnabled;
     private boolean previewBeforeBuild;
+    private boolean slotMiniIconsEnabled;
     private String moveMode;
     private double reachDistance;
 
@@ -205,6 +211,7 @@ public class BladelowHudScreen extends Screen {
     private String statusText = "Ready";
     private String validationText = "";
     private String hoveredBlockId;
+    private boolean suppressFieldCallbacks;
 
     public BladelowHudScreen() {
         super(Text.literal("Bladelow Builder"));
@@ -214,10 +221,14 @@ public class BladelowHudScreen extends Screen {
         loadUiStateForProfile(profileKey);
 
         this.activeMode = UiState.mode;
+        if ("line".equals(this.activeMode)) {
+            this.activeMode = MODE_SELECTION;
+        }
         this.axis = UiState.axis;
         this.manualCoords = UiState.manualCoords;
         this.smartMoveEnabled = UiState.smart;
         this.previewBeforeBuild = UiState.preview;
+        this.slotMiniIconsEnabled = UiState.slotMiniIcons;
         this.moveMode = UiState.moveMode;
         this.reachDistance = UiState.reach;
         this.profileIndex = UiState.profileIndex;
@@ -245,7 +256,7 @@ public class BladelowHudScreen extends Screen {
 
         computeLayout();
 
-        int controlW = sx(16);
+        int controlW = sx(18);
         int searchControls = controlW * 4 + rowGap * 3;
         int searchW = Math.max(sx(100), leftW - searchControls - rowGap);
 
@@ -301,7 +312,9 @@ public class BladelowHudScreen extends Screen {
         }
 
         int clearW = sx(14);
-        int slotButtonW = (leftW - SLOT_COUNT * clearW - (SLOT_COUNT * 2 - 1) * rowGap) / SLOT_COUNT;
+        int miniToggleW = sx(20);
+        int slotAreaW = leftW - miniToggleW - rowGap;
+        int slotButtonW = Math.max(sx(44), (slotAreaW - SLOT_COUNT * clearW - (SLOT_COUNT * 2 - 1) * rowGap) / SLOT_COUNT);
         int slotX = leftX;
         for (int i = 0; i < SLOT_COUNT; i++) {
             final int idx = i;
@@ -313,24 +326,27 @@ public class BladelowHudScreen extends Screen {
                 .build());
             slotX += slotButtonW + clearW + rowGap * 2;
         }
+        this.slotMiniButton = addDrawableChild(ButtonWidget.builder(Text.literal("I"), b -> toggleSlotMiniIcons())
+            .dimensions(leftX + leftW - miniToggleW, slotsY, miniToggleW, buttonH)
+            .build());
 
-        int coordsModeW = sx(56);
-        int coordW = (leftW - coordsModeW - rowGap * 3) / 3;
-        this.xField = new TextFieldWidget(this.textRenderer, leftX, coordsY, coordW, buttonH, Text.literal("X"));
-        this.yField = new TextFieldWidget(this.textRenderer, leftX + coordW + rowGap, coordsY, coordW, buttonH, Text.literal("Y"));
-        this.zField = new TextFieldWidget(this.textRenderer, leftX + (coordW + rowGap) * 2, coordsY, coordW, buttonH, Text.literal("Z"));
+        int coordW = (rightW - rowGap * 2) / 3;
+        int xyzY = searchY + buttonH + rowGap;
+        this.xField = new TextFieldWidget(this.textRenderer, rightX, xyzY, coordW, buttonH, Text.literal("X"));
+        this.yField = new TextFieldWidget(this.textRenderer, rightX + coordW + rowGap, xyzY, coordW, buttonH, Text.literal("Y"));
+        this.zField = new TextFieldWidget(this.textRenderer, rightX + (coordW + rowGap) * 2, xyzY, coordW, buttonH, Text.literal("Z"));
 
         this.coordsModeButton = addDrawableChild(ButtonWidget.builder(Text.literal("Auto"), b -> toggleCoordsMode())
-            .dimensions(leftX + (coordW + rowGap) * 3, coordsY, coordsModeW, buttonH)
+            .dimensions(rightX, xyzY + buttonH + rowGap, rightW, buttonH)
             .build());
 
         addDrawableChild(this.xField);
         addDrawableChild(this.yField);
         addDrawableChild(this.zField);
 
-        this.xField.setChangedListener(v -> updateRunGuard());
-        this.yField.setChangedListener(v -> updateRunGuard());
-        this.zField.setChangedListener(v -> updateRunGuard());
+        this.xField.setChangedListener(v -> onCoordFieldChanged());
+        this.yField.setChangedListener(v -> onCoordFieldChanged());
+        this.zField.setChangedListener(v -> onCoordFieldChanged());
 
         loadCoordFields();
 
@@ -371,7 +387,7 @@ public class BladelowHudScreen extends Screen {
             .build());
 
         int actionW = (leftW - rowGap * 3) / 4;
-        this.runButton = addDrawableChild(ButtonWidget.builder(Text.literal("Run"), b -> runActiveMode())
+        this.runButton = addDrawableChild(ButtonWidget.builder(Text.literal("Start Build"), b -> runActiveMode())
             .dimensions(leftX, actionsY, actionW, sx(20))
             .build());
         this.previewModeButton = addDrawableChild(ButtonWidget.builder(Text.literal("Prev"), b -> togglePreviewMode())
@@ -380,99 +396,105 @@ public class BladelowHudScreen extends Screen {
         this.confirmButton = addDrawableChild(ButtonWidget.builder(Text.literal("Confirm"), b -> sendCommand("bladeconfirm"))
             .dimensions(leftX + (actionW + rowGap) * 2, actionsY, actionW, sx(20))
             .build());
-        this.cancelButton = addDrawableChild(ButtonWidget.builder(Text.literal("Cancel"), b -> sendCommand("bladecancel"))
+        this.cancelButton = addDrawableChild(ButtonWidget.builder(Text.literal("Stop Build"), b -> sendCommand("bladecancel"))
             .dimensions(leftX + (actionW + rowGap) * 3, actionsY, actionW, sx(20))
             .build());
 
-        int modeW = (rightW - rowGap * 2) / 3;
-        this.modeLineButton = addDrawableChild(ButtonWidget.builder(Text.literal("LINE"), b -> setMode(MODE_LINE))
+        int modeW = (rightW - rowGap) / 2;
+        this.modeSelectionButton = addDrawableChild(ButtonWidget.builder(Text.literal("SEL"), b -> setMode(MODE_SELECTION))
             .dimensions(rightX, searchY, modeW, buttonH)
             .build());
-        this.modeSelectionButton = addDrawableChild(ButtonWidget.builder(Text.literal("SEL"), b -> setMode(MODE_SELECTION))
+        this.modeBlueprintButton = addDrawableChild(ButtonWidget.builder(Text.literal("BP"), b -> setMode(MODE_BLUEPRINT))
             .dimensions(rightX + modeW + rowGap, searchY, modeW, buttonH)
             .build());
-        this.modeBlueprintButton = addDrawableChild(ButtonWidget.builder(Text.literal("BP"), b -> setMode(MODE_BLUEPRINT))
-            .dimensions(rightX + (modeW + rowGap) * 2, searchY, modeW, buttonH)
-            .build());
 
+        int rightRowY = searchY + (buttonH + rowGap) * 3;
         this.scaleButton = addDrawableChild(ButtonWidget.builder(Text.literal("Scale"), b -> cycleScale())
-            .dimensions(rightX, favoriteY, rightW, buttonH)
+            .dimensions(rightX, rightRowY, rightW, buttonH)
             .build());
 
+        rightRowY += buttonH + rowGap;
         this.moveModeButton = addDrawableChild(ButtonWidget.builder(Text.literal("Mode"), b -> toggleMoveMode())
-            .dimensions(rightX, recentY, rightW, buttonH)
-            .build());
-        this.smartMoveButton = addDrawableChild(ButtonWidget.builder(Text.literal("Smart"), b -> toggleSmartMove())
-            .dimensions(rightX, recentY + buttonH + rowGap, rightW, buttonH)
+            .dimensions(rightX, rightRowY, rightW, buttonH)
             .build());
 
+        rightRowY += buttonH + rowGap;
+        this.webField = new TextFieldWidget(this.textRenderer, rightX, rightRowY, rightW, buttonH, Text.literal("BuildIt URL"));
+        this.webField.setPlaceholder(Text.literal("builditapp url or index"));
+        this.webField.setText(UiState.web);
+        addDrawableChild(this.webField);
+
+        rightRowY += buttonH + rowGap;
+        this.bpLoadButton = addDrawableChild(ButtonWidget.builder(Text.literal("Import URL"), b -> webImport())
+            .dimensions(rightX, rightRowY, rightW, buttonH)
+            .build());
+
+        rightRowY += buttonH + rowGap;
+        int centerW = sx(18);
+        int sideW = (rightW - centerW - rowGap * 2) / 2;
+        this.presetLineXButton = addDrawableChild(ButtonWidget.builder(Text.literal("L20X"), b -> applyPreset("line20x"))
+            .dimensions(rightX, rightRowY, sideW, buttonH)
+            .build());
+        this.smartMoveButton = addDrawableChild(ButtonWidget.builder(Text.literal("S"), b -> toggleSmartMove())
+            .dimensions(rightX + sideW + rowGap, rightRowY, centerW, buttonH)
+            .build());
+        this.presetLineZButton = addDrawableChild(ButtonWidget.builder(Text.literal("L20Z"), b -> applyPreset("line20z"))
+            .dimensions(rightX + sideW + rowGap + centerW + rowGap, rightRowY, sideW, buttonH)
+            .build());
+
+        rightRowY += buttonH + rowGap;
+        this.presetSelButton = addDrawableChild(ButtonWidget.builder(Text.literal("SEL6"), b -> applyPreset("sel6"))
+            .dimensions(rightX, rightRowY, sideW, buttonH)
+            .build());
+        this.profileButton = addDrawableChild(ButtonWidget.builder(Text.literal("P"), b -> cycleProfile())
+            .dimensions(rightX + sideW + rowGap, rightRowY, centerW, buttonH)
+            .build());
+        this.presetBpButton = addDrawableChild(ButtonWidget.builder(Text.literal("BP20"), b -> applyPreset("bp20"))
+            .dimensions(rightX + sideW + rowGap + centerW + rowGap, rightRowY, sideW, buttonH)
+            .build());
+
+        rightRowY += buttonH + rowGap;
+        int bottomW = (rightW - rowGap) / 2;
+        this.bpBuildButton = addDrawableChild(ButtonWidget.builder(Text.literal("Build"), b -> buildBlueprint())
+            .dimensions(rightX, rightRowY, bottomW, buttonH)
+            .build());
+        this.statusDetailButton = addDrawableChild(ButtonWidget.builder(Text.literal("Stat"), b -> sendCommand("bladestatus detail"))
+            .dimensions(rightX + bottomW + rowGap, rightRowY, bottomW, buttonH)
+            .build());
+
+        int hiddenY = panelY + panelH + sx(12);
         this.reachMinusButton = addDrawableChild(ButtonWidget.builder(Text.literal("-"), b -> adjustReach(-0.25))
-            .dimensions(rightX, recentY + (buttonH + rowGap) * 2, sx(20), buttonH)
+            .dimensions(rightX, hiddenY, sx(1), buttonH)
             .build());
         this.reachButton = addDrawableChild(ButtonWidget.builder(Text.literal("R"), b -> {
         })
-            .dimensions(rightX + sx(20) + rowGap, recentY + (buttonH + rowGap) * 2, rightW - sx(40) - rowGap * 2, buttonH)
+            .dimensions(rightX, hiddenY, sx(1), buttonH)
             .build());
         this.reachPlusButton = addDrawableChild(ButtonWidget.builder(Text.literal("+"), b -> adjustReach(0.25))
-            .dimensions(rightX + rightW - sx(20), recentY + (buttonH + rowGap) * 2, sx(20), buttonH)
+            .dimensions(rightX, hiddenY, sx(1), buttonH)
             .build());
 
-        this.profileButton = addDrawableChild(ButtonWidget.builder(Text.literal("Prof"), b -> cycleProfile())
-            .dimensions(rightX, recentY + (buttonH + rowGap) * 3, (rightW - rowGap) / 2, buttonH)
-            .build());
-        this.statusDetailButton = addDrawableChild(ButtonWidget.builder(Text.literal("Stat"), b -> sendCommand("bladestatus detail"))
-            .dimensions(rightX + (rightW - rowGap) / 2 + rowGap, recentY + (buttonH + rowGap) * 3, (rightW - rowGap) / 2, buttonH)
-            .build());
-
-        int presetY = gridY;
-        int presetW = (rightW - rowGap) / 2;
-        this.presetLineXButton = addDrawableChild(ButtonWidget.builder(Text.literal("L20X"), b -> applyPreset("line20x"))
-            .dimensions(rightX, presetY, presetW, buttonH)
-            .build());
-        this.presetLineZButton = addDrawableChild(ButtonWidget.builder(Text.literal("L20Z"), b -> applyPreset("line20z"))
-            .dimensions(rightX + presetW + rowGap, presetY, presetW, buttonH)
-            .build());
-        this.presetSelButton = addDrawableChild(ButtonWidget.builder(Text.literal("SEL6"), b -> applyPreset("sel6"))
-            .dimensions(rightX, presetY + buttonH + rowGap, presetW, buttonH)
-            .build());
-        this.presetBpButton = addDrawableChild(ButtonWidget.builder(Text.literal("BP20"), b -> applyPreset("bp20"))
-            .dimensions(rightX + presetW + rowGap, presetY + buttonH + rowGap, presetW, buttonH)
-            .build());
-
-        int bpY = presetY + (buttonH + rowGap) * 2 + rowGap;
-        this.blueprintField = new TextFieldWidget(this.textRenderer, rightX + sx(14), bpY, rightW - sx(28), buttonH, Text.literal("Blueprint"));
+        this.blueprintField = new TextFieldWidget(this.textRenderer, rightX, hiddenY, rightW, buttonH, Text.literal("Blueprint"));
         this.blueprintField.setText(UiState.blueprint);
         this.blueprintField.setChangedListener(v -> updateRunGuard());
         addDrawableChild(this.blueprintField);
 
         this.bpPrevButton = addDrawableChild(ButtonWidget.builder(Text.literal("<"), b -> cycleBlueprint(-1))
-            .dimensions(rightX, bpY, sx(12), buttonH)
+            .dimensions(rightX, hiddenY, sx(1), buttonH)
             .build());
         this.bpNextButton = addDrawableChild(ButtonWidget.builder(Text.literal(">"), b -> cycleBlueprint(1))
-            .dimensions(rightX + rightW - sx(12), bpY, sx(12), buttonH)
+            .dimensions(rightX, hiddenY, sx(1), buttonH)
             .build());
 
-        this.bpLoadButton = addDrawableChild(ButtonWidget.builder(Text.literal("BP Load"), b -> loadBlueprint())
-            .dimensions(rightX, bpY + buttonH + rowGap, rightW, buttonH)
-            .build());
-        this.bpBuildButton = addDrawableChild(ButtonWidget.builder(Text.literal("BP Build"), b -> buildBlueprint())
-            .dimensions(rightX, bpY + (buttonH + rowGap) * 2, rightW, buttonH)
-            .build());
-
-        this.webField = new TextFieldWidget(this.textRenderer, rightX, bpY + (buttonH + rowGap) * 3, rightW, buttonH, Text.literal("Web"));
-        this.webField.setPlaceholder(Text.literal("index or URL"));
-        this.webField.setText(UiState.web);
-        addDrawableChild(this.webField);
-
-        this.catalogLimitField = new TextFieldWidget(this.textRenderer, rightX, bpY + (buttonH + rowGap) * 4, sx(24), buttonH, Text.literal("Limit"));
+        this.catalogLimitField = new TextFieldWidget(this.textRenderer, rightX, hiddenY, sx(24), buttonH, Text.literal("Limit"));
         this.catalogLimitField.setText(UiState.limit);
         addDrawableChild(this.catalogLimitField);
 
         this.webCatalogButton = addDrawableChild(ButtonWidget.builder(Text.literal("Cat"), b -> webCatalog())
-            .dimensions(rightX + sx(24) + rowGap, bpY + (buttonH + rowGap) * 4, (rightW - sx(24) - rowGap * 2) / 2, buttonH)
+            .dimensions(rightX, hiddenY, sx(1), buttonH)
             .build());
         this.webImportButton = addDrawableChild(ButtonWidget.builder(Text.literal("Imp"), b -> webImport())
-            .dimensions(rightX + sx(24) + rowGap + (rightW - sx(24) - rowGap * 2) / 2 + rowGap, bpY + (buttonH + rowGap) * 4, (rightW - sx(24) - rowGap * 2) / 2, buttonH)
+            .dimensions(rightX, hiddenY, sx(1), buttonH)
             .build());
 
         refreshButtonLabels();
@@ -486,37 +508,45 @@ public class BladelowHudScreen extends Screen {
 
     private void computeLayout() {
         double requested = SCALE_VALUES[clamp(uiScaleIndex, 0, SCALE_VALUES.length - 1)];
-        double fitW = (this.width - 8.0) / 460.0;
-        double fitH = (this.height - 8.0) / 360.0;
+        double fitW = (this.width - 8.0) / PANEL_BASE_WIDTH;
+        double fitH = (this.height - 8.0) / PANEL_BASE_HEIGHT;
         double fit = Math.min(fitW, fitH);
-        this.uiScale = Math.max(0.40, Math.min(requested, fit));
+        this.uiScale = Math.max(0.68, Math.min(requested, fit));
 
-        this.panelW = sx(460);
-        this.panelH = sx(360);
+        int desiredPanelW = sx(PANEL_BASE_WIDTH);
+        int desiredPanelH = sx(PANEL_BASE_HEIGHT);
+        int maxPanelW = Math.max(sx(PANEL_MIN_WIDTH), this.width - sx(8));
+        int maxPanelH = Math.max(sx(PANEL_MIN_HEIGHT), this.height - sx(8));
+        this.panelW = Math.max(sx(PANEL_MIN_WIDTH), Math.min(desiredPanelW, maxPanelW));
+        this.panelH = Math.max(sx(PANEL_MIN_HEIGHT), Math.min(desiredPanelH, maxPanelH));
         this.panelX = Math.max(4, this.width / 2 - panelW / 2);
         this.panelY = Math.max(4, this.height / 2 - panelH / 2);
 
         this.rowGap = sx(4);
         this.buttonH = sx(18);
 
+        int minRightW = sx(170);
+        int maxRightW = Math.max(minRightW, panelW - sx(290));
+        int targetRightW = Math.max(minRightW, panelW / 3);
+        this.rightW = Math.min(maxRightW, targetRightW);
+
         this.leftX = panelX + sx(8);
-        this.rightW = sx(126);
         this.rightX = panelX + panelW - rightW - sx(8);
         this.leftW = rightX - leftX - sx(8);
 
-        this.searchY = panelY + sx(28);
+        this.searchY = panelY + sx(24);
         this.favoriteY = searchY + buttonH + rowGap;
         this.recentY = favoriteY + buttonH + rowGap;
-        this.gridY = recentY + buttonH + rowGap;
+        this.gridY = favoriteY + buttonH + rowGap;
         this.slotsY = gridY + (sx(22) + rowGap) * GRID_ROWS + rowGap;
         this.coordsY = slotsY + buttonH + rowGap;
         this.valueY = coordsY + buttonH + rowGap;
         this.actionsY = valueY + buttonH + rowGap;
-        this.statusY = actionsY + sx(20) + rowGap;
+        this.statusY = panelY + panelH - sx(34);
     }
 
     private int sx(int base) {
-        return Math.max(8, (int) Math.round(base * uiScale));
+        return Math.max(1, (int) Math.round(base * uiScale));
     }
 
     @Override
@@ -536,36 +566,21 @@ public class BladelowHudScreen extends Screen {
     }
 
     private void drawPanelBackground(DrawContext context) {
-        int headerY = panelY + sx(24);
+        int headerY = panelY + sx(22);
+        int contentBottom = actionsY + sx(20) + rowGap;
 
         context.fill(panelX, panelY, panelX + panelW, panelY + panelH, 0xD0111111);
-        context.fill(panelX + 1, panelY + 1, panelX + panelW - 1, panelY + sx(22), 0xAA1F2430);
-        context.fill(leftX - 2, headerY + rowGap, leftX + leftW + 2, actionsY + sx(20) + rowGap, 0x66222A38);
-        context.fill(rightX - 2, headerY + rowGap, rightX + rightW + 2, statusY - rowGap, 0x66202935);
+        context.fill(panelX + 1, panelY + 1, panelX + panelW - 1, panelY + sx(20), 0xAA1F2430);
+        context.fill(leftX - 2, headerY + rowGap, leftX + leftW + 2, contentBottom, 0x66222A38);
+        context.fill(rightX - 2, headerY + rowGap, rightX + rightW + 2, contentBottom, 0x66202935);
         context.fill(panelX + sx(6), statusY, panelX + panelW - sx(6), panelY + panelH - sx(6), 0x55303A4D);
         drawBorder(context, panelX, panelY, panelW, panelH, 0xFFFFFFFF);
 
-        context.drawText(this.textRenderer, Text.literal("Bladelow Builder"), panelX + sx(10), panelY + sx(8), 0xFFFFFF, false);
-        context.drawText(this.textRenderer, Text.literal("P close | R run | M mark | C cancel | V preview"), panelX + sx(126), panelY + sx(8), 0x9FC4E2, false);
-
-        int totalPages = Math.max(1, (int) Math.ceil((double) filteredBlockIds.size() / GRID_CAPACITY));
-        context.drawText(this.textRenderer, Text.literal("Page " + (pageIndex + 1) + "/" + totalPages), leftX + leftW - sx(66), searchY + sx(3), 0xB7CBE5, false);
-
-        context.drawText(this.textRenderer, Text.literal("Favorites"), leftX, favoriteY - sx(9), 0xB5C9E8, false);
-        context.drawText(this.textRenderer, Text.literal("Recent"), leftX, recentY - sx(9), 0xB5C9E8, false);
-        context.drawText(this.textRenderer, Text.literal("Slots"), leftX, slotsY - sx(9), 0xB5C9E8, false);
-        context.drawText(this.textRenderer, Text.literal("XYZ"), leftX, coordsY - sx(9), 0xCFCFCF, false);
-        context.drawText(this.textRenderer, Text.literal(activeMode.equals(MODE_SELECTION) ? "Height" : "Count"), leftX, valueY - sx(9), 0xCFCFCF, false);
-
-        if (!validationText.isEmpty()) {
-            context.drawText(this.textRenderer, Text.literal("Need: " + validationText), leftX, actionsY - sx(9), 0xFFB4B4, false);
-        }
     }
 
     private void drawQuickRows(DrawContext context, int mouseX, int mouseY) {
         hoveredBlockId = null;
         drawButtonBlockRow(context, favoriteButtons, favoriteBlockIds, mouseX, mouseY, 0xFF78B5FF, false);
-        drawButtonBlockRow(context, recentButtons, new ArrayList<>(recentBlockIds), mouseX, mouseY, 0xFF8FD48F, false);
     }
 
     private void drawBlockGrid(DrawContext context, int mouseX, int mouseY) {
@@ -607,13 +622,14 @@ public class BladelowHudScreen extends Screen {
             hoveredBlockId = blockIdText;
         }
 
-        context.fill(btn.getX(), btn.getY(), btn.getX() + btn.getWidth(), btn.getY() + btn.getHeight(), hoveredTile ? 0xAA365A84 : 0x66262D3A);
+        context.fill(btn.getX(), btn.getY(), btn.getX() + btn.getWidth(), btn.getY() + btn.getHeight(), hoveredTile ? 0x883A4F6D : 0x552A313F);
         drawBorder(context, btn.getX(), btn.getY(), btn.getWidth(), btn.getHeight(), selected ? selectedColor : (hoveredTile ? 0xFF9FCBFF : 0xFF596273));
 
-        context.drawItem(stack, btn.getX() + sx(2), btn.getY() + sx(2));
-        context.drawText(this.textRenderer, Text.literal(shortBlockName(blockIdText, 9)), btn.getX() + sx(20), btn.getY() + sx(6), 0xDFE6F2, false);
+        int iconX = btn.getX() + (btn.getWidth() - 16) / 2;
+        int iconY = btn.getY() + (btn.getHeight() - 16) / 2;
+        context.drawItem(stack, iconX, iconY);
         if (selected) {
-            context.fill(btn.getX() + btn.getWidth() - sx(6), btn.getY() + sx(2), btn.getX() + btn.getWidth() - sx(2), btn.getY() + sx(6), selectedColor);
+            context.fill(btn.getX() + btn.getWidth() - sx(7), btn.getY() + sx(2), btn.getX() + btn.getWidth() - sx(2), btn.getY() + sx(7), selectedColor);
         }
     }
 
@@ -642,75 +658,125 @@ public class BladelowHudScreen extends Screen {
                 continue;
             }
 
-            int cardX = slotButton.getX() + sx(2);
-            int cardY = slotButton.getY() + sx(2);
-            int cardSize = slotButton.getHeight() - sx(4);
-            context.fill(cardX, cardY, cardX + cardSize, cardY + cardSize, activeSlot == i ? 0xAA2E5A95 : 0x88242A36);
-            drawBorder(context, cardX, cardY, cardSize, cardSize, activeSlot == i ? 0xFF79B4FF : 0xFF596479);
-
             String idText = selectedSlots[i];
-            if (idText != null) {
-                Identifier id = Identifier.tryParse(idText);
-                if (id != null && Registries.BLOCK.containsId(id)) {
-                    ItemStack stack = new ItemStack(Registries.BLOCK.get(id).asItem());
-                    context.drawItem(stack, cardX + sx(1), cardY + sx(1));
+            String rawLabel = slotDisplayLabel(i, idText);
+            int textX = slotButton.getX() + sx(4);
+            if (slotMiniIconsEnabled) {
+                ItemStack slotStack = stackForBlock(idText);
+                if (slotStack != null) {
+                    context.drawItem(slotStack, slotButton.getX() + sx(3), slotButton.getY() + (slotButton.getHeight() - 16) / 2);
+                    textX += sx(18);
                 }
             }
+            int textMax = Math.max(sx(16), slotButton.getWidth() - (textX - slotButton.getX()) - sx(10));
+            String clippedLabel = this.textRenderer.trimToWidth(rawLabel, textMax);
+            int textY = slotButton.getY() + (slotButton.getHeight() - this.textRenderer.fontHeight) / 2;
+            context.enableScissor(textX, slotButton.getY() + 1, slotButton.getX() + slotButton.getWidth() - sx(8), slotButton.getY() + slotButton.getHeight() - 1);
+            context.drawText(this.textRenderer, Text.literal(clippedLabel), textX, textY, activeSlot == i ? 0xFFE9F6FF : 0xFFCFD8E9, false);
+            context.disableScissor();
 
             boolean ready = isSlotReady(idText);
             int dotColor = idText == null ? 0xFF808080 : (ready ? 0xFF75D77F : 0xFFE07171);
-            int dotX = slotButton.getX() + slotButton.getWidth() - sx(10);
-            int dotY = slotButton.getY() + sx(6);
-            context.fill(dotX, dotY, dotX + sx(6), dotY + sx(6), dotColor);
-            String label = idText == null ? "-" : (ready ? "OK" : "MISS");
-            context.drawText(this.textRenderer, Text.literal(label), slotButton.getX() + slotButton.getWidth() - sx(28), slotButton.getY() + sx(6), ready ? 0x9FE29F : 0xE29F9F, false);
+            int dotSize = sx(5);
+            int dotX = slotButton.getX() + slotButton.getWidth() - dotSize - sx(4);
+            int dotY = slotButton.getY() + (slotButton.getHeight() - dotSize) / 2;
+            context.fill(dotX, dotY, dotX + dotSize, dotY + dotSize, dotColor);
+
+            if (activeSlot == i) {
+                drawBorder(context, slotButton.getX(), slotButton.getY(), slotButton.getWidth(), slotButton.getHeight(), 0xFF77B5FF);
+            }
         }
+    }
+
+    private String slotDisplayLabel(int slotIndex, String blockId) {
+        if (blockId == null || blockId.isBlank()) {
+            return "S" + (slotIndex + 1) + " empty";
+        }
+        return "S" + (slotIndex + 1) + " " + shortBlockName(blockId, 16);
+    }
+
+    private ItemStack stackForBlock(String blockId) {
+        if (blockId == null || blockId.isBlank()) {
+            return null;
+        }
+        Identifier id = Identifier.tryParse(blockId);
+        if (id == null || !Registries.BLOCK.containsId(id)) {
+            return null;
+        }
+        Item item = Registries.BLOCK.get(id).asItem();
+        if (item == Items.AIR) {
+            return null;
+        }
+        return new ItemStack(item);
     }
 
     private void drawStatusPanel(DrawContext context) {
-        BladelowHudTelemetry.ProgressSnapshot snapshot = BladelowHudTelemetry.snapshot();
-        int percent = snapshot.percent();
+        int barX = panelX + sx(8);
+        int barY = statusY;
+        int barW = panelW - sx(16);
+        int barH = sx(24);
 
-        String progressLine = snapshot.total() > 0
-            ? "Progress " + snapshot.done() + "/" + snapshot.total() + " (" + percent + "%)  placed=" + snapshot.placed() + " skip=" + snapshot.skipped() + " fail=" + snapshot.failed()
-            : "Progress idle";
+        boolean hasValidation = !validationText.isEmpty();
+        boolean isWarning = hasValidation || statusLooksError(statusText);
+        int bgColor = isWarning ? 0xAA311C1C : 0xAA16202C;
+        int borderColor = isWarning ? 0xFFBE6C6C : 0xFF5D6E88;
+        int textColor = isWarning ? 0xFFFFCECE : 0xFFD7E6FA;
 
-        context.drawText(this.textRenderer, Text.literal("Status: " + statusText), panelX + sx(10), statusY + sx(4), 0xB9D9FF, false);
-        context.drawText(this.textRenderer, Text.literal(progressLine), panelX + sx(10), statusY + sx(14), 0xBFEBC0, false);
+        context.fill(barX, barY, barX + barW, barY + barH, bgColor);
+        drawBorder(context, barX, barY, barW, barH, borderColor);
 
-        List<String> lines = BladelowHudTelemetry.recent(5);
-        int logY = statusY + sx(24);
-        for (String line : lines) {
-            context.drawText(this.textRenderer, Text.literal(line), panelX + sx(10), logY, 0xC8D5E8, false);
-            logY += sx(9);
+        String primary = hasValidation ? "Need: " + validationText : statusText;
+        String secondary = hasValidation ? "Fix required fields to run." : modeHintText();
+        String clippedPrimary = this.textRenderer.trimToWidth(primary, barW - sx(10));
+        String clippedSecondary = this.textRenderer.trimToWidth(secondary, barW - sx(10));
+        context.drawText(this.textRenderer, Text.literal(clippedPrimary), barX + sx(4), barY + sx(3), textColor, false);
+        context.drawText(this.textRenderer, Text.literal(clippedSecondary), barX + sx(4), barY + sx(13), 0xFFB7C7DF, false);
+    }
+
+    private boolean statusLooksError(String text) {
+        if (text == null) {
+            return false;
         }
+        String lower = text.toLowerCase(Locale.ROOT);
+        return lower.startsWith("invalid")
+            || lower.startsWith("no ")
+            || lower.startsWith("need")
+            || lower.contains("required")
+            || lower.contains("must");
+    }
+
+    private String modeHintText() {
+        return switch (activeMode) {
+            case MODE_SELECTION -> "M mark points, then run selection";
+            case MODE_BLUEPRINT -> "Import URL or pick BP preset";
+            default -> "Ready";
+        };
     }
 
     private void setMode(String mode) {
-        this.activeMode = mode;
+        this.activeMode = "line".equals(mode) ? MODE_SELECTION : mode;
         updateModeUi();
         updateRunGuard();
-        statusText = "Mode: " + mode.toUpperCase(Locale.ROOT);
+        statusText = "Mode: " + this.activeMode.toUpperCase(Locale.ROOT);
     }
 
     private void updateModeUi() {
-        boolean line = MODE_LINE.equals(activeMode);
         boolean selection = MODE_SELECTION.equals(activeMode);
         boolean blueprint = MODE_BLUEPRINT.equals(activeMode);
 
-        countField.visible = line;
-        countField.active = line;
-        countMinusButton.visible = line;
-        countMinusButton.active = line;
-        countPlusButton.visible = line;
-        countPlusButton.active = line;
+        countField.visible = false;
+        countField.active = false;
+        countMinusButton.visible = false;
+        countMinusButton.active = false;
+        countPlusButton.visible = false;
+        countPlusButton.active = false;
 
-        axisXButton.visible = line;
-        axisXButton.active = line;
-        axisYButton.visible = line;
-        axisYButton.active = line;
-        axisZButton.visible = line;
-        axisZButton.active = line;
+        axisXButton.visible = false;
+        axisXButton.active = false;
+        axisYButton.visible = false;
+        axisYButton.active = false;
+        axisZButton.visible = false;
+        axisZButton.active = false;
 
         heightField.visible = selection;
         heightField.active = selection;
@@ -718,39 +784,43 @@ public class BladelowHudScreen extends Screen {
         markButton.visible = selection;
         markButton.active = selection;
 
-        blueprintField.visible = blueprint;
-        blueprintField.active = blueprint;
-        bpPrevButton.visible = blueprint;
-        bpPrevButton.active = blueprint;
-        bpNextButton.visible = blueprint;
-        bpNextButton.active = blueprint;
+        blueprintField.visible = false;
+        blueprintField.active = false;
+        bpPrevButton.visible = false;
+        bpPrevButton.active = false;
+        bpNextButton.visible = false;
+        bpNextButton.active = false;
+        catalogLimitField.visible = false;
+        catalogLimitField.active = false;
+        webCatalogButton.visible = false;
+        webCatalogButton.active = false;
+        webImportButton.visible = false;
+        webImportButton.active = false;
+
+        webField.visible = blueprint;
+        webField.active = blueprint;
         bpLoadButton.visible = blueprint;
         bpLoadButton.active = blueprint;
         bpBuildButton.visible = blueprint;
         bpBuildButton.active = blueprint;
-        webField.visible = blueprint;
-        webField.active = blueprint;
-        catalogLimitField.visible = blueprint;
-        catalogLimitField.active = blueprint;
-        webCatalogButton.visible = blueprint;
-        webCatalogButton.active = blueprint;
-        webImportButton.visible = blueprint;
-        webImportButton.active = blueprint;
 
-        runButton.setMessage(Text.literal(switch (activeMode) {
-            case MODE_LINE -> "Run Line";
-            case MODE_SELECTION -> "Run Sel";
-            case MODE_BLUEPRINT -> "Run BP";
-            default -> "Run";
-        }));
+        presetLineXButton.visible = false;
+        presetLineXButton.active = false;
+        presetLineZButton.visible = false;
+        presetLineZButton.active = false;
+        presetSelButton.visible = selection;
+        presetSelButton.active = selection;
+        presetBpButton.visible = blueprint;
+        presetBpButton.active = blueprint;
+
+        runButton.setMessage(Text.literal(selection ? "Run Sel" : "Run BP"));
 
         updateModeButtons();
     }
 
     private void updateModeButtons() {
-        modeLineButton.setMessage(Text.literal(MODE_LINE.equals(activeMode) ? "[L]" : "LINE"));
-        modeSelectionButton.setMessage(Text.literal(MODE_SELECTION.equals(activeMode) ? "[S]" : "SEL"));
-        modeBlueprintButton.setMessage(Text.literal(MODE_BLUEPRINT.equals(activeMode) ? "[B]" : "BP"));
+        modeSelectionButton.setMessage(Text.literal(MODE_SELECTION.equals(activeMode) ? "SEL*" : "SEL"));
+        modeBlueprintButton.setMessage(Text.literal(MODE_BLUEPRINT.equals(activeMode) ? "BP*" : "BP"));
     }
 
     private void updateQuickButtons() {
@@ -763,9 +833,8 @@ public class BladelowHudScreen extends Screen {
         }
         for (int i = 0; i < recentButtons.size(); i++) {
             ButtonWidget b = recentButtons.get(i);
-            boolean has = i < recentBlockIds.size();
-            b.visible = has;
-            b.active = has;
+            b.visible = false;
+            b.active = false;
             b.setMessage(Text.literal(""));
         }
         addFavoriteButton.active = selectedSlots[activeSlot] != null;
@@ -796,9 +865,7 @@ public class BladelowHudScreen extends Screen {
             if (button == null) {
                 continue;
             }
-            String prefix = activeSlot == i ? ">" : "";
-            String label = selectedSlots[i] == null ? "-" : shortBlockName(selectedSlots[i], 3).toUpperCase(Locale.ROOT);
-            button.setMessage(Text.literal(prefix + "S" + (i + 1) + ":" + label));
+            button.setMessage(Text.literal(""));
         }
     }
 
@@ -950,9 +1017,9 @@ public class BladelowHudScreen extends Screen {
     }
 
     private void updateAxisButtons() {
-        axisXButton.setMessage(Text.literal("x".equals(axis) ? "[X]" : "X"));
-        axisYButton.setMessage(Text.literal("y".equals(axis) ? "[Y]" : "Y"));
-        axisZButton.setMessage(Text.literal("z".equals(axis) ? "[Z]" : "Z"));
+        axisXButton.setMessage(Text.literal("x".equals(axis) ? "X*" : "X"));
+        axisYButton.setMessage(Text.literal("y".equals(axis) ? "Y*" : "Y"));
+        axisZButton.setMessage(Text.literal("z".equals(axis) ? "Z*" : "Z"));
     }
 
     private void toggleCoordsMode() {
@@ -967,30 +1034,52 @@ public class BladelowHudScreen extends Screen {
 
     private void loadCoordFields() {
         if (manualCoords) {
-            xField.setText(UiState.x);
-            yField.setText(UiState.y);
-            zField.setText(UiState.z);
+            withSuppressedFieldCallbacks(() -> {
+                xField.setText(UiState.x);
+                yField.setText(UiState.y);
+                zField.setText(UiState.z);
+            });
         } else {
             syncCoordsFromPlayer();
         }
-        countField.setText(UiState.count);
-        heightField.setText(UiState.height);
         coordsModeButton.setMessage(Text.literal(manualCoords ? "Manual" : "Auto"));
     }
 
     private void syncCoordsFromPlayer() {
-        if (this.client == null || this.client.player == null) {
+        if (this.client == null || this.client.player == null || xField == null || yField == null || zField == null) {
             return;
         }
-        xField.setText(Integer.toString(this.client.player.getBlockX()));
-        yField.setText(Integer.toString(this.client.player.getBlockY()));
-        zField.setText(Integer.toString(this.client.player.getBlockZ()));
+        withSuppressedFieldCallbacks(() -> {
+            xField.setText(Integer.toString(this.client.player.getBlockX()));
+            yField.setText(Integer.toString(this.client.player.getBlockY()));
+            zField.setText(Integer.toString(this.client.player.getBlockZ()));
+        });
+    }
+
+    private void withSuppressedFieldCallbacks(Runnable action) {
+        boolean wasSuppressed = suppressFieldCallbacks;
+        suppressFieldCallbacks = true;
+        try {
+            action.run();
+        } finally {
+            suppressFieldCallbacks = wasSuppressed;
+        }
+    }
+
+    private void onCoordFieldChanged() {
+        if (suppressFieldCallbacks) {
+            return;
+        }
+        updateRunGuard();
     }
 
     private record Coords(int x, int y, int z) {
     }
 
     private Coords effectiveCoords() {
+        if (xField == null || yField == null || zField == null) {
+            return null;
+        }
         if (!manualCoords) {
             syncCoordsFromPlayer();
         }
@@ -1011,7 +1100,7 @@ public class BladelowHudScreen extends Screen {
         }
 
         switch (activeMode) {
-            case MODE_LINE -> runLineBuild();
+            case "line" -> runSelectionBuild();
             case MODE_SELECTION -> runSelectionBuild();
             case MODE_BLUEPRINT -> buildBlueprint();
             default -> statusText = "Unknown mode";
@@ -1061,7 +1150,7 @@ public class BladelowHudScreen extends Screen {
 
     private void toggleSmartMove() {
         smartMoveEnabled = !smartMoveEnabled;
-        smartMoveButton.setMessage(Text.literal("Smart: " + (smartMoveEnabled ? "ON" : "OFF")));
+        smartMoveButton.setMessage(Text.literal(smartMoveEnabled ? "S*" : "S"));
         sendCommand(smartMoveEnabled ? "blademove on" : "blademove off");
     }
 
@@ -1081,6 +1170,14 @@ public class BladelowHudScreen extends Screen {
         sendCommand("bladesafety preview " + (previewBeforeBuild ? "on" : "off"));
     }
 
+    private void toggleSlotMiniIcons() {
+        slotMiniIconsEnabled = !slotMiniIconsEnabled;
+        if (slotMiniButton != null) {
+            slotMiniButton.setMessage(Text.literal(slotMiniIconsEnabled ? "I*" : "I"));
+        }
+        statusText = slotMiniIconsEnabled ? "Slot icons enabled" : "Slot icons hidden";
+    }
+
     private void adjustReach(double delta) {
         reachDistance = Math.max(2.0, Math.min(8.0, reachDistance + delta));
         reachButton.setMessage(Text.literal("R:" + String.format(Locale.ROOT, "%.2f", reachDistance)));
@@ -1090,21 +1187,15 @@ public class BladelowHudScreen extends Screen {
     private void cycleProfile() {
         profileIndex = (profileIndex + 1) % PROFILE_PRESETS.length;
         String profile = PROFILE_PRESETS[profileIndex];
-        profileButton.setMessage(Text.literal(profile.substring(0, Math.min(4, profile.length()))));
+        profileButton.setMessage(Text.literal("P" + (profileIndex + 1)));
         sendCommand("bladeprofile load " + profile);
     }
 
     private void applyPreset(String preset) {
         switch (preset) {
-            case "line20x" -> {
-                setMode(MODE_LINE);
-                countField.setText("20");
-                setAxis("x");
-            }
-            case "line20z" -> {
-                setMode(MODE_LINE);
-                countField.setText("20");
-                setAxis("z");
+            case "line20x", "line20z" -> {
+                setMode(MODE_SELECTION);
+                heightField.setText("6");
             }
             case "sel6" -> {
                 setMode(MODE_SELECTION);
@@ -1292,12 +1383,14 @@ public class BladelowHudScreen extends Screen {
         updateAxisButtons();
         previewModeButton.setMessage(Text.literal(previewBeforeBuild ? "Prev:ON" : "Prev:OFF"));
         moveModeButton.setMessage(Text.literal("Mode: " + moveMode.toUpperCase(Locale.ROOT)));
-        smartMoveButton.setMessage(Text.literal("Smart: " + (smartMoveEnabled ? "ON" : "OFF")));
+        smartMoveButton.setMessage(Text.literal(smartMoveEnabled ? "S*" : "S"));
         reachButton.setMessage(Text.literal("R:" + String.format(Locale.ROOT, "%.2f", reachDistance)));
         coordsModeButton.setMessage(Text.literal(manualCoords ? "Manual" : "Auto"));
+        if (slotMiniButton != null) {
+            slotMiniButton.setMessage(Text.literal(slotMiniIconsEnabled ? "I*" : "I"));
+        }
 
-        String profile = PROFILE_PRESETS[Math.max(0, Math.min(PROFILE_PRESETS.length - 1, profileIndex))];
-        profileButton.setMessage(Text.literal(profile.substring(0, Math.min(4, profile.length()))));
+        profileButton.setMessage(Text.literal("P" + (clamp(profileIndex, 0, PROFILE_PRESETS.length - 1) + 1)));
         scaleButton.setMessage(Text.literal("Scale: " + SCALE_LABELS[clamp(uiScaleIndex, 0, SCALE_LABELS.length - 1)]));
     }
 
@@ -1350,21 +1443,7 @@ public class BladelowHudScreen extends Screen {
     }
 
     private String validateForRun() {
-        if (MODE_LINE.equals(activeMode)) {
-            if (effectiveCoords() == null) {
-                return "valid XYZ";
-            }
-            Integer count = parseInt(countField.getText());
-            if (count == null || count < 1 || count > 4096) {
-                return "count 1..4096";
-            }
-            if (selectedBlockSpec() == null) {
-                return "at least one slot block";
-            }
-            return "";
-        }
-
-        if (MODE_SELECTION.equals(activeMode)) {
+        if ("line".equals(activeMode) || MODE_SELECTION.equals(activeMode)) {
             Integer height = parseInt(heightField.getText());
             if (height == null || height < 1 || height > 256) {
                 return "height 1..256";
@@ -1581,7 +1660,10 @@ public class BladelowHudScreen extends Screen {
     }
 
     private void loadUiStateForProfile(String profile) {
-        UiState.mode = readProfileValue(profile, "mode", MODE_LINE);
+        UiState.mode = readProfileValue(profile, "mode", MODE_SELECTION);
+        if ("line".equals(UiState.mode)) {
+            UiState.mode = MODE_SELECTION;
+        }
         UiState.axis = readProfileValue(profile, "axis", "x");
         UiState.manualCoords = readProfileBoolean(profile, "manualCoords", false);
 
@@ -1609,6 +1691,7 @@ public class BladelowHudScreen extends Screen {
         UiState.favorites = readProfileValue(profile, "favorites", "minecraft:stone|minecraft:cobblestone|minecraft:oak_planks|minecraft:glass");
         UiState.recent = readProfileValue(profile, "recent", "");
         UiState.scaleIndex = readProfileInt(profile, "scaleIndex", 1);
+        UiState.slotMiniIcons = readProfileBoolean(profile, "slotMiniIcons", true);
     }
 
     private void saveUiState() {
@@ -1625,6 +1708,7 @@ public class BladelowHudScreen extends Screen {
         UiState.pageIndex = pageIndex;
         UiState.activeSlot = activeSlot;
         UiState.scaleIndex = uiScaleIndex;
+        UiState.slotMiniIcons = slotMiniIconsEnabled;
 
         System.arraycopy(selectedSlots, 0, UiState.selectedSlots, 0, SLOT_COUNT);
 
@@ -1687,6 +1771,7 @@ public class BladelowHudScreen extends Screen {
         writeProfileValue(profileKey, "favorites", UiState.favorites);
         writeProfileValue(profileKey, "recent", UiState.recent);
         writeProfileValue(profileKey, "scaleIndex", Integer.toString(UiState.scaleIndex));
+        writeProfileValue(profileKey, "slotMiniIcons", Boolean.toString(UiState.slotMiniIcons));
 
         flushHudStore();
     }
