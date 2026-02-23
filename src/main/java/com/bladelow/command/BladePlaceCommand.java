@@ -27,7 +27,9 @@ import net.minecraft.util.math.BlockPos;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import static net.minecraft.server.command.CommandManager.argument;
 import static net.minecraft.server.command.CommandManager.literal;
@@ -1341,9 +1343,19 @@ public final class BladePlaceCommand {
         if (palette.isEmpty()) {
             return targets;
         }
+        // Map each original block type to a selected palette slot so repeated source
+        // materials stay consistent across the entire blueprint.
+        Map<Block, Block> mapping = new LinkedHashMap<>();
         List<Block> out = new ArrayList<>(targets.size());
-        for (int i = 0; i < targets.size(); i++) {
-            out.add(palette.get(i % palette.size()));
+        int next = 0;
+        for (Block source : targets) {
+            Block mapped = mapping.get(source);
+            if (mapped == null) {
+                mapped = palette.get(next % palette.size());
+                mapping.put(source, mapped);
+                next++;
+            }
+            out.add(mapped);
         }
         return out;
     }

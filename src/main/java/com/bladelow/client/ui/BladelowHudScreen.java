@@ -92,7 +92,7 @@ public class BladelowHudScreen extends Screen {
 
         private static int pageIndex = 0;
         private static int activeSlot = 0;
-        private static final String[] selectedSlots = {"minecraft:stone", null, null};
+        private static final String[] selectedSlots = {null, null, null};
 
         private static String favorites = "minecraft:stone|minecraft:cobblestone|minecraft:oak_planks|minecraft:glass";
         private static String recent = "";
@@ -242,9 +242,6 @@ public class BladelowHudScreen extends Screen {
         this.uiScaleIndex = clamp(UiState.scaleIndex, 0, SCALE_VALUES.length - 1);
 
         System.arraycopy(UiState.selectedSlots, 0, this.selectedSlots, 0, SLOT_COUNT);
-        if (Arrays.stream(this.selectedSlots).allMatch(slot -> slot == null || slot.isBlank())) {
-            this.selectedSlots[0] = "minecraft:stone";
-        }
 
         restoreFavorites(UiState.favorites);
         restoreRecent(UiState.recent);
@@ -396,13 +393,13 @@ public class BladelowHudScreen extends Screen {
         this.runButton = addDrawableChild(ButtonWidget.builder(Text.literal("Start Build"), b -> runActiveMode())
             .dimensions(leftX, actionsY, actionW, buttonH)
             .build());
-        this.previewModeButton = addDrawableChild(ButtonWidget.builder(Text.literal("Cancel"), b -> sendCommand("bladecancel"))
+        this.cancelButton = addDrawableChild(ButtonWidget.builder(Text.literal("Stop"), b -> sendCommand("bladepause"))
             .dimensions(leftX + actionW + rowGap, actionsY, actionW, buttonH)
             .build());
         this.confirmButton = addDrawableChild(ButtonWidget.builder(Text.literal("Continue Build"), b -> sendCommand("bladecontinue"))
             .dimensions(leftX + (actionW + rowGap) * 2, actionsY, actionW, buttonH)
             .build());
-        this.cancelButton = addDrawableChild(ButtonWidget.builder(Text.literal("Stop"), b -> sendCommand("bladepause"))
+        this.previewModeButton = addDrawableChild(ButtonWidget.builder(Text.literal("Cancel"), b -> sendCommand("bladecancel"))
             .dimensions(leftX + (actionW + rowGap) * 3, actionsY, actionW, buttonH)
             .build());
 
@@ -1849,7 +1846,7 @@ public class BladelowHudScreen extends Screen {
 
         UiState.pageIndex = readProfileInt(profile, "pageIndex", 0);
         UiState.activeSlot = readProfileInt(profile, "activeSlot", 0);
-        parseSlots(readProfileValue(profile, "slots", "minecraft:stone||"), UiState.selectedSlots);
+        parseSlots(readProfileValue(profile, "slots", "||"), UiState.selectedSlots);
 
         UiState.favorites = readProfileValue(profile, "favorites", "minecraft:stone|minecraft:cobblestone|minecraft:oak_planks|minecraft:glass");
         UiState.recent = readProfileValue(profile, "recent", "");
