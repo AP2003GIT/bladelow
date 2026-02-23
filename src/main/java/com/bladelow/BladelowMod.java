@@ -21,7 +21,14 @@ public class BladelowMod implements ModInitializer {
             BladePlaceCommand.register(dispatcher)
         );
         ServerTickEvents.END_SERVER_TICK.register(PlacementJobRunner::tick);
-        ServerLifecycleEvents.SERVER_STARTED.register(server -> LOGGER.info("Bladelow blueprint {}", BlueprintLibrary.reload(server)));
+        ServerLifecycleEvents.SERVER_STARTED.register(server -> {
+            LOGGER.info("Bladelow blueprint {}", BlueprintLibrary.reload(server));
+            int restored = PlacementJobRunner.restoreFromCheckpoint(server);
+            if (restored > 0) {
+                LOGGER.info("Bladelow restored paused jobs={}", restored);
+            }
+        });
+        ServerLifecycleEvents.SERVER_STOPPING.register(PlacementJobRunner::saveCheckpoint);
 
         String loadStatus = BladelowLearning.load();
         LOGGER.info("Bladelow model {}", loadStatus);

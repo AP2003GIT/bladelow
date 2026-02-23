@@ -859,7 +859,7 @@ public final class BladePlaceCommand {
                     ctx.getSource().sendError(blueText("Player context required."));
                     return 0;
                 }
-                boolean canceled = PlacementJobRunner.cancel(player.getUuid());
+                boolean canceled = PlacementJobRunner.cancel(ctx.getSource().getServer(), player.getUuid());
                 if (canceled) {
                     ctx.getSource().sendFeedback(() -> blueText("[Bladelow] active build canceled."), false);
                 } else {
@@ -878,7 +878,7 @@ public final class BladePlaceCommand {
                     ctx.getSource().sendError(blueText("Player context required."));
                     return 0;
                 }
-                boolean paused = PlacementJobRunner.pause(player.getUuid());
+                boolean paused = PlacementJobRunner.pause(ctx.getSource().getServer(), player.getUuid());
                 if (paused) {
                     ctx.getSource().sendFeedback(() -> blueText("[Bladelow] build paused. Use #bladecontinue to resume."), false);
                     return 1;
@@ -905,7 +905,7 @@ public final class BladePlaceCommand {
                     ctx.getSource().sendFeedback(() -> blueText("[Bladelow] build is already running."), false);
                     return 1;
                 }
-                boolean resumed = PlacementJobRunner.resume(player.getUuid());
+                boolean resumed = PlacementJobRunner.resume(ctx.getSource().getServer(), player.getUuid());
                 if (!resumed) {
                     ctx.getSource().sendError(blueText("[Bladelow] no paused/pending build to continue."));
                     return 0;
@@ -928,7 +928,7 @@ public final class BladePlaceCommand {
                     ctx.getSource().sendError(blueText("[Bladelow] active build is running; cancel it before confirm"));
                     return 0;
                 }
-                boolean ok = PlacementJobRunner.confirm(player.getUuid());
+                boolean ok = PlacementJobRunner.confirm(ctx.getSource().getServer(), player.getUuid());
                 if (!ok) {
                     ctx.getSource().sendError(blueText("[Bladelow] no pending preview to confirm"));
                     return 0;

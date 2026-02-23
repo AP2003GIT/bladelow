@@ -13,6 +13,7 @@ import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.math.BlockPos;
 
+import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.UUID;
@@ -26,17 +27,43 @@ public final class PlacementJobRunner {
     private PlacementJobRunner() {
     }
 
-    public static boolean submit(PlacementJob job) {
+    private static boolean submit(PlacementJob job) {
         return JOBS.put(job.playerId(), job) != null;
+    }
+
+    public static void saveCheckpoint(MinecraftServer server) {
+        PlacementCheckpointStore.save(
+            server,
+            new ArrayList<>(JOBS.values()),
+            new ArrayList<>(PENDING.values())
+        );
+    }
+
+    public static int restoreFromCheckpoint(MinecraftServer server) {
+        PlacementCheckpointStore.LoadResult result = PlacementCheckpointStore.load(server);
+        JOBS.clear();
+        PENDING.clear();
+
+        // Keep restored jobs paused/pending by default so they do not run before the player returns.
+        for (PlacementJob job : result.active()) {
+            PENDING.put(job.playerId(), job);
+        }
+        for (PlacementJob job : result.pending()) {
+            PENDING.put(job.playerId(), job);
+        }
+        saveCheckpoint(server);
+        return result.restoredCount();
     }
 
     public static void queueOrPreview(MinecraftServer server, PlacementJob job) {
         if (!job.runtimeSettings().previewBeforeBuild()) {
             PENDING.remove(job.playerId());
             submit(job);
+            saveCheckpoint(server);
             return;
         }
         PENDING.put(job.playerId(), job);
+        saveCheckpoint(server);
         ServerPlayerEntity player = server.getPlayerManager().getPlayer(job.playerId());
         if (player != null) {
             player.sendMessage(blueText("[Bladelow] preview ready. Use /bladeconfirm to start or /bladecancel to discard."), false);
@@ -44,22 +71,27 @@ public final class PlacementJobRunner {
         }
     }
 
-    public static boolean cancel(UUID playerId) {
+    public static boolean cancel(MinecraftServer server, UUID playerId) {
         boolean active = JOBS.remove(playerId) != null;
         boolean pending = PENDING.remove(playerId) != null;
-        return active || pending;
+        boolean changed = active || pending;
+        if (changed) {
+            saveCheckpoint(server);
+        }
+        return changed;
     }
 
-    public static boolean pause(UUID playerId) {
+    public static boolean pause(MinecraftServer server, UUID playerId) {
         PlacementJob active = JOBS.remove(playerId);
         if (active == null) {
             return false;
         }
         PENDING.put(playerId, active);
+        saveCheckpoint(server);
         return true;
     }
 
-    public static boolean resume(UUID playerId) {
+    public static boolean resume(MinecraftServer server, UUID playerId) {
         if (JOBS.containsKey(playerId)) {
             return false;
         }
@@ -68,15 +100,17 @@ public final class PlacementJobRunner {
             return false;
         }
         JOBS.put(playerId, pending);
+        saveCheckpoint(server);
         return true;
     }
 
-    public static boolean confirm(UUID playerId) {
+    public static boolean confirm(MinecraftServer server, UUID playerId) {
         PlacementJob pending = PENDING.remove(playerId);
         if (pending == null) {
             return false;
         }
         JOBS.put(playerId, pending);
+        saveCheckpoint(server);
         return true;
     }
 
@@ -127,19 +161,23 @@ public final class PlacementJobRunner {
 
     public static void tick(MinecraftServer server) {
         Iterator<Map.Entry<UUID, PlacementJob>> it = JOBS.entrySet().iterator();
+        boolean stateChanged = false;
 
         while (it.hasNext()) {
             Map.Entry<UUID, PlacementJob> entry = it.next();
             PlacementJob job = entry.getValue();
             ServerPlayerEntity player = server.getPlayerManager().getPlayer(job.playerId());
             if (player == null) {
+                PENDING.put(job.playerId(), job);
                 it.remove();
+                stateChanged = true;
                 continue;
             }
 
             if (job.isComplete()) {
                 finishJob(player, job);
                 it.remove();
+                stateChanged = true;
                 continue;
             }
             job.tick();
@@ -148,6 +186,7 @@ public final class PlacementJobRunner {
             if (world == null) {
                 player.sendMessage(blueText("[Bladelow] Target world unavailable. Build canceled."), false);
                 it.remove();
+                stateChanged = true;
                 continue;
             }
 
@@ -281,7 +320,12 @@ public final class PlacementJobRunner {
             if (job.isComplete()) {
                 finishJob(player, job);
                 it.remove();
+                stateChanged = true;
             }
+        }
+
+        if (stateChanged || ((!JOBS.isEmpty() || !PENDING.isEmpty()) && server.getTicks() % 40 == 0)) {
+            saveCheckpoint(server);
         }
     }
 

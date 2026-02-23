@@ -1,7 +1,10 @@
 package com.bladelow.builder;
 
 import net.minecraft.block.Block;
+import net.minecraft.registry.Registries;
 import net.minecraft.registry.RegistryKey;
+import net.minecraft.registry.RegistryKeys;
+import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.World;
 
@@ -273,6 +276,141 @@ public class PlacementJob {
             + " avgScore=" + String.format(Locale.ROOT, "%.3f", avgScore)
             + " last=" + lastEvent
             + " " + runtimeSettings.summary();
+    }
+
+    public JobSnapshot snapshot() {
+        List<EntrySnapshot> entrySnapshots = new ArrayList<>(entries.size());
+        for (Entry entry : entries) {
+            Identifier blockId = Registries.BLOCK.getId(entry.block);
+            if (blockId == null) {
+                return null;
+            }
+            entrySnapshots.add(new EntrySnapshot(
+                blockId.toString(),
+                entry.target.getX(),
+                entry.target.getY(),
+                entry.target.getZ(),
+                entry.attempts,
+                entry.deferrals
+            ));
+        }
+        return new JobSnapshot(
+            playerId,
+            worldKey.getValue().toString(),
+            tag,
+            runtimeSettings,
+            cursor,
+            placed,
+            skipped,
+            failed,
+            moved,
+            deferred,
+            reprioritized,
+            alreadyPlaced,
+            blocked,
+            protectedBlocked,
+            noReach,
+            mlRejected,
+            totalScore,
+            ticks,
+            lastEvent,
+            entrySnapshots
+        );
+    }
+
+    public static PlacementJob fromSnapshot(JobSnapshot snapshot) {
+        if (snapshot == null || snapshot.entries() == null || snapshot.entries().isEmpty()) {
+            return null;
+        }
+        Identifier worldId = Identifier.tryParse(snapshot.worldId());
+        if (worldId == null) {
+            return null;
+        }
+
+        List<Block> blocks = new ArrayList<>(snapshot.entries().size());
+        List<BlockPos> targets = new ArrayList<>(snapshot.entries().size());
+        for (EntrySnapshot entry : snapshot.entries()) {
+            if (entry == null) {
+                return null;
+            }
+            Identifier blockId = Identifier.tryParse(entry.blockId());
+            if (blockId == null || !Registries.BLOCK.containsId(blockId)) {
+                return null;
+            }
+            Block block = Registries.BLOCK.get(blockId);
+            if (block == null) {
+                return null;
+            }
+            blocks.add(block);
+            targets.add(new BlockPos(entry.x(), entry.y(), entry.z()));
+        }
+
+        PlacementJob job = new PlacementJob(
+            snapshot.playerId(),
+            RegistryKey.of(RegistryKeys.WORLD, worldId),
+            blocks,
+            targets,
+            snapshot.tag(),
+            snapshot.runtimeSettings()
+        );
+
+        for (int i = 0; i < snapshot.entries().size(); i++) {
+            EntrySnapshot entrySnapshot = snapshot.entries().get(i);
+            Entry entry = job.entries.get(i);
+            entry.attempts = Math.max(0, entrySnapshot.attempts());
+            entry.deferrals = Math.max(0, entrySnapshot.deferrals());
+        }
+
+        job.cursor = Math.max(0, Math.min(snapshot.cursor(), job.entries.size()));
+        job.placed = Math.max(0, snapshot.placed());
+        job.skipped = Math.max(0, snapshot.skipped());
+        job.failed = Math.max(0, snapshot.failed());
+        job.moved = Math.max(0, snapshot.moved());
+        job.deferred = Math.max(0, snapshot.deferred());
+        job.reprioritized = Math.max(0, snapshot.reprioritized());
+        job.alreadyPlaced = Math.max(0, snapshot.alreadyPlaced());
+        job.blocked = Math.max(0, snapshot.blocked());
+        job.protectedBlocked = Math.max(0, snapshot.protectedBlocked());
+        job.noReach = Math.max(0, snapshot.noReach());
+        job.mlRejected = Math.max(0, snapshot.mlRejected());
+        job.totalScore = Math.max(0.0, snapshot.totalScore());
+        job.ticks = Math.max(0, snapshot.ticks());
+        job.noteEvent(snapshot.lastEvent());
+        return job;
+    }
+
+    public record EntrySnapshot(
+        String blockId,
+        int x,
+        int y,
+        int z,
+        int attempts,
+        int deferrals
+    ) {
+    }
+
+    public record JobSnapshot(
+        UUID playerId,
+        String worldId,
+        String tag,
+        BuildRuntimeSettings.Snapshot runtimeSettings,
+        int cursor,
+        int placed,
+        int skipped,
+        int failed,
+        int moved,
+        int deferred,
+        int reprioritized,
+        int alreadyPlaced,
+        int blocked,
+        int protectedBlocked,
+        int noReach,
+        int mlRejected,
+        double totalScore,
+        int ticks,
+        String lastEvent,
+        List<EntrySnapshot> entries
+    ) {
     }
 
     private static final class Entry {
