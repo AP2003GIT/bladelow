@@ -113,27 +113,52 @@ public final class BlueprintLibrary {
         if (id == null || !Registries.BLOCK.containsId(id)) {
             return SaveResult.error("invalid block id: " + blockId);
         }
+        List<BlueprintPlacement> placements = new ArrayList<>(points.size());
+        for (BlockPos p : points) {
+            placements.add(new BlueprintPlacement(p, id.toString()));
+        }
+        return savePlacementsAsBlueprint(server, name, placements);
+    }
+
+    public static synchronized SaveResult savePlacementsAsBlueprint(
+        MinecraftServer server,
+        String name,
+        List<BlueprintPlacement> placements
+    ) {
+        if (placements == null || placements.isEmpty()) {
+            return SaveResult.error("no placements to save");
+        }
         String normalizedName = normalize(name);
         if (normalizedName.isBlank()) {
             return SaveResult.error("invalid blueprint name");
         }
 
-        int minX = points.stream().mapToInt(BlockPos::getX).min().orElse(0);
-        int minY = points.stream().mapToInt(BlockPos::getY).min().orElse(0);
-        int minZ = points.stream().mapToInt(BlockPos::getZ).min().orElse(0);
-
-        List<BlockPos> sorted = points.stream()
+        List<BlueprintPlacement> sorted = placements.stream()
+            .filter(entry -> entry != null && entry.pos() != null && entry.blockId() != null && !entry.blockId().isBlank())
             .sorted(
-                Comparator.comparingInt(BlockPos::getY)
-                    .thenComparingInt(BlockPos::getX)
-                    .thenComparingInt(BlockPos::getZ)
+                Comparator.comparingInt((BlueprintPlacement p) -> p.pos().getY())
+                    .thenComparingInt(p -> p.pos().getX())
+                    .thenComparingInt(p -> p.pos().getZ())
             )
             .toList();
+        if (sorted.isEmpty()) {
+            return SaveResult.error("no valid placements to save");
+        }
+
+        int minX = sorted.stream().mapToInt(p -> p.pos().getX()).min().orElse(0);
+        int minY = sorted.stream().mapToInt(p -> p.pos().getY()).min().orElse(0);
+        int minZ = sorted.stream().mapToInt(p -> p.pos().getZ()).min().orElse(0);
 
         BlueprintJson out = new BlueprintJson();
         out.name = normalizedName;
         out.placements = new ArrayList<>(sorted.size());
-        for (BlockPos p : sorted) {
+        for (BlueprintPlacement placement : sorted) {
+            String blockText = placement.blockId().trim();
+            Identifier id = Identifier.tryParse(blockText);
+            if (id == null || !Registries.BLOCK.containsId(id)) {
+                return SaveResult.error("invalid block id in placements: " + blockText);
+            }
+            BlockPos p = placement.pos();
             out.placements.add(new PlacementJson(
                 p.getX() - minX,
                 p.getY() - minY,
@@ -296,6 +321,9 @@ public final class BlueprintLibrary {
         public static SaveResult error(String message) {
             return new SaveResult(false, message);
         }
+    }
+
+    public record BlueprintPlacement(BlockPos pos, String blockId) {
     }
 
     private record BlueprintTemplate(String name, List<PlacementEntry> placements) {

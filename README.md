@@ -93,6 +93,8 @@ Selection:
 - `#bladeselect box <x1> <y1> <z1> <x2> <y2> <z2> [solid|hollow]`
 - `#bladeselect buildh <height> <blocks_csv>`
 - `#bladeselect export <name> <block_id>`
+- `#bladeselect exportscan <name>`
+- `#bladeselect copybox <name> <x1> <y1> <z1> <x2> <y2> <z2>`
 
 Movement/runtime tuning:
 - `#blademove show`
@@ -147,6 +149,14 @@ Selection workflow:
 #bladeselect markerbox 8 -60 8 12 -60 12 6 solid
 #bladeselect buildh 6 minecraft:stone,minecraft:glass,minecraft:oak_planks
 #bladestatus detail
+```
+
+Copy + recreate workflow:
+
+```text
+#bladeselect copybox my_house 100 64 100 124 78 124
+#bladeblueprint load my_house
+#bladeblueprint build my_house 200 64 200
 ```
 
 Direct place build:
