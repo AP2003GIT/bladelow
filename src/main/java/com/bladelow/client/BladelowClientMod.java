@@ -22,6 +22,8 @@ public class BladelowClientMod implements ClientModInitializer {
         "bladeplace",
         "bladeselect",
         "bladecancel",
+        "bladepause",
+        "bladecontinue",
         "bladeconfirm",
         "bladepreview",
         "bladestatus",

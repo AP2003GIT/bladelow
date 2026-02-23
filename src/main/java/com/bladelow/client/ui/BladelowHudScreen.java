@@ -14,6 +14,7 @@ import net.minecraft.item.Items;
 import net.minecraft.registry.Registries;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
+import net.minecraft.util.math.BlockPos;
 import org.lwjgl.glfw.GLFW;
 
 import java.io.IOException;
@@ -98,6 +99,8 @@ public class BladelowHudScreen extends Screen {
         private static String recent = "";
         private static int scaleIndex = 1;
         private static boolean slotMiniIcons = true;
+        private static String markerA = "";
+        private static String markerB = "";
     }
 
     private final String profileKey;
@@ -205,6 +208,8 @@ public class BladelowHudScreen extends Screen {
     private boolean slotMiniIconsEnabled;
     private String moveMode;
     private double reachDistance;
+    private BlockPos markerA;
+    private BlockPos markerB;
 
     private double uiScale = 1.0;
 
@@ -232,6 +237,8 @@ public class BladelowHudScreen extends Screen {
         this.moveMode = UiState.moveMode;
         this.reachDistance = UiState.reach;
         this.profileIndex = UiState.profileIndex;
+        this.markerA = decodePos(UiState.markerA);
+        this.markerB = decodePos(UiState.markerB);
 
         this.pageIndex = UiState.pageIndex;
         this.activeSlot = UiState.activeSlot;
@@ -390,13 +397,13 @@ public class BladelowHudScreen extends Screen {
         this.runButton = addDrawableChild(ButtonWidget.builder(Text.literal("Start Build"), b -> runActiveMode())
             .dimensions(leftX, actionsY, actionW, sx(20))
             .build());
-        this.previewModeButton = addDrawableChild(ButtonWidget.builder(Text.literal("Prev"), b -> togglePreviewMode())
+        this.previewModeButton = addDrawableChild(ButtonWidget.builder(Text.literal("Cancel"), b -> sendCommand("bladecancel"))
             .dimensions(leftX + actionW + rowGap, actionsY, actionW, sx(20))
             .build());
-        this.confirmButton = addDrawableChild(ButtonWidget.builder(Text.literal("Confirm"), b -> sendCommand("bladeconfirm"))
+        this.confirmButton = addDrawableChild(ButtonWidget.builder(Text.literal("Continue"), b -> sendCommand("bladecontinue"))
             .dimensions(leftX + (actionW + rowGap) * 2, actionsY, actionW, sx(20))
             .build());
-        this.cancelButton = addDrawableChild(ButtonWidget.builder(Text.literal("Stop Build"), b -> sendCommand("bladecancel"))
+        this.cancelButton = addDrawableChild(ButtonWidget.builder(Text.literal("Stop"), b -> sendCommand("bladepause"))
             .dimensions(leftX + (actionW + rowGap) * 3, actionsY, actionW, sx(20))
             .build());
 
@@ -432,24 +439,24 @@ public class BladelowHudScreen extends Screen {
         rightRowY += buttonH + rowGap;
         int centerW = sx(18);
         int sideW = (rightW - centerW - rowGap * 2) / 2;
-        this.presetLineXButton = addDrawableChild(ButtonWidget.builder(Text.literal("L20X"), b -> applyPreset("line20x"))
+        this.presetLineXButton = addDrawableChild(ButtonWidget.builder(Text.literal("Set A"), b -> captureMarkerA())
             .dimensions(rightX, rightRowY, sideW, buttonH)
             .build());
         this.smartMoveButton = addDrawableChild(ButtonWidget.builder(Text.literal("S"), b -> toggleSmartMove())
             .dimensions(rightX + sideW + rowGap, rightRowY, centerW, buttonH)
             .build());
-        this.presetLineZButton = addDrawableChild(ButtonWidget.builder(Text.literal("L20Z"), b -> applyPreset("line20z"))
+        this.presetLineZButton = addDrawableChild(ButtonWidget.builder(Text.literal("Set B"), b -> captureMarkerB())
             .dimensions(rightX + sideW + rowGap + centerW + rowGap, rightRowY, sideW, buttonH)
             .build());
 
         rightRowY += buttonH + rowGap;
-        this.presetSelButton = addDrawableChild(ButtonWidget.builder(Text.literal("SEL6"), b -> applyPreset("sel6"))
+        this.presetSelButton = addDrawableChild(ButtonWidget.builder(Text.literal("Mark Box"), b -> applyMarkerBox())
             .dimensions(rightX, rightRowY, sideW, buttonH)
             .build());
         this.profileButton = addDrawableChild(ButtonWidget.builder(Text.literal("P"), b -> cycleProfile())
             .dimensions(rightX + sideW + rowGap, rightRowY, centerW, buttonH)
             .build());
-        this.presetBpButton = addDrawableChild(ButtonWidget.builder(Text.literal("BP20"), b -> applyPreset("bp20"))
+        this.presetBpButton = addDrawableChild(ButtonWidget.builder(Text.literal("Clr Mk"), b -> clearMarkers())
             .dimensions(rightX + sideW + rowGap + centerW + rowGap, rightRowY, sideW, buttonH)
             .build());
 
@@ -747,8 +754,8 @@ public class BladelowHudScreen extends Screen {
 
     private String modeHintText() {
         return switch (activeMode) {
-            case MODE_SELECTION -> "M mark points, then run selection";
-            case MODE_BLUEPRINT -> "Import URL or pick BP preset";
+            case MODE_SELECTION -> "Set A/B -> Mark Box -> Start | C stop V continue";
+            case MODE_BLUEPRINT -> "Import BuildIt URL, then Start | marker A = anchor";
             default -> "Ready";
         };
     }
@@ -781,8 +788,8 @@ public class BladelowHudScreen extends Screen {
         heightField.visible = selection;
         heightField.active = selection;
 
-        markButton.visible = selection;
-        markButton.active = selection;
+        markButton.visible = true;
+        markButton.active = true;
 
         blueprintField.visible = false;
         blueprintField.active = false;
@@ -804,18 +811,22 @@ public class BladelowHudScreen extends Screen {
         bpBuildButton.visible = blueprint;
         bpBuildButton.active = blueprint;
 
-        presetLineXButton.visible = false;
-        presetLineXButton.active = false;
-        presetLineZButton.visible = false;
-        presetLineZButton.active = false;
-        presetSelButton.visible = selection;
-        presetSelButton.active = selection;
-        presetBpButton.visible = blueprint;
-        presetBpButton.active = blueprint;
+        presetLineXButton.visible = true;
+        presetLineXButton.active = true;
+        presetLineZButton.visible = true;
+        presetLineZButton.active = true;
+        presetSelButton.visible = true;
+        presetSelButton.active = true;
+        presetBpButton.visible = true;
+        presetBpButton.active = true;
 
-        runButton.setMessage(Text.literal(selection ? "Run Sel" : "Run BP"));
+        runButton.setMessage(Text.literal("Start Build"));
+        cancelButton.setMessage(Text.literal("Stop"));
+        confirmButton.setMessage(Text.literal("Continue"));
+        previewModeButton.setMessage(Text.literal("Cancel"));
 
         updateModeButtons();
+        updateMarkerButtonLabels();
     }
 
     private void updateModeButtons() {
@@ -1131,11 +1142,21 @@ public class BladelowHudScreen extends Screen {
             statusText = "Height must be 1..256";
             return;
         }
+        if (markerA == null || markerB == null) {
+            statusText = "Set marker A and marker B first";
+            return;
+        }
         String blockSpec = selectedBlockSpec();
         if (blockSpec == null) {
             statusText = "Select at least one block";
             return;
         }
+        sendCommand(String.format(Locale.ROOT,
+            "bladeselect markerbox %d %d %d %d %d %d %d solid",
+            markerA.getX(), markerA.getY(), markerA.getZ(),
+            markerB.getX(), markerB.getY(), markerB.getZ(),
+            height
+        ));
         sendCommand("bladeselect buildh " + height + " " + blockSpec);
     }
 
@@ -1145,7 +1166,91 @@ public class BladelowHudScreen extends Screen {
             statusText = "Invalid coords";
             return;
         }
-        sendCommand("bladeselect add " + c.x + " " + c.y + " " + c.z);
+        BlockPos marker = new BlockPos(c.x, c.y, c.z);
+        if (markerA == null) {
+            markerA = marker;
+            updateMarkerButtonLabels();
+            statusText = "Marker A set: " + shortTarget(markerA);
+            return;
+        }
+        markerB = marker;
+        updateMarkerButtonLabels();
+        statusText = "Marker B set: " + shortTarget(markerB);
+        applyMarkerBox();
+    }
+
+    private void captureMarkerA() {
+        Coords c = effectiveCoords();
+        if (c == null) {
+            statusText = "Invalid coords for marker A";
+            return;
+        }
+        markerA = new BlockPos(c.x, c.y, c.z);
+        updateMarkerButtonLabels();
+        statusText = "Marker A set: " + shortTarget(markerA);
+    }
+
+    private void captureMarkerB() {
+        Coords c = effectiveCoords();
+        if (c == null) {
+            statusText = "Invalid coords for marker B";
+            return;
+        }
+        markerB = new BlockPos(c.x, c.y, c.z);
+        updateMarkerButtonLabels();
+        statusText = "Marker B set: " + shortTarget(markerB);
+    }
+
+    private void applyMarkerBox() {
+        if (markerA == null || markerB == null) {
+            statusText = "Set marker A and marker B first";
+            return;
+        }
+        Integer height = parseInt(heightField.getText());
+        if (height == null || height < 1 || height > 256) {
+            statusText = "Height must be 1..256";
+            return;
+        }
+        sendCommand(String.format(Locale.ROOT,
+            "bladeselect markerbox %d %d %d %d %d %d %d solid",
+            markerA.getX(), markerA.getY(), markerA.getZ(),
+            markerB.getX(), markerB.getY(), markerB.getZ(),
+            height
+        ));
+    }
+
+    private void clearMarkers() {
+        markerA = null;
+        markerB = null;
+        updateMarkerButtonLabels();
+        sendCommand("bladeselect clear");
+        statusText = "Markers cleared";
+    }
+
+    private String shortTarget(BlockPos pos) {
+        if (pos == null) {
+            return "-";
+        }
+        return pos.getX() + "," + pos.getY() + "," + pos.getZ();
+    }
+
+    private void updateMarkerButtonLabels() {
+        if (markButton != null) {
+            String markLabel = markerA == null ? "Mark A" : (markerB == null ? "Mark B" : "Remark B");
+            markButton.setMessage(Text.literal(markLabel));
+        }
+        if (presetLineXButton != null) {
+            presetLineXButton.setMessage(Text.literal(markerA == null ? "Set A" : "A*"));
+        }
+        if (presetLineZButton != null) {
+            presetLineZButton.setMessage(Text.literal(markerB == null ? "Set B" : "B*"));
+        }
+        if (presetSelButton != null) {
+            presetSelButton.setMessage(Text.literal("Mark Box"));
+        }
+        if (presetBpButton != null) {
+            presetBpButton.setMessage(Text.literal("Clr Mk"));
+        }
     }
 
     private void toggleSmartMove() {
@@ -1246,7 +1351,12 @@ public class BladelowHudScreen extends Screen {
     }
 
     private void buildBlueprint() {
-        Coords c = effectiveCoords();
+        Coords c;
+        if (markerA != null) {
+            c = new Coords(markerA.getX(), markerA.getY(), markerA.getZ());
+        } else {
+            c = effectiveCoords();
+        }
         if (c == null) {
             statusText = "Invalid coords";
             return;
@@ -1381,7 +1491,10 @@ public class BladelowHudScreen extends Screen {
     private void refreshButtonLabels() {
         updateModeButtons();
         updateAxisButtons();
-        previewModeButton.setMessage(Text.literal(previewBeforeBuild ? "Prev:ON" : "Prev:OFF"));
+        previewModeButton.setMessage(Text.literal("Cancel"));
+        confirmButton.setMessage(Text.literal("Continue"));
+        cancelButton.setMessage(Text.literal("Stop"));
+        runButton.setMessage(Text.literal("Start Build"));
         moveModeButton.setMessage(Text.literal("Mode: " + moveMode.toUpperCase(Locale.ROOT)));
         smartMoveButton.setMessage(Text.literal(smartMoveEnabled ? "S*" : "S"));
         reachButton.setMessage(Text.literal("R:" + String.format(Locale.ROOT, "%.2f", reachDistance)));
@@ -1389,6 +1502,7 @@ public class BladelowHudScreen extends Screen {
         if (slotMiniButton != null) {
             slotMiniButton.setMessage(Text.literal(slotMiniIconsEnabled ? "I*" : "I"));
         }
+        updateMarkerButtonLabels();
 
         profileButton.setMessage(Text.literal("P" + (clamp(profileIndex, 0, PROFILE_PRESETS.length - 1) + 1)));
         scaleButton.setMessage(Text.literal("Scale: " + SCALE_LABELS[clamp(uiScaleIndex, 0, SCALE_LABELS.length - 1)]));
@@ -1420,14 +1534,20 @@ public class BladelowHudScreen extends Screen {
         if (command.startsWith("bladeblueprint build")) {
             return "Queueing blueprint...";
         }
-        if (command.startsWith("bladeplace")) {
-            return "Queueing line build...";
-        }
         if (command.startsWith("bladeselect buildh")) {
             return "Queueing selection columns...";
         }
         if (command.startsWith("bladeselect add")) {
             return "Selection updated";
+        }
+        if (command.startsWith("bladeselect markerbox")) {
+            return "Area markers updated";
+        }
+        if (command.startsWith("bladepause")) {
+            return "Build paused";
+        }
+        if (command.startsWith("bladecontinue")) {
+            return "Continuing build...";
         }
         if (command.startsWith("blademove") || command.startsWith("bladesafety") || command.startsWith("bladeprofile")) {
             return "Runtime updated";
@@ -1444,6 +1564,9 @@ public class BladelowHudScreen extends Screen {
 
     private String validateForRun() {
         if ("line".equals(activeMode) || MODE_SELECTION.equals(activeMode)) {
+            if (markerA == null || markerB == null) {
+                return "set markers A/B";
+            }
             Integer height = parseInt(heightField.getText());
             if (height == null || height < 1 || height > 256) {
                 return "height 1..256";
@@ -1455,8 +1578,8 @@ public class BladelowHudScreen extends Screen {
         }
 
         if (MODE_BLUEPRINT.equals(activeMode)) {
-            if (effectiveCoords() == null) {
-                return "valid XYZ";
+            if (markerA == null && effectiveCoords() == null) {
+                return "valid XYZ or marker A";
             }
             return "";
         }
@@ -1578,6 +1701,31 @@ public class BladelowHudScreen extends Screen {
         }
     }
 
+    private static String encodePos(BlockPos pos) {
+        if (pos == null) {
+            return "";
+        }
+        return pos.getX() + "," + pos.getY() + "," + pos.getZ();
+    }
+
+    private static BlockPos decodePos(String encoded) {
+        if (encoded == null || encoded.isBlank()) {
+            return null;
+        }
+        String[] parts = encoded.split(",");
+        if (parts.length != 3) {
+            return null;
+        }
+        try {
+            int x = Integer.parseInt(parts[0].trim());
+            int y = Integer.parseInt(parts[1].trim());
+            int z = Integer.parseInt(parts[2].trim());
+            return new BlockPos(x, y, z);
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
     private static String resolveProfileKey(MinecraftClient client) {
         if (client == null) {
             return "default";
@@ -1692,6 +1840,8 @@ public class BladelowHudScreen extends Screen {
         UiState.recent = readProfileValue(profile, "recent", "");
         UiState.scaleIndex = readProfileInt(profile, "scaleIndex", 1);
         UiState.slotMiniIcons = readProfileBoolean(profile, "slotMiniIcons", true);
+        UiState.markerA = readProfileValue(profile, "markerA", "");
+        UiState.markerB = readProfileValue(profile, "markerB", "");
     }
 
     private void saveUiState() {
@@ -1709,6 +1859,8 @@ public class BladelowHudScreen extends Screen {
         UiState.activeSlot = activeSlot;
         UiState.scaleIndex = uiScaleIndex;
         UiState.slotMiniIcons = slotMiniIconsEnabled;
+        UiState.markerA = encodePos(markerA);
+        UiState.markerB = encodePos(markerB);
 
         System.arraycopy(selectedSlots, 0, UiState.selectedSlots, 0, SLOT_COUNT);
 
@@ -1772,6 +1924,8 @@ public class BladelowHudScreen extends Screen {
         writeProfileValue(profileKey, "recent", UiState.recent);
         writeProfileValue(profileKey, "scaleIndex", Integer.toString(UiState.scaleIndex));
         writeProfileValue(profileKey, "slotMiniIcons", Boolean.toString(UiState.slotMiniIcons));
+        writeProfileValue(profileKey, "markerA", UiState.markerA);
+        writeProfileValue(profileKey, "markerB", UiState.markerB);
 
         flushHudStore();
     }
@@ -1795,11 +1949,11 @@ public class BladelowHudScreen extends Screen {
                 return true;
             }
             if (keyCode == GLFW.GLFW_KEY_C) {
-                sendCommand("bladecancel");
+                sendCommand("bladepause");
                 return true;
             }
             if (keyCode == GLFW.GLFW_KEY_V) {
-                togglePreviewMode();
+                sendCommand("bladecontinue");
                 return true;
             }
         }

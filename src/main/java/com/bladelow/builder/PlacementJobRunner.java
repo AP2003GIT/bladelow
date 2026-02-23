@@ -50,6 +50,27 @@ public final class PlacementJobRunner {
         return active || pending;
     }
 
+    public static boolean pause(UUID playerId) {
+        PlacementJob active = JOBS.remove(playerId);
+        if (active == null) {
+            return false;
+        }
+        PENDING.put(playerId, active);
+        return true;
+    }
+
+    public static boolean resume(UUID playerId) {
+        if (JOBS.containsKey(playerId)) {
+            return false;
+        }
+        PlacementJob pending = PENDING.remove(playerId);
+        if (pending == null) {
+            return false;
+        }
+        JOBS.put(playerId, pending);
+        return true;
+    }
+
     public static boolean confirm(UUID playerId) {
         PlacementJob pending = PENDING.remove(playerId);
         if (pending == null) {
