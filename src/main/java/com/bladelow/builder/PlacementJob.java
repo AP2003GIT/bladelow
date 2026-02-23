@@ -35,6 +35,9 @@ public class PlacementJob {
     private double totalScore;
     private int ticks;
     private String lastEvent = "queued";
+    private TaskNode node = TaskNode.MOVE;
+    private RecoverReason recoverReason = RecoverReason.NONE;
+    private String recoverDetail = "";
 
     public PlacementJob(
         UUID playerId,
@@ -95,6 +98,7 @@ public class PlacementJob {
 
     public void advance() {
         cursor++;
+        resetTaskNode();
     }
 
     public int currentAttempts() {
@@ -149,6 +153,7 @@ public class PlacementJob {
         current.attempts = 0;
         entries.add(current);
         deferred++;
+        resetTaskNode();
         return true;
     }
 
@@ -221,6 +226,39 @@ public class PlacementJob {
         lastEvent = trimmed;
     }
 
+    public TaskNode currentNode() {
+        return node;
+    }
+
+    public void setNode(TaskNode node) {
+        this.node = node == null ? TaskNode.MOVE : node;
+    }
+
+    public RecoverReason recoverReason() {
+        return recoverReason;
+    }
+
+    public String recoverDetail() {
+        return recoverDetail;
+    }
+
+    public void startRecover(RecoverReason reason, String detail) {
+        this.node = TaskNode.RECOVER;
+        this.recoverReason = reason == null ? RecoverReason.UNKNOWN : reason;
+        if (detail == null) {
+            this.recoverDetail = "";
+        } else {
+            String trimmed = detail.trim();
+            this.recoverDetail = trimmed.length() > 96 ? trimmed.substring(0, 96) : trimmed;
+        }
+    }
+
+    public void resetTaskNode() {
+        this.node = TaskNode.MOVE;
+        this.recoverReason = RecoverReason.NONE;
+        this.recoverDetail = "";
+    }
+
     public void addScore(double score) {
         totalScore += score;
     }
@@ -246,6 +284,7 @@ public class PlacementJob {
                 + " defers=" + currentDeferrals();
         }
         return "[Bladelow] " + tag + " progress " + cursor + "/" + totalTargets()
+            + " node=" + node.name().toLowerCase(Locale.ROOT)
             + " placed=" + placed
             + " skipped=" + skipped
             + " failed=" + failed
@@ -261,6 +300,7 @@ public class PlacementJob {
         double noReachPct = (noReach * 100.0) / Math.max(1, totalTargets());
         return "[Bladelow] " + tag
             + " targets=" + totalTargets()
+            + " node=" + node.name().toLowerCase(Locale.ROOT)
             + " placed=" + placed
             + " skipped=" + skipped
             + " failed=" + failed
@@ -314,6 +354,9 @@ public class PlacementJob {
             totalScore,
             ticks,
             lastEvent,
+            node,
+            recoverReason,
+            recoverDetail,
             entrySnapshots
         );
     }
@@ -376,6 +419,9 @@ public class PlacementJob {
         job.totalScore = Math.max(0.0, snapshot.totalScore());
         job.ticks = Math.max(0, snapshot.ticks());
         job.noteEvent(snapshot.lastEvent());
+        job.node = snapshot.node() == null ? TaskNode.MOVE : snapshot.node();
+        job.recoverReason = snapshot.recoverReason() == null ? RecoverReason.NONE : snapshot.recoverReason();
+        job.recoverDetail = snapshot.recoverDetail() == null ? "" : snapshot.recoverDetail();
         return job;
     }
 
@@ -409,8 +455,30 @@ public class PlacementJob {
         double totalScore,
         int ticks,
         String lastEvent,
+        TaskNode node,
+        RecoverReason recoverReason,
+        String recoverDetail,
         List<EntrySnapshot> entries
     ) {
+    }
+
+    public enum TaskNode {
+        MOVE,
+        ALIGN,
+        PLACE,
+        RECOVER
+    }
+
+    public enum RecoverReason {
+        NONE,
+        OUT_OF_REACH,
+        PROTECTED_BLOCK,
+        BLOCKED_STRICT_AIR,
+        BLOCKED_SOLID,
+        NO_ITEM,
+        ML_REJECTED,
+        PLACE_FAILED,
+        UNKNOWN
     }
 
     private static final class Entry {

@@ -23,6 +23,7 @@ public final class PlacementJobRunner {
     private static final Map<UUID, PlacementJob> JOBS = new ConcurrentHashMap<>();
     private static final Map<UUID, PlacementJob> PENDING = new ConcurrentHashMap<>();
     private static final int MAX_RETRIES_PER_TARGET = 3;
+    private static final int MAX_BLOCKED_RETRIES = 2;
 
     private PlacementJobRunner() {
     }
@@ -190,129 +191,11 @@ public final class PlacementJobRunner {
                 continue;
             }
 
-            if (job.runtimeSettings().targetSchedulerEnabled()) {
+            if (job.runtimeSettings().targetSchedulerEnabled() && job.currentNode() == PlacementJob.TaskNode.MOVE) {
                 job.selectBestTargetNear(player.getBlockPos(), job.runtimeSettings().schedulerLookahead());
             }
+            runTaskNode(world, player, job);
 
-            var target = job.currentTarget();
-            int moveStatus = BuildNavigation.ensureInRangeForPlacement(world, player, target, job.runtimeSettings());
-            if (moveStatus < 0) {
-                int tries = job.incrementCurrentAttempts();
-                if (tries >= MAX_RETRIES_PER_TARGET) {
-                    boolean wasDeferred = false;
-                    if (job.runtimeSettings().deferUnreachableTargets()
-                        && job.currentDeferrals() < job.runtimeSettings().maxTargetDeferrals()) {
-                        wasDeferred = job.deferCurrentToTail();
-                    }
-
-                    job.recordNoReach();
-                    if (!wasDeferred) {
-                        job.recordSkipped();
-                        job.noteEvent("out_of_reach->skipped target=" + shortTarget(target));
-                        job.advance();
-                    } else {
-                        job.noteEvent("out_of_reach->deferred target=" + shortTarget(target));
-                    }
-                } else {
-                    job.noteEvent("out_of_reach retry=" + tries + "/" + MAX_RETRIES_PER_TARGET + " target=" + shortTarget(target));
-                }
-                if (job.shouldReportProgress()) {
-                    player.sendMessage(blueText(job.progressSummary()), false);
-                }
-                continue;
-            }
-            if (moveStatus > 0) {
-                job.recordMoved();
-                job.noteEvent("moved target=" + shortTarget(target));
-            }
-
-            var desiredState = job.currentBlock().getDefaultState();
-            var existingState = world.getBlockState(target);
-            if (existingState.isOf(job.currentBlock())) {
-                job.recordAlreadyPlaced();
-                job.recordSkipped();
-                job.noteEvent("already target=" + shortTarget(target));
-                job.advance();
-                if (job.shouldReportProgress()) {
-                    player.sendMessage(blueText(job.progressSummary()), false);
-                }
-                continue;
-            }
-            if (BuildSafetyPolicy.isProtected(existingState)) {
-                job.recordProtectedBlocked();
-                job.recordSkipped();
-                job.noteEvent("protected target=" + shortTarget(target));
-                job.advance();
-                if (job.shouldReportProgress()) {
-                    player.sendMessage(blueText(job.progressSummary()), false);
-                }
-                continue;
-            }
-            if (job.runtimeSettings().strictAirOnly() && !existingState.isAir()) {
-                job.recordBlocked();
-                job.recordSkipped();
-                job.noteEvent("blocked(strict_air) target=" + shortTarget(target));
-                job.advance();
-                if (job.shouldReportProgress()) {
-                    player.sendMessage(blueText(job.progressSummary()), false);
-                }
-                continue;
-            }
-            if (!existingState.isAir() && !existingState.isReplaceable()) {
-                job.recordBlocked();
-                job.recordSkipped();
-                job.noteEvent("blocked(non_replaceable) target=" + shortTarget(target));
-                job.advance();
-                if (job.shouldReportProgress()) {
-                    player.sendMessage(blueText(job.progressSummary()), false);
-                }
-                continue;
-            }
-
-            if (!hasPlacementItemIfNeeded(player, job.currentBlock())) {
-                job.recordSkipped();
-                job.noteEvent("no_item block=" + blockId(job) + " target=" + shortTarget(target));
-                job.advance();
-                if (job.shouldReportProgress()) {
-                    player.sendMessage(blueText(job.progressSummary()), false);
-                }
-                continue;
-            }
-
-            var features = PlacementFeatureExtractor.extract(world, player, target);
-            var model = BladelowLearning.model();
-            double score = model.score(features);
-            job.addScore(score);
-
-            if (!model.shouldPlace(features)) {
-                job.recordMlRejected();
-                job.recordSkipped();
-                job.noteEvent("ml_skip target=" + shortTarget(target));
-                model.train(features, false);
-                job.advance();
-                if (job.shouldReportProgress()) {
-                    player.sendMessage(blueText(job.progressSummary()), false);
-                }
-                continue;
-            }
-
-            boolean changed = world.setBlockState(target, desiredState);
-            if (changed) {
-                consumePlacementItemAfterSuccess(player, job.currentBlock());
-                job.recordPlaced();
-                job.noteEvent("placed block=" + blockId(job) + " target=" + shortTarget(target));
-                job.advance();
-            } else {
-                int tries = job.incrementCurrentAttempts();
-                if (tries >= MAX_RETRIES_PER_TARGET) {
-                    job.recordFailed();
-                    job.noteEvent("failed(set_block) block=" + blockId(job) + " target=" + shortTarget(target));
-                    job.advance();
-                } else {
-                    job.noteEvent("set_block_retry=" + tries + "/" + MAX_RETRIES_PER_TARGET + " target=" + shortTarget(target));
-                }
-            }
-            model.train(features, changed);
             if (job.shouldReportProgress()) {
                 player.sendMessage(blueText(job.progressSummary()), false);
             }
@@ -329,6 +212,179 @@ public final class PlacementJobRunner {
         }
     }
 
+    private static void runTaskNode(net.minecraft.server.world.ServerWorld world, ServerPlayerEntity player, PlacementJob job) {
+        if (job.isComplete()) {
+            return;
+        }
+        switch (job.currentNode()) {
+            case MOVE -> nodeMove(world, player, job);
+            case ALIGN -> nodeAlign(world, player, job);
+            case PLACE -> nodePlace(world, player, job);
+            case RECOVER -> nodeRecover(player, job);
+        }
+    }
+
+    private static void nodeMove(net.minecraft.server.world.ServerWorld world, ServerPlayerEntity player, PlacementJob job) {
+        BlockPos target = job.currentTarget();
+        int moveStatus = BuildNavigation.ensureInRangeForPlacement(world, player, target, job.runtimeSettings());
+        if (moveStatus < 0) {
+            job.startRecover(PlacementJob.RecoverReason.OUT_OF_REACH, "target=" + shortTarget(target));
+            return;
+        }
+        if (moveStatus > 0) {
+            job.recordMoved();
+            job.noteEvent("moved target=" + shortTarget(target));
+        }
+        job.setNode(PlacementJob.TaskNode.ALIGN);
+    }
+
+    private static void nodeAlign(net.minecraft.server.world.ServerWorld world, ServerPlayerEntity player, PlacementJob job) {
+        BlockPos target = job.currentTarget();
+        double dist = Math.sqrt(player.squaredDistanceTo(target.getX() + 0.5, target.getY() + 0.5, target.getZ() + 0.5));
+        if (dist > job.runtimeSettings().reachDistance() + 0.45) {
+            job.setNode(PlacementJob.TaskNode.MOVE);
+            return;
+        }
+
+        var existingState = world.getBlockState(target);
+        if (existingState.isOf(job.currentBlock())) {
+            job.recordAlreadyPlaced();
+            job.recordSkipped();
+            job.noteEvent("already target=" + shortTarget(target));
+            job.advance();
+            return;
+        }
+        if (BuildSafetyPolicy.isProtected(existingState)) {
+            job.startRecover(PlacementJob.RecoverReason.PROTECTED_BLOCK, "target=" + shortTarget(target));
+            return;
+        }
+        if (job.runtimeSettings().strictAirOnly() && !existingState.isAir()) {
+            job.startRecover(PlacementJob.RecoverReason.BLOCKED_STRICT_AIR, "target=" + shortTarget(target));
+            return;
+        }
+        if (!existingState.isAir() && !existingState.isReplaceable()) {
+            job.startRecover(PlacementJob.RecoverReason.BLOCKED_SOLID, "target=" + shortTarget(target));
+            return;
+        }
+        if (!hasPlacementItemIfNeeded(player, job.currentBlock())) {
+            job.startRecover(PlacementJob.RecoverReason.NO_ITEM, "block=" + blockId(job));
+            return;
+        }
+        job.setNode(PlacementJob.TaskNode.PLACE);
+    }
+
+    private static void nodePlace(net.minecraft.server.world.ServerWorld world, ServerPlayerEntity player, PlacementJob job) {
+        BlockPos target = job.currentTarget();
+        var desiredState = job.currentBlock().getDefaultState();
+        var features = PlacementFeatureExtractor.extract(world, player, target);
+        var model = BladelowLearning.model();
+        double score = model.score(features);
+        job.addScore(score);
+
+        if (!model.shouldPlace(features)) {
+            model.train(features, false);
+            job.startRecover(PlacementJob.RecoverReason.ML_REJECTED, "target=" + shortTarget(target));
+            return;
+        }
+
+        boolean changed = world.setBlockState(target, desiredState);
+        model.train(features, changed);
+        if (changed) {
+            consumePlacementItemAfterSuccess(player, job.currentBlock());
+            job.recordPlaced();
+            job.noteEvent("placed block=" + blockId(job) + " target=" + shortTarget(target));
+            job.advance();
+            return;
+        }
+        job.startRecover(PlacementJob.RecoverReason.PLACE_FAILED, "target=" + shortTarget(target));
+    }
+
+    private static void nodeRecover(ServerPlayerEntity player, PlacementJob job) {
+        if (job.isComplete()) {
+            return;
+        }
+        BlockPos target = job.currentTarget();
+        int tries = job.incrementCurrentAttempts();
+        switch (job.recoverReason()) {
+            case OUT_OF_REACH -> recoverOutOfReach(job, target, tries);
+            case PROTECTED_BLOCK -> {
+                job.recordProtectedBlocked();
+                job.recordSkipped();
+                job.noteEvent("skip(protected) target=" + shortTarget(target));
+                job.advance();
+            }
+            case BLOCKED_STRICT_AIR -> recoverBlocked(job, target, tries, "strict_air");
+            case BLOCKED_SOLID -> recoverBlocked(job, target, tries, "solid");
+            case NO_ITEM -> {
+                job.recordSkipped();
+                job.noteEvent("skip(no_item) block=" + blockId(job) + " target=" + shortTarget(target));
+                job.advance();
+            }
+            case ML_REJECTED -> {
+                job.recordMlRejected();
+                job.recordSkipped();
+                job.noteEvent("skip(ml) target=" + shortTarget(target));
+                job.advance();
+            }
+            case PLACE_FAILED -> recoverPlaceFailure(job, target, tries);
+            case NONE, UNKNOWN -> {
+                job.recordFailed();
+                job.noteEvent("skip(unknown) target=" + shortTarget(target));
+                job.advance();
+            }
+        }
+
+        if (job.shouldReportProgress()) {
+            player.sendMessage(blueText(job.progressSummary()), false);
+        }
+    }
+
+    private static void recoverOutOfReach(PlacementJob job, BlockPos target, int tries) {
+        if (tries < MAX_RETRIES_PER_TARGET) {
+            job.noteEvent("retry(out_of_reach) " + tries + "/" + MAX_RETRIES_PER_TARGET + " target=" + shortTarget(target));
+            job.setNode(PlacementJob.TaskNode.MOVE);
+            return;
+        }
+
+        boolean deferred = false;
+        if (job.runtimeSettings().deferUnreachableTargets()
+            && job.currentDeferrals() < job.runtimeSettings().maxTargetDeferrals()) {
+            deferred = job.deferCurrentToTail();
+        }
+        job.recordNoReach();
+        if (deferred) {
+            job.noteEvent("defer(out_of_reach) target=" + shortTarget(target));
+            return;
+        }
+        job.recordSkipped();
+        job.noteEvent("skip(out_of_reach) target=" + shortTarget(target));
+        job.advance();
+    }
+
+    private static void recoverBlocked(PlacementJob job, BlockPos target, int tries, String reason) {
+        if (tries < MAX_BLOCKED_RETRIES) {
+            job.noteEvent("retry(blocked:" + reason + ") " + tries + "/" + MAX_BLOCKED_RETRIES + " target=" + shortTarget(target));
+            job.setNode(PlacementJob.TaskNode.ALIGN);
+            return;
+        }
+        job.recordBlocked();
+        job.recordSkipped();
+        job.noteEvent("skip(blocked:" + reason + ") target=" + shortTarget(target));
+        job.advance();
+    }
+
+    private static void recoverPlaceFailure(PlacementJob job, BlockPos target, int tries) {
+        if (tries < MAX_RETRIES_PER_TARGET) {
+            job.noteEvent("retry(place) " + tries + "/" + MAX_RETRIES_PER_TARGET + " target=" + shortTarget(target));
+            job.setNode(PlacementJob.TaskNode.MOVE);
+            return;
+        }
+        job.recordFailed();
+        job.recordSkipped();
+        job.noteEvent("skip(place_failed) block=" + blockId(job) + " target=" + shortTarget(target));
+        job.advance();
+    }
+
     private static String detailSummary(String state, PlacementJob job) {
         StringBuilder sb = new StringBuilder();
         sb.append("[Bladelow] ").append(state).append(" ").append(job.progressSummary());
@@ -338,6 +394,10 @@ public final class PlacementJobRunner {
             sb.append(" nextTarget=").append(shortTarget(target));
             sb.append(" attempts=").append(job.currentAttempts());
             sb.append(" defers=").append(job.currentDeferrals());
+            sb.append(" node=").append(job.currentNode().name().toLowerCase());
+            if (job.currentNode() == PlacementJob.TaskNode.RECOVER) {
+                sb.append(" reason=").append(job.recoverReason().name().toLowerCase());
+            }
         }
         return sb.toString();
     }

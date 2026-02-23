@@ -116,6 +116,9 @@ public final class PlacementCheckpointStore {
         props.setProperty(prefix + "totalScore", Double.toString(snapshot.totalScore()));
         props.setProperty(prefix + "ticks", Integer.toString(snapshot.ticks()));
         props.setProperty(prefix + "lastEvent", snapshot.lastEvent() == null ? "" : snapshot.lastEvent());
+        props.setProperty(prefix + "node", snapshot.node() == null ? PlacementJob.TaskNode.MOVE.name() : snapshot.node().name());
+        props.setProperty(prefix + "recoverReason", snapshot.recoverReason() == null ? PlacementJob.RecoverReason.NONE.name() : snapshot.recoverReason().name());
+        props.setProperty(prefix + "recoverDetail", snapshot.recoverDetail() == null ? "" : snapshot.recoverDetail());
 
         BuildRuntimeSettings.Snapshot rt = snapshot.runtimeSettings();
         props.setProperty(prefix + "rt.smartMove", Boolean.toString(rt.smartMoveEnabled()));
@@ -217,9 +220,34 @@ public final class PlacementCheckpointStore {
             parseDouble(props.getProperty(prefix + "totalScore"), 0.0),
             parseInt(props.getProperty(prefix + "ticks"), 0),
             props.getProperty(prefix + "lastEvent", "restored"),
+            parseTaskNode(props.getProperty(prefix + "node")),
+            parseRecoverReason(props.getProperty(prefix + "recoverReason")),
+            props.getProperty(prefix + "recoverDetail", ""),
             entries
         );
         return PlacementJob.fromSnapshot(snapshot);
+    }
+
+    private static PlacementJob.TaskNode parseTaskNode(String value) {
+        if (value == null) {
+            return PlacementJob.TaskNode.MOVE;
+        }
+        try {
+            return PlacementJob.TaskNode.valueOf(value.trim().toUpperCase());
+        } catch (IllegalArgumentException ex) {
+            return PlacementJob.TaskNode.MOVE;
+        }
+    }
+
+    private static PlacementJob.RecoverReason parseRecoverReason(String value) {
+        if (value == null) {
+            return PlacementJob.RecoverReason.NONE;
+        }
+        try {
+            return PlacementJob.RecoverReason.valueOf(value.trim().toUpperCase());
+        } catch (IllegalArgumentException ex) {
+            return PlacementJob.RecoverReason.NONE;
+        }
     }
 
     private static int parseInt(String value, int fallback) {

@@ -1509,32 +1509,10 @@ public final class BladePlaceCommand {
         if (targets.size() != positions.size()) {
             return targets;
         }
-
-        // If the source blueprint is mono-material, distribute selected palette
-        // across geometry roles so slot 1/2/3 can all be used in one build.
-        Map<Block, Integer> unique = new LinkedHashMap<>();
-        for (Block source : targets) {
-            unique.putIfAbsent(source, unique.size());
+        if (palette.size() == 1) {
+            return assignPaletteLineCycle(palette, targets.size());
         }
-        if (unique.size() <= 1 && palette.size() > 1) {
-            return assignPaletteBySpatialRoles(palette, positions, "blueprint");
-        }
-
-        // Map each original block type to a selected palette slot so repeated source
-        // materials stay consistent across the entire blueprint.
-        Map<Block, Block> mapping = new LinkedHashMap<>();
-        List<Block> out = new ArrayList<>(targets.size());
-        int next = 0;
-        for (Block source : targets) {
-            Block mapped = mapping.get(source);
-            if (mapped == null) {
-                mapped = palette.get(next % palette.size());
-                mapping.put(source, mapped);
-                next++;
-            }
-            out.add(mapped);
-        }
-        return out;
+        return assignPaletteByRoles(palette, positions, "blueprint");
     }
 
     private static List<Block> assignPaletteForTargets(List<Block> palette, List<BlockPos> targets, String tag) {
@@ -1552,8 +1530,8 @@ public final class BladePlaceCommand {
         if ("bladeplace".equals(tag)) {
             return assignPaletteLineCycle(palette, targets.size());
         }
-        if (tag.startsWith("selection")) {
-            return assignPaletteBySpatialRoles(palette, targets, tag);
+        if (tag.startsWith("selection") || tag.startsWith("blueprint:")) {
+            return assignPaletteByRoles(palette, targets, tag);
         }
         return assignPaletteLineCycle(palette, targets.size());
     }
@@ -1566,7 +1544,7 @@ public final class BladePlaceCommand {
         return out;
     }
 
-    private static List<Block> assignPaletteBySpatialRoles(List<Block> palette, List<BlockPos> targets, String tag) {
+    private static List<Block> assignPaletteByRoles(List<Block> palette, List<BlockPos> targets, String tag) {
         int minX = Integer.MAX_VALUE;
         int maxX = Integer.MIN_VALUE;
         int minY = Integer.MAX_VALUE;
@@ -1588,25 +1566,67 @@ public final class BladePlaceCommand {
         List<Block> out = new ArrayList<>(targets.size());
         for (BlockPos pos : targets) {
             boolean edge2d = pos.getX() == minX || pos.getX() == maxX || pos.getZ() == minZ || pos.getZ() == maxZ;
-            int slot = 0;
-            if (!edge2d && hasInterior2d && palette.size() >= 2) {
-                if (palette.size() == 2) {
-                    slot = 1;
-                } else if (hasHeight) {
-                    int interiorSlots = palette.size() - 1;
-                    slot = 1 + Math.floorMod(pos.getY() - minY, interiorSlots);
-                } else {
-                    int interiorSlots = palette.size() - 1;
-                    int hash = pos.getX() + pos.getZ();
-                    slot = 1 + Math.floorMod(hash, interiorSlots);
-                }
-            } else if (palette.size() >= 3 && hasHeight && pos.getY() == maxY && !"selection".equals(tag)) {
-                // For stacked columns/blueprints, give top surfaces a distinct accent when available.
-                slot = 2;
-            }
-            out.add(palette.get(Math.min(slot, palette.size() - 1)));
+            Role role = classifyRole(pos, minY, maxY, edge2d, hasInterior2d, hasHeight, tag);
+            int slot = resolvePaletteSlot(role, palette.size());
+            out.add(palette.get(slot));
         }
         return out;
+    }
+
+    private static Role classifyRole(
+        BlockPos pos,
+        int minY,
+        int maxY,
+        boolean edge2d,
+        boolean hasInterior2d,
+        boolean hasHeight,
+        String tag
+    ) {
+        if (!hasHeight) {
+            if (!edge2d && hasInterior2d) {
+                return Role.FLOOR;
+            }
+            return Role.WALL;
+        }
+
+        boolean floor = pos.getY() == minY;
+        boolean top = pos.getY() == maxY;
+        if (floor && !edge2d && hasInterior2d) {
+            return Role.FLOOR;
+        }
+        if (top && (!edge2d || !tag.startsWith("selection"))) {
+            return Role.DETAIL;
+        }
+        if (edge2d) {
+            return Role.WALL;
+        }
+        if (floor) {
+            return Role.FLOOR;
+        }
+        if (top) {
+            return Role.DETAIL;
+        }
+        return Role.WALL;
+    }
+
+    private static int resolvePaletteSlot(Role role, int paletteSize) {
+        int[] order = switch (role) {
+            case WALL -> new int[]{0, 1, 2};
+            case FLOOR -> new int[]{1, 0, 2};
+            case DETAIL -> new int[]{2, 1, 0};
+        };
+        for (int idx : order) {
+            if (idx < paletteSize) {
+                return idx;
+            }
+        }
+        return 0;
+    }
+
+    private enum Role {
+        WALL,
+        FLOOR,
+        DETAIL
     }
 
     private static void registerBladeModel(CommandDispatcher<ServerCommandSource> dispatcher) {

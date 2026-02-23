@@ -5,6 +5,8 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
+import net.minecraft.registry.Registries;
+import net.minecraft.util.Identifier;
 import net.minecraft.server.MinecraftServer;
 
 import java.io.IOException;
@@ -18,6 +20,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -227,13 +231,16 @@ public final class BuildItWebService {
                 return Result.error("json missing 'placements'");
             }
             String finalName = (name == null || name.isBlank()) ? inferName(sourceUrl) : sanitizeName(name);
-            root.addProperty("name", finalName);
+            JsonObject normalized = normalizeImportedBlueprint(root, finalName, sourceUrl);
+            if (normalized == null || !hasPlacements(normalized)) {
+                return Result.error("blueprint normalization failed (no valid placements)");
+            }
 
             Path dir = server.getRunDirectory().resolve("config").resolve("bladelow").resolve("blueprints");
             Files.createDirectories(dir);
             Path out = dir.resolve(finalName + ".json");
             try (Writer writer = Files.newBufferedWriter(out)) {
-                GSON.toJson(root, writer);
+                GSON.toJson(normalized, writer);
             }
 
             String reload = BlueprintLibrary.reload(server);
@@ -395,6 +402,224 @@ public final class BuildItWebService {
 
     private static boolean hasPlacements(JsonObject obj) {
         return obj != null && obj.has("placements") && obj.get("placements").isJsonArray();
+    }
+
+    private static JsonObject normalizeImportedBlueprint(JsonObject root, String finalName, String sourceUrl) {
+        JsonArray rawPlacements = root.getAsJsonArray("placements");
+        List<NormalizedPlacement> placements = extractNormalizedPlacements(rawPlacements);
+        if (placements.isEmpty()) {
+            return null;
+        }
+
+        JsonObject out = new JsonObject();
+        out.addProperty("schema", "bladelow-blueprint-v2");
+        out.addProperty("name", finalName);
+
+        JsonArray placementJson = new JsonArray();
+        LinkedHashMap<String, Integer> paletteCounts = new LinkedHashMap<>();
+        for (NormalizedPlacement placement : placements) {
+            JsonObject p = new JsonObject();
+            p.addProperty("x", placement.x());
+            p.addProperty("y", placement.y());
+            p.addProperty("z", placement.z());
+            p.addProperty("block", placement.blockId());
+            placementJson.add(p);
+            paletteCounts.merge(placement.blockId(), 1, Integer::sum);
+        }
+        out.add("placements", placementJson);
+
+        JsonArray palette = new JsonArray();
+        for (Map.Entry<String, Integer> entry : paletteCounts.entrySet()) {
+            JsonObject p = new JsonObject();
+            p.addProperty("block", entry.getKey());
+            p.addProperty("count", entry.getValue());
+            palette.add(p);
+        }
+        out.add("palette", palette);
+        out.add("palette_map", inferRolePalette(placements, paletteCounts));
+
+        JsonObject meta = new JsonObject();
+        meta.addProperty("source", sourceUrl);
+        meta.addProperty("placements", placements.size());
+        int maxX = placements.stream().mapToInt(NormalizedPlacement::x).max().orElse(0);
+        int maxY = placements.stream().mapToInt(NormalizedPlacement::y).max().orElse(0);
+        int maxZ = placements.stream().mapToInt(NormalizedPlacement::z).max().orElse(0);
+        meta.addProperty("size", (maxX + 1) + "x" + (maxY + 1) + "x" + (maxZ + 1));
+        out.add("meta", meta);
+        return out;
+    }
+
+    private static List<NormalizedPlacement> extractNormalizedPlacements(JsonArray rawPlacements) {
+        if (rawPlacements == null || rawPlacements.isEmpty()) {
+            return List.of();
+        }
+        List<NormalizedPlacement> raw = new ArrayList<>();
+        int minX = Integer.MAX_VALUE;
+        int minY = Integer.MAX_VALUE;
+        int minZ = Integer.MAX_VALUE;
+        for (JsonElement element : rawPlacements) {
+            if (element == null || !element.isJsonObject()) {
+                continue;
+            }
+            JsonObject obj = element.getAsJsonObject();
+            Integer x = parseJsonInt(obj.get("x"));
+            Integer y = parseJsonInt(obj.get("y"));
+            Integer z = parseJsonInt(obj.get("z"));
+            if (x == null || y == null || z == null) {
+                continue;
+            }
+            String blockId = normalizeBlockId(obj.has("block") ? obj.get("block").getAsString() : "");
+            if (blockId == null) {
+                continue;
+            }
+            raw.add(new NormalizedPlacement(x, y, z, blockId));
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            minZ = Math.min(minZ, z);
+        }
+        if (raw.isEmpty()) {
+            return List.of();
+        }
+
+        List<NormalizedPlacement> normalized = new ArrayList<>(raw.size());
+        for (NormalizedPlacement placement : raw) {
+            normalized.add(new NormalizedPlacement(
+                placement.x() - minX,
+                placement.y() - minY,
+                placement.z() - minZ,
+                placement.blockId()
+            ));
+        }
+        normalized.sort(
+            Comparator.comparingInt(NormalizedPlacement::y)
+                .thenComparingInt(NormalizedPlacement::x)
+                .thenComparingInt(NormalizedPlacement::z)
+                .thenComparing(NormalizedPlacement::blockId)
+        );
+        return normalized;
+    }
+
+    private static JsonObject inferRolePalette(List<NormalizedPlacement> placements, LinkedHashMap<String, Integer> paletteCounts) {
+        JsonObject roleMap = new JsonObject();
+        if (placements.isEmpty()) {
+            return roleMap;
+        }
+        int minX = placements.stream().mapToInt(NormalizedPlacement::x).min().orElse(0);
+        int maxX = placements.stream().mapToInt(NormalizedPlacement::x).max().orElse(0);
+        int minY = placements.stream().mapToInt(NormalizedPlacement::y).min().orElse(0);
+        int maxY = placements.stream().mapToInt(NormalizedPlacement::y).max().orElse(0);
+        int minZ = placements.stream().mapToInt(NormalizedPlacement::z).min().orElse(0);
+        int maxZ = placements.stream().mapToInt(NormalizedPlacement::z).max().orElse(0);
+
+        boolean hasInterior2d = (maxX - minX) >= 2 && (maxZ - minZ) >= 2;
+        boolean hasHeight = (maxY - minY) >= 1;
+
+        Map<String, Integer> wallCounts = new LinkedHashMap<>();
+        Map<String, Integer> floorCounts = new LinkedHashMap<>();
+        Map<String, Integer> detailCounts = new LinkedHashMap<>();
+        for (NormalizedPlacement placement : placements) {
+            boolean edge2d = placement.x() == minX || placement.x() == maxX || placement.z() == minZ || placement.z() == maxZ;
+            BuildRole role = classifyRole(placement, minY, maxY, edge2d, hasInterior2d, hasHeight);
+            switch (role) {
+                case WALL -> wallCounts.merge(placement.blockId(), 1, Integer::sum);
+                case FLOOR -> floorCounts.merge(placement.blockId(), 1, Integer::sum);
+                case DETAIL -> detailCounts.merge(placement.blockId(), 1, Integer::sum);
+            }
+        }
+
+        String fallback = paletteCounts.keySet().stream().findFirst().orElse("minecraft:stone");
+        String wall = dominantBlock(wallCounts, fallback);
+        String floor = dominantBlock(floorCounts, wall);
+        String detail = dominantBlock(detailCounts, floor);
+
+        roleMap.addProperty("wall", wall);
+        roleMap.addProperty("floor", floor);
+        roleMap.addProperty("detail", detail);
+        return roleMap;
+    }
+
+    private static BuildRole classifyRole(
+        NormalizedPlacement placement,
+        int minY,
+        int maxY,
+        boolean edge2d,
+        boolean hasInterior2d,
+        boolean hasHeight
+    ) {
+        if (!hasHeight) {
+            if (!edge2d && hasInterior2d) {
+                return BuildRole.FLOOR;
+            }
+            return BuildRole.WALL;
+        }
+        boolean floor = placement.y() == minY;
+        boolean top = placement.y() == maxY;
+        if (floor && !edge2d && hasInterior2d) {
+            return BuildRole.FLOOR;
+        }
+        if (top && !edge2d) {
+            return BuildRole.DETAIL;
+        }
+        if (edge2d) {
+            return BuildRole.WALL;
+        }
+        if (floor) {
+            return BuildRole.FLOOR;
+        }
+        if (top) {
+            return BuildRole.DETAIL;
+        }
+        return BuildRole.WALL;
+    }
+
+    private static String dominantBlock(Map<String, Integer> counts, String fallback) {
+        String best = fallback;
+        int bestCount = -1;
+        for (Map.Entry<String, Integer> entry : counts.entrySet()) {
+            if (entry.getValue() > bestCount) {
+                bestCount = entry.getValue();
+                best = entry.getKey();
+            }
+        }
+        return best;
+    }
+
+    private static Integer parseJsonInt(JsonElement element) {
+        if (element == null || element.isJsonNull()) {
+            return null;
+        }
+        try {
+            return element.getAsInt();
+        } catch (RuntimeException ex) {
+            return null;
+        }
+    }
+
+    private static String normalizeBlockId(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String value = raw.trim().toLowerCase(Locale.ROOT).replace(' ', '_');
+        if (value.isBlank()) {
+            return null;
+        }
+        if (!value.contains(":")) {
+            value = "minecraft:" + value;
+        }
+        Identifier id = Identifier.tryParse(value);
+        if (id == null || !Registries.BLOCK.containsId(id)) {
+            return null;
+        }
+        return id.toString();
+    }
+
+    private enum BuildRole {
+        WALL,
+        FLOOR,
+        DETAIL
+    }
+
+    private record NormalizedPlacement(int x, int y, int z, String blockId) {
     }
 
     private static List<String> findPlacementSnippets(String raw) {
