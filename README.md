@@ -28,42 +28,43 @@ Manual WSL copy:
 
 ## HUD Guide
 
-1. Picker + slots
-- Pick up to 3 slot blocks (`S1`, `S2`, `S3`) from the visual block grid.
-- `Favorites` and `Recent` rows are above the grid for fast re-selection.
-- `+F` adds active-slot block to favorites, `-F` removes it.
-- Slot badges show inventory readiness (`OK`/`MISS`) per slot.
+1. Block picker + slots
+- Visual block picker with search + page arrows.
+- Pick up to 3 blocks in slots `S1`, `S2`, `S3`.
+- Slot indicator dot: green = ready, red = missing, gray = empty.
 
-2. Modes and inputs
-- Tabs: `LINE`, `SEL`, `BP`.
-- `LINE` uses `X Y Z`, `Count`, and `Axis` (`X/Y/Z`).
-- `SEL` uses `Height` and marked selection points (`Mark`).
-- `BP` uses `X Y Z`, blueprint name, and optional block slots for override.
+2. Modes
+- Tabs: `AREA` and `BP`.
+- `AREA` is marker-based build mode (default).
+- `BP` is blueprint/web-import build mode.
+- Old `LINE` mode is removed from HUD flow.
 
-3. Run controls
-- Cluster: `Run`, `Prev`, `Confirm`, `Cancel`.
-- `Run` is guarded: it stays disabled until required inputs are valid.
-- Inline validation tells you exactly what is missing (for example `count 1..4096`).
+3. Marker area workflow (`AREA`)
+- Set coordinates (`Auto` from player or manual `X/Y/Z`).
+- Click `Set A`, then `Set B`.
+- Set `Height` (`1..256`).
+- Click `Mark Box` to generate the build base selection.
+- Click `Clear Mk` to reset markers/selection.
 
-4. Automation + presets
-- `Mode`: `WALK / AUTO / TELEPORT`
-- `Smart`: smart movement on/off
-- `Reach`: placement reach
-- `Prof`: movement profile cycle
-- Presets: `L20X`, `L20Z`, `SEL6`, `BP20`
+4. Run controls
+- `Start Build`: queue and start build from current mode.
+- `Stop`: pauses active build (`#bladepause`).
+- `Continue Build`: resumes paused build (`#bladecontinue`).
+- `Cancel`: cancels active/pending build (`#bladecancel`).
+- Start is guarded and stays disabled until required inputs are valid.
 
-5. Status + hotkeys
-- Bottom panel shows compact progress and the latest Bladelow log lines.
-- Hotkeys in HUD: `P` close, `R` run, `M` mark, `C` cancel, `V` preview toggle.
+5. Blueprint + BuildIt workflow (`BP`)
+- Paste BuildIt URL (or catalog index) in URL field.
+- Click `Import URL` (runs web import + load).
+- Click `Start Build` to execute at marker `A` (or current XYZ).
 
-6. Scale + persistence
-- `Scale: S/M/L` cycles HUD size.
-- HUD state now saves per world/server profile (`config/bladelow/hud-state.properties`).
+6. Status + hotkeys
+- Bottom panel shows validation + latest status.
+- HUD hotkeys: `P` close, `R` start, `M` mark, `C` stop/pause, `V` continue.
 
-7. Blueprint + Web
-- `BP Load` / `BP Build` for local blueprints.
-- `Cat` syncs BuildIt catalog with limit field (`1..50`).
-- `Imp` imports by catalog index or URL and loads it.
+7. Persistence
+- HUD state saves per world/server profile:
+  - `config/bladelow/hud-state.properties`
 
 ## Chat Commands (Manual)
 
@@ -72,6 +73,8 @@ Core:
 - `#bladestatus`
 - `#bladestatus detail`
 - `#bladecancel`
+- `#bladepause`
+- `#bladecontinue`
 - `#bladeconfirm`
 - `#bladepreview show`
 
@@ -79,6 +82,7 @@ Placement:
 - `#bladeplace <x> <y> <z> <count> [axis] <blocks_csv>`
 
 Selection:
+- `#bladeselect markerbox <x1> <y1> <z1> <x2> <y2> <z2> <height> [solid|hollow]`
 - `#bladeselect addhere`
 - `#bladeselect add <x> <y> <z>`
 - `#bladeselect remove <x> <y> <z>`
@@ -140,16 +144,12 @@ Notes:
 Selection workflow:
 
 ```text
-#bladeselect add 10 -60 10
-#bladeselect add 11 -60 10
-#bladeselect addhere
-#bladeselect box 8 -60 8 12 -60 12 hollow
-#bladeselect list
-#bladeselect buildh 10 minecraft:stone,minecraft:glass
-#bladeselect export my_selection minecraft:stone
+#bladeselect markerbox 8 -60 8 12 -60 12 6 solid
+#bladeselect buildh 6 minecraft:stone,minecraft:glass,minecraft:oak_planks
+#bladestatus detail
 ```
 
-Line build:
+Direct place build:
 
 ```text
 #bladeplace 10 -60 10 20 x minecraft:stone,minecraft:cobblestone
@@ -188,7 +188,7 @@ Pathing/scheduler tuning:
 - If remote catalog fails but local cache exists, cached entries are reused.
 - Catalog is persisted locally at `~/.bladelow/catalog-cache/<player-uuid>.json` for offline reuse.
 - `bladeweb import` accepts catalog index or URL.
-- `bladeweb importload` imports and selects blueprint for immediate `BP Build`.
+- `bladeweb importload` imports and selects blueprint for immediate `BP` run.
 - `bladeweb importloadurl` does the same for URL-based imports with explicit name.
 - Import parser supports:
   - direct blueprint JSON
@@ -228,11 +228,12 @@ Example:
   - `#blademove defer on`
 
 3. Build pending but not executing
-- `#bladeconfirm` to start pending preview
-- `#bladecancel` to discard
+- Use `#bladecontinue` if paused
+- Use `#bladecancel` to discard
+- `#bladeconfirm` is only needed when preview-before-build is enabled
 
 4. Build doesn’t place expected blocks
-- Fill all slot blocks in HUD (`S1/S2/S3`) before `Run`.
+- Fill at least one slot block in HUD (`S1/S2/S3`) before `Start Build`.
 - `#bladeplace` expects `x y z count [axis] blocks_csv`.
 - Use `#bladestatus` to inspect `last=...` reason:
   - `no_item`
