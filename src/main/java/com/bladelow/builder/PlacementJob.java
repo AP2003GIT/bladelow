@@ -32,6 +32,10 @@ public class PlacementJob {
     private int protectedBlocked;
     private int noReach;
     private int mlRejected;
+    private int stuckEvents;
+    private int pathReplans;
+    private int backtracks;
+    private int blacklistHits;
     private double totalScore;
     private int ticks;
     private String lastEvent = "queued";
@@ -82,6 +86,78 @@ public class PlacementJob {
 
     public int cursor() {
         return cursor;
+    }
+
+    public int placedCount() {
+        return placed;
+    }
+
+    public int skippedCount() {
+        return skipped;
+    }
+
+    public int failedCount() {
+        return failed;
+    }
+
+    public int movedCount() {
+        return moved;
+    }
+
+    public int deferredCount() {
+        return deferred;
+    }
+
+    public int reprioritizedCount() {
+        return reprioritized;
+    }
+
+    public int alreadyPlacedCount() {
+        return alreadyPlaced;
+    }
+
+    public int blockedCount() {
+        return blocked;
+    }
+
+    public int protectedBlockedCount() {
+        return protectedBlocked;
+    }
+
+    public int noReachCount() {
+        return noReach;
+    }
+
+    public int mlRejectedCount() {
+        return mlRejected;
+    }
+
+    public int stuckEventsCount() {
+        return stuckEvents;
+    }
+
+    public int pathReplansCount() {
+        return pathReplans;
+    }
+
+    public int backtracksCount() {
+        return backtracks;
+    }
+
+    public int blacklistHitsCount() {
+        return blacklistHits;
+    }
+
+    public double averageScore() {
+        return totalScore / Math.max(1, totalTargets());
+    }
+
+    public double noReachPercent() {
+        return (noReach * 100.0) / Math.max(1, totalTargets());
+    }
+
+    public String lastEvent() {
+        return lastEvent;
     }
 
     public BlockPos currentTarget() {
@@ -212,6 +288,28 @@ public class PlacementJob {
         noteEvent("ml_skip");
     }
 
+    public void recordStuckEvent() {
+        stuckEvents++;
+        noteEvent("stuck");
+    }
+
+    public void recordPathReplan() {
+        pathReplans++;
+        noteEvent("replan");
+    }
+
+    public void recordBacktrack() {
+        backtracks++;
+        noteEvent("backtrack");
+    }
+
+    public void recordBlacklistHits(int hits) {
+        if (hits <= 0) {
+            return;
+        }
+        blacklistHits += hits;
+    }
+
     public void noteEvent(String event) {
         if (event == null) {
             return;
@@ -313,6 +411,10 @@ public class PlacementJob {
             + " noReach=" + noReach
             + " noReachPct=" + String.format(Locale.ROOT, "%.1f", noReachPct)
             + " mlSkip=" + mlRejected
+            + " stuck=" + stuckEvents
+            + " replans=" + pathReplans
+            + " backtracks=" + backtracks
+            + " blHits=" + blacklistHits
             + " avgScore=" + String.format(Locale.ROOT, "%.3f", avgScore)
             + " last=" + lastEvent
             + " " + runtimeSettings.summary();
@@ -351,6 +453,10 @@ public class PlacementJob {
             protectedBlocked,
             noReach,
             mlRejected,
+            stuckEvents,
+            pathReplans,
+            backtracks,
+            blacklistHits,
             totalScore,
             ticks,
             lastEvent,
@@ -416,6 +522,10 @@ public class PlacementJob {
         job.protectedBlocked = Math.max(0, snapshot.protectedBlocked());
         job.noReach = Math.max(0, snapshot.noReach());
         job.mlRejected = Math.max(0, snapshot.mlRejected());
+        job.stuckEvents = Math.max(0, snapshot.stuckEvents());
+        job.pathReplans = Math.max(0, snapshot.pathReplans());
+        job.backtracks = Math.max(0, snapshot.backtracks());
+        job.blacklistHits = Math.max(0, snapshot.blacklistHits());
         job.totalScore = Math.max(0.0, snapshot.totalScore());
         job.ticks = Math.max(0, snapshot.ticks());
         job.noteEvent(snapshot.lastEvent());
@@ -452,6 +562,10 @@ public class PlacementJob {
         int protectedBlocked,
         int noReach,
         int mlRejected,
+        int stuckEvents,
+        int pathReplans,
+        int backtracks,
+        int blacklistHits,
         double totalScore,
         int ticks,
         String lastEvent,

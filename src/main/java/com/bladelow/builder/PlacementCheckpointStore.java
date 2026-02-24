@@ -113,6 +113,10 @@ public final class PlacementCheckpointStore {
         props.setProperty(prefix + "protectedBlocked", Integer.toString(snapshot.protectedBlocked()));
         props.setProperty(prefix + "noReach", Integer.toString(snapshot.noReach()));
         props.setProperty(prefix + "mlRejected", Integer.toString(snapshot.mlRejected()));
+        props.setProperty(prefix + "stuckEvents", Integer.toString(snapshot.stuckEvents()));
+        props.setProperty(prefix + "pathReplans", Integer.toString(snapshot.pathReplans()));
+        props.setProperty(prefix + "backtracks", Integer.toString(snapshot.backtracks()));
+        props.setProperty(prefix + "blacklistHits", Integer.toString(snapshot.blacklistHits()));
         props.setProperty(prefix + "totalScore", Double.toString(snapshot.totalScore()));
         props.setProperty(prefix + "ticks", Integer.toString(snapshot.ticks()));
         props.setProperty(prefix + "lastEvent", snapshot.lastEvent() == null ? "" : snapshot.lastEvent());
@@ -217,6 +221,10 @@ public final class PlacementCheckpointStore {
             parseInt(props.getProperty(prefix + "protectedBlocked"), 0),
             parseInt(props.getProperty(prefix + "noReach"), 0),
             parseInt(props.getProperty(prefix + "mlRejected"), 0),
+            parseInt(props.getProperty(prefix + "stuckEvents"), 0),
+            parseInt(props.getProperty(prefix + "pathReplans"), 0),
+            parseInt(props.getProperty(prefix + "backtracks"), 0),
+            parseInt(props.getProperty(prefix + "blacklistHits"), 0),
             parseDouble(props.getProperty(prefix + "totalScore"), 0.0),
             parseInt(props.getProperty(prefix + "ticks"), 0),
             props.getProperty(prefix + "lastEvent", "restored"),

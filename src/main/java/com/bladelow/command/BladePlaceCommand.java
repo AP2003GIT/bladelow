@@ -50,6 +50,7 @@ public final class BladePlaceCommand {
         registerBladeConfirm(dispatcher);
         registerBladePreview(dispatcher);
         registerBladeStatus(dispatcher);
+        registerBladeDiag(dispatcher);
         registerBladeModel(dispatcher);
         registerBladeMove(dispatcher);
         registerBladeSafety(dispatcher);
@@ -68,6 +69,7 @@ public final class BladePlaceCommand {
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeselect export <name> <block_id> | exportscan <name> | copybox <name> <from> <to>"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #blademove mode walk|auto|teleport ; reach <2.0..8.0> ; scheduler on|off ; lookahead <1..96> ; defer on|off ; maxdefer <0..8>"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeblueprint list|load|build ; #bladeweb importload <index> [name] ; #bladestatus [detail] ; #bladepause ; #bladecontinue ; #bladecancel"), false);
+                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladediag show | #bladediag export [name]"), false);
                 return 1;
             })
         );
@@ -981,6 +983,58 @@ public final class BladePlaceCommand {
                 })
             )
         );
+    }
+
+    private static void registerBladeDiag(CommandDispatcher<ServerCommandSource> dispatcher) {
+        dispatcher.register(literal("bladediag")
+            .executes(ctx -> {
+                ServerPlayerEntity player = ctx.getSource().getPlayer();
+                if (player == null) {
+                    ctx.getSource().sendError(blueText("Player context required."));
+                    return 0;
+                }
+                String message = PlacementJobRunner.diagnostic(player.getUuid());
+                ctx.getSource().sendFeedback(() -> blueText(message), false);
+                return 1;
+            })
+            .then(literal("show")
+                .executes(ctx -> {
+                    ServerPlayerEntity player = ctx.getSource().getPlayer();
+                    if (player == null) {
+                        ctx.getSource().sendError(blueText("Player context required."));
+                        return 0;
+                    }
+                    String message = PlacementJobRunner.diagnostic(player.getUuid());
+                    ctx.getSource().sendFeedback(() -> blueText(message), false);
+                    return 1;
+                })
+            )
+            .then(literal("export")
+                .executes(ctx -> runBladeDiagExport(ctx, ""))
+                .then(argument("name", StringArgumentType.word())
+                    .executes(ctx -> runBladeDiagExport(ctx, StringArgumentType.getString(ctx, "name")))
+                )
+            )
+        );
+    }
+
+    private static int runBladeDiagExport(com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx, String name) {
+        ServerPlayerEntity player = ctx.getSource().getPlayer();
+        if (player == null) {
+            ctx.getSource().sendError(blueText("Player context required."));
+            return 0;
+        }
+        PlacementJobRunner.DiagExportResult result = PlacementJobRunner.exportDiagnostic(
+            ctx.getSource().getServer(),
+            player.getUuid(),
+            name
+        );
+        if (!result.ok()) {
+            ctx.getSource().sendError(blueText("[Bladelow] " + result.message()));
+            return 0;
+        }
+        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] diag " + result.message()), false);
+        return 1;
     }
 
     private static void registerBladeMove(CommandDispatcher<ServerCommandSource> dispatcher) {
