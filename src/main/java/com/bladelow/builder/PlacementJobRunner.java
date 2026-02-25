@@ -2,6 +2,10 @@ package com.bladelow.builder;
 
 import com.bladelow.ml.BladelowLearning;
 import com.bladelow.ml.PlacementFeatureExtractor;
+import net.minecraft.block.Block;
+import net.minecraft.block.BlockState;
+import net.minecraft.block.Blocks;
+import net.minecraft.item.BlockItem;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
@@ -30,9 +34,21 @@ public final class PlacementJobRunner {
     private static final Map<UUID, PlacementJob> JOBS = new ConcurrentHashMap<>();
     private static final Map<UUID, PlacementJob> PENDING = new ConcurrentHashMap<>();
     private static final Map<UUID, DiagSnapshot> LAST_DIAG = new ConcurrentHashMap<>();
+    private static final Map<UUID, Long> AUTO_RESUME_READY_AT = new ConcurrentHashMap<>();
+    private static final Map<UUID, Map<Long, Integer>> TARGET_PRESSURE = new ConcurrentHashMap<>();
     private static final Map<UUID, StuckState> STUCK = new ConcurrentHashMap<>();
+    private static final Map<UUID, ProgressWatchdog> WATCHDOG = new ConcurrentHashMap<>();
     private static final int MAX_RETRIES_PER_TARGET = 3;
     private static final int MAX_BLOCKED_RETRIES = 2;
+    private static final float MAX_AUTO_CLEAR_HARDNESS = 1.5f;
+    private static final long AUTO_RESUME_DELAY_MS = 1_400L;
+    private static final int WATCHDOG_STALL_TICKS = 130;
+    private static final int WATCHDOG_COOLDOWN_TICKS = 60;
+    private static final int TARGET_PRESSURE_DEFER_THRESHOLD = 4;
+    private static final int TARGET_PRESSURE_SKIP_THRESHOLD = 9;
+    private static final int TARGET_PRESSURE_MAX_TRACKED = 768;
+    private static final int TARGET_PRESSURE_MAX_VALUE = 30;
+    private static final int TARGET_PRESSURE_DECAY_TICKS = 120;
     private static final int STUCK_TICKS_THRESHOLD = 26;
     private static final int STUCK_COOLDOWN_TICKS = 18;
     private static final double STUCK_PROGRESS_EPS = 0.08;
@@ -71,6 +87,9 @@ public final class PlacementJobRunner {
     }
 
     public static void queueOrPreview(MinecraftServer server, PlacementJob job) {
+        AUTO_RESUME_READY_AT.remove(job.playerId());
+        TARGET_PRESSURE.remove(job.playerId());
+        WATCHDOG.remove(job.playerId());
         if (!job.runtimeSettings().previewBeforeBuild()) {
             PENDING.remove(job.playerId());
             submit(job);
@@ -89,7 +108,10 @@ public final class PlacementJobRunner {
     public static boolean cancel(MinecraftServer server, UUID playerId) {
         PlacementJob activeJob = JOBS.remove(playerId);
         PlacementJob pendingJob = PENDING.remove(playerId);
+        AUTO_RESUME_READY_AT.remove(playerId);
+        TARGET_PRESSURE.remove(playerId);
         STUCK.remove(playerId);
+        WATCHDOG.remove(playerId);
         BuildNavigation.invalidateCachedPath(playerId);
         BuildNavigation.consumeBlacklistHits(playerId);
         boolean active = activeJob != null;
@@ -111,7 +133,10 @@ public final class PlacementJobRunner {
         if (active == null) {
             return false;
         }
+        AUTO_RESUME_READY_AT.remove(playerId);
+        TARGET_PRESSURE.remove(playerId);
         STUCK.remove(playerId);
+        WATCHDOG.remove(playerId);
         BuildNavigation.invalidateCachedPath(playerId);
         PENDING.put(playerId, active);
         saveCheckpoint(server);
@@ -126,7 +151,10 @@ public final class PlacementJobRunner {
         if (pending == null) {
             return false;
         }
+        AUTO_RESUME_READY_AT.remove(playerId);
+        TARGET_PRESSURE.remove(playerId);
         STUCK.remove(playerId);
+        WATCHDOG.remove(playerId);
         BuildNavigation.invalidateCachedPath(playerId);
         JOBS.put(playerId, pending);
         saveCheckpoint(server);
@@ -138,7 +166,10 @@ public final class PlacementJobRunner {
         if (pending == null) {
             return false;
         }
+        AUTO_RESUME_READY_AT.remove(playerId);
+        TARGET_PRESSURE.remove(playerId);
         STUCK.remove(playerId);
+        WATCHDOG.remove(playerId);
         BuildNavigation.invalidateCachedPath(playerId);
         JOBS.put(playerId, pending);
         saveCheckpoint(server);
@@ -233,8 +264,8 @@ public final class PlacementJobRunner {
     }
 
     public static void tick(MinecraftServer server) {
+        boolean stateChanged = processPendingAutoResume(server);
         Iterator<Map.Entry<UUID, PlacementJob>> it = JOBS.entrySet().iterator();
-        boolean stateChanged = false;
 
         while (it.hasNext()) {
             Map.Entry<UUID, PlacementJob> entry = it.next();
@@ -243,7 +274,10 @@ public final class PlacementJobRunner {
             if (player == null) {
                 PENDING.put(job.playerId(), job);
                 it.remove();
+                AUTO_RESUME_READY_AT.remove(job.playerId());
+                TARGET_PRESSURE.remove(job.playerId());
                 STUCK.remove(job.playerId());
+                WATCHDOG.remove(job.playerId());
                 BuildNavigation.invalidateCachedPath(job.playerId());
                 BuildNavigation.consumeBlacklistHits(job.playerId());
                 stateChanged = true;
@@ -253,7 +287,10 @@ public final class PlacementJobRunner {
             if (job.isComplete()) {
                 finishJob(player, job);
                 it.remove();
+                AUTO_RESUME_READY_AT.remove(job.playerId());
+                TARGET_PRESSURE.remove(job.playerId());
                 STUCK.remove(job.playerId());
+                WATCHDOG.remove(job.playerId());
                 BuildNavigation.invalidateCachedPath(job.playerId());
                 BuildNavigation.consumeBlacklistHits(job.playerId());
                 stateChanged = true;
@@ -266,7 +303,10 @@ public final class PlacementJobRunner {
                 player.sendMessage(blueText("[Bladelow] Target world unavailable. Build canceled."), false);
                 rememberSnapshot(job.playerId(), "aborted-world", job, detailSummary("aborted", job));
                 it.remove();
+                AUTO_RESUME_READY_AT.remove(job.playerId());
+                TARGET_PRESSURE.remove(job.playerId());
                 STUCK.remove(job.playerId());
+                WATCHDOG.remove(job.playerId());
                 BuildNavigation.invalidateCachedPath(job.playerId());
                 BuildNavigation.consumeBlacklistHits(job.playerId());
                 stateChanged = true;
@@ -282,6 +322,7 @@ public final class PlacementJobRunner {
                 job.recordBlacklistHits(blacklistHits);
             }
             trackStuckAndRecover(world, player, job);
+            runProgressWatchdog(world, player, job, server.getTicks());
 
             if (job.shouldReportProgress()) {
                 player.sendMessage(blueText(job.progressSummary()), false);
@@ -290,7 +331,10 @@ public final class PlacementJobRunner {
             if (job.isComplete()) {
                 finishJob(player, job);
                 it.remove();
+                AUTO_RESUME_READY_AT.remove(job.playerId());
+                TARGET_PRESSURE.remove(job.playerId());
                 STUCK.remove(job.playerId());
+                WATCHDOG.remove(job.playerId());
                 BuildNavigation.invalidateCachedPath(job.playerId());
                 BuildNavigation.consumeBlacklistHits(job.playerId());
                 stateChanged = true;
@@ -299,6 +343,9 @@ public final class PlacementJobRunner {
 
         if (stateChanged || ((!JOBS.isEmpty() || !PENDING.isEmpty()) && server.getTicks() % 40 == 0)) {
             saveCheckpoint(server);
+        }
+        if (server.getTicks() % TARGET_PRESSURE_DECAY_TICKS == 0) {
+            decayTargetPressure();
         }
     }
 
@@ -310,14 +357,165 @@ public final class PlacementJobRunner {
             case MOVE -> nodeMove(world, player, job);
             case ALIGN -> nodeAlign(world, player, job);
             case PLACE -> nodePlace(world, player, job);
-            case RECOVER -> nodeRecover(player, job);
+            case RECOVER -> nodeRecover(world, player, job);
+        }
+    }
+
+    private static boolean processPendingAutoResume(MinecraftServer server) {
+        long now = System.currentTimeMillis();
+        boolean changed = false;
+        Iterator<Map.Entry<UUID, PlacementJob>> it = PENDING.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<UUID, PlacementJob> entry = it.next();
+            UUID playerId = entry.getKey();
+            PlacementJob job = entry.getValue();
+            if (job == null) {
+                it.remove();
+                AUTO_RESUME_READY_AT.remove(playerId);
+                TARGET_PRESSURE.remove(playerId);
+                changed = true;
+                continue;
+            }
+            if (job.runtimeSettings().previewBeforeBuild() || !job.runtimeSettings().autoResumeEnabled()) {
+                AUTO_RESUME_READY_AT.remove(playerId);
+                continue;
+            }
+            if (JOBS.containsKey(playerId)) {
+                it.remove();
+                AUTO_RESUME_READY_AT.remove(playerId);
+                TARGET_PRESSURE.remove(playerId);
+                changed = true;
+                continue;
+            }
+
+            ServerPlayerEntity player = server.getPlayerManager().getPlayer(playerId);
+            if (player == null || server.getWorld(job.worldKey()) == null) {
+                AUTO_RESUME_READY_AT.remove(playerId);
+                continue;
+            }
+
+            long readyAt = AUTO_RESUME_READY_AT.getOrDefault(playerId, -1L);
+            if (readyAt <= 0L) {
+                AUTO_RESUME_READY_AT.put(playerId, now + AUTO_RESUME_DELAY_MS);
+                player.sendMessage(blueText("[Bladelow] pending build detected. Auto-resume armed..."), false);
+                continue;
+            }
+            if (now < readyAt) {
+                continue;
+            }
+
+            it.remove();
+            AUTO_RESUME_READY_AT.remove(playerId);
+            TARGET_PRESSURE.remove(playerId);
+            STUCK.remove(playerId);
+            WATCHDOG.remove(playerId);
+            BuildNavigation.invalidateCachedPath(playerId);
+            JOBS.put(playerId, job);
+            player.sendMessage(blueText("[Bladelow] auto-resumed pending build."), false);
+            changed = true;
+        }
+        return changed;
+    }
+
+    private static void runProgressWatchdog(
+        net.minecraft.server.world.ServerWorld world,
+        ServerPlayerEntity player,
+        PlacementJob job,
+        long serverTick
+    ) {
+        if (job == null || job.isComplete()) {
+            if (job != null) {
+                WATCHDOG.remove(job.playerId());
+            }
+            return;
+        }
+
+        ProgressWatchdog state = WATCHDOG.computeIfAbsent(job.playerId(), ignored -> ProgressWatchdog.fresh(job, serverTick));
+        if (state.observeProgress(job, serverTick)) {
+            return;
+        }
+        if (serverTick - state.lastProgressTick() < WATCHDOG_STALL_TICKS) {
+            return;
+        }
+        if (serverTick - state.lastTriggerTick() < WATCHDOG_COOLDOWN_TICKS) {
+            return;
+        }
+
+        BlockPos target = job.currentTarget();
+        long stalled = serverTick - state.lastProgressTick();
+        state.markTriggered(serverTick);
+        state.bumpTriggerCount();
+        int pressure = addTargetPressure(job.playerId(), target, 2);
+
+        BuildNavigation.noteExternalFailure(job.playerId(), target, "watchdog_stall", true);
+        BuildNavigation.invalidateCachedPath(job.playerId());
+        boolean backtracked = BuildNavigation.backtrackToLastSafe(world, player, 7);
+        if (backtracked) {
+            job.recordBacktrack();
+        }
+
+        boolean replanned = false;
+        int lookahead = Math.max(16, job.runtimeSettings().schedulerLookahead() + 4);
+        if (job.runtimeSettings().targetSchedulerEnabled()) {
+            replanned = job.selectBestTargetNear(player.getBlockPos(), lookahead);
+        }
+        boolean deferred = false;
+        if (!replanned
+            && job.runtimeSettings().deferUnreachableTargets()
+            && job.currentDeferrals() < job.runtimeSettings().maxTargetDeferrals()) {
+            deferred = job.deferCurrentToTail();
+        }
+        if (replanned || deferred) {
+            job.recordPathReplan();
+        }
+
+        job.recordStuckEvent();
+        job.noteEvent("watchdog stall=" + stalled + "t rep=" + replanned + " defer=" + deferred + " back=" + backtracked + " p=" + pressure + " target=" + shortTarget(target));
+        if (pressure >= TARGET_PRESSURE_SKIP_THRESHOLD
+            && (!job.runtimeSettings().deferUnreachableTargets()
+                || job.currentDeferrals() >= job.runtimeSettings().maxTargetDeferrals())) {
+            job.recordNoReach();
+            job.recordSkipped();
+            clearTargetPressure(job.playerId(), target);
+            job.noteEvent("skip(watchdog_pressure=" + pressure + ") target=" + shortTarget(target));
+            job.advance();
+            return;
+        }
+        if (!deferred) {
+            job.startRecover(PlacementJob.RecoverReason.OUT_OF_REACH, "reason=watchdog_stall target=" + shortTarget(target));
         }
     }
 
     private static void nodeMove(net.minecraft.server.world.ServerWorld world, ServerPlayerEntity player, PlacementJob job) {
         BlockPos target = job.currentTarget();
+        int pressure = targetPressure(job.playerId(), target);
+        if (pressure >= TARGET_PRESSURE_SKIP_THRESHOLD) {
+            boolean canStillDefer = job.runtimeSettings().deferUnreachableTargets()
+                && job.currentDeferrals() < job.runtimeSettings().maxTargetDeferrals();
+            if (canStillDefer && job.deferCurrentToTail()) {
+                job.recordNoReach();
+                job.noteEvent("defer(pressure=" + pressure + ") target=" + shortTarget(target));
+                return;
+            }
+            job.recordNoReach();
+            job.recordSkipped();
+            clearTargetPressure(job.playerId(), target);
+            job.noteEvent("skip(pressure=" + pressure + ") target=" + shortTarget(target));
+            job.advance();
+            return;
+        }
+        if (pressure >= TARGET_PRESSURE_DEFER_THRESHOLD
+            && job.runtimeSettings().deferUnreachableTargets()
+            && job.currentDeferrals() < job.runtimeSettings().maxTargetDeferrals()
+            && job.deferCurrentToTail()) {
+            job.recordNoReach();
+            job.noteEvent("defer(pressure=" + pressure + ") target=" + shortTarget(target));
+            return;
+        }
+
         BuildNavigation.MoveResult move = BuildNavigation.ensureInRangeForPlacement(world, player, target, job.runtimeSettings());
         if (move.status() < 0) {
+            addTargetPressure(job.playerId(), target, 1);
             String detail = "target=" + shortTarget(target)
                 + " reason=" + move.reason()
                 + " dist=" + String.format(Locale.ROOT, "%.2f", move.finalDistance());
@@ -335,12 +533,14 @@ public final class PlacementJobRunner {
         BlockPos target = job.currentTarget();
         double dist = Math.sqrt(player.squaredDistanceTo(target.getX() + 0.5, target.getY() + 0.5, target.getZ() + 0.5));
         if (dist > job.runtimeSettings().reachDistance() + 0.45) {
+            addTargetPressure(job.playerId(), target, 1);
             job.setNode(PlacementJob.TaskNode.MOVE);
             return;
         }
 
         var existingState = world.getBlockState(target);
         if (existingState.isOf(job.currentBlock())) {
+            clearTargetPressure(job.playerId(), target);
             job.recordAlreadyPlaced();
             job.recordSkipped();
             job.noteEvent("already target=" + shortTarget(target));
@@ -383,16 +583,18 @@ public final class PlacementJobRunner {
         boolean changed = world.setBlockState(target, desiredState);
         model.train(features, changed);
         if (changed) {
+            clearTargetPressure(job.playerId(), target);
             consumePlacementItemAfterSuccess(player, job.currentBlock());
             job.recordPlaced();
             job.noteEvent("placed block=" + blockId(job) + " target=" + shortTarget(target));
             job.advance();
             return;
         }
+        addTargetPressure(job.playerId(), target, 2);
         job.startRecover(PlacementJob.RecoverReason.PLACE_FAILED, "target=" + shortTarget(target));
     }
 
-    private static void nodeRecover(ServerPlayerEntity player, PlacementJob job) {
+    private static void nodeRecover(net.minecraft.server.world.ServerWorld world, ServerPlayerEntity player, PlacementJob job) {
         if (job.isComplete()) {
             return;
         }
@@ -406,8 +608,8 @@ public final class PlacementJobRunner {
                 job.noteEvent("skip(protected) target=" + shortTarget(target));
                 job.advance();
             }
-            case BLOCKED_STRICT_AIR -> recoverBlocked(job, target, tries, "strict_air");
-            case BLOCKED_SOLID -> recoverBlocked(job, target, tries, "solid");
+            case BLOCKED_STRICT_AIR -> recoverBlocked(world, player, job, target, tries, "strict_air");
+            case BLOCKED_SOLID -> recoverBlocked(world, player, job, target, tries, "solid");
             case NO_ITEM -> {
                 job.recordSkipped();
                 job.noteEvent("skip(no_item) block=" + blockId(job) + " target=" + shortTarget(target));
@@ -419,7 +621,7 @@ public final class PlacementJobRunner {
                 job.noteEvent("skip(ml) target=" + shortTarget(target));
                 job.advance();
             }
-            case PLACE_FAILED -> recoverPlaceFailure(job, target, tries);
+            case PLACE_FAILED -> recoverPlaceFailure(world, player, job, target, tries);
             case NONE, UNKNOWN -> {
                 job.recordFailed();
                 job.noteEvent("skip(unknown) target=" + shortTarget(target));
@@ -446,8 +648,12 @@ public final class PlacementJobRunner {
             || recoverDetail.contains("reason=walk_no_path")
             || recoverDetail.contains("reason=walk_no_progress")
             || recoverDetail.contains("reason=walk_greedy_rejected");
+        int pressure = addTargetPressure(job.playerId(), target, hardPathMiss ? 2 : 1);
         int replanTryGate = hardPathMiss ? 1 : 2;
         int deferTryGate = hardPathMiss ? 1 : 2;
+        if (pressure >= TARGET_PRESSURE_DEFER_THRESHOLD) {
+            deferTryGate = 1;
+        }
 
         int schedulerLookahead = Math.max(10, job.runtimeSettings().schedulerLookahead());
         boolean canReplan = tries >= replanTryGate
@@ -466,9 +672,20 @@ public final class PlacementJobRunner {
             boolean deferred = job.deferCurrentToTail();
             if (deferred) {
                 job.recordNoReach();
-                job.noteEvent("defer(out_of_reach) target=" + shortTarget(target));
+                job.noteEvent("defer(out_of_reach p=" + pressure + ") target=" + shortTarget(target));
                 return;
             }
+        }
+
+        if (pressure >= TARGET_PRESSURE_SKIP_THRESHOLD
+            && (!job.runtimeSettings().deferUnreachableTargets()
+                || job.currentDeferrals() >= job.runtimeSettings().maxTargetDeferrals())) {
+            job.recordNoReach();
+            job.recordSkipped();
+            clearTargetPressure(job.playerId(), target);
+            job.noteEvent("skip(out_of_reach p=" + pressure + ") target=" + shortTarget(target));
+            job.advance();
+            return;
         }
 
         if (tries < MAX_RETRIES_PER_TARGET) {
@@ -492,7 +709,27 @@ public final class PlacementJobRunner {
         job.advance();
     }
 
-    private static void recoverBlocked(PlacementJob job, BlockPos target, int tries, String reason) {
+    private static void recoverBlocked(
+        net.minecraft.server.world.ServerWorld world,
+        ServerPlayerEntity player,
+        PlacementJob job,
+        BlockPos target,
+        int tries,
+        String reason
+    ) {
+        int pressure = addTargetPressure(job.playerId(), target, 1);
+        if (pressure >= TARGET_PRESSURE_SKIP_THRESHOLD) {
+            job.recordBlocked();
+            job.recordSkipped();
+            clearTargetPressure(job.playerId(), target);
+            job.noteEvent("skip(blocked:" + reason + " p=" + pressure + ") target=" + shortTarget(target));
+            job.advance();
+            return;
+        }
+        if (tries <= MAX_BLOCKED_RETRIES && tryAutoClearSoftBlocker(world, player, job, target, reason)) {
+            job.setNode(PlacementJob.TaskNode.ALIGN);
+            return;
+        }
         if (tries < MAX_BLOCKED_RETRIES) {
             job.noteEvent("retry(blocked:" + reason + ") " + tries + "/" + MAX_BLOCKED_RETRIES + " target=" + shortTarget(target));
             job.setNode(PlacementJob.TaskNode.ALIGN);
@@ -504,7 +741,26 @@ public final class PlacementJobRunner {
         job.advance();
     }
 
-    private static void recoverPlaceFailure(PlacementJob job, BlockPos target, int tries) {
+    private static void recoverPlaceFailure(
+        net.minecraft.server.world.ServerWorld world,
+        ServerPlayerEntity player,
+        PlacementJob job,
+        BlockPos target,
+        int tries
+    ) {
+        int pressure = addTargetPressure(job.playerId(), target, 1);
+        if (pressure >= TARGET_PRESSURE_SKIP_THRESHOLD) {
+            job.recordFailed();
+            job.recordSkipped();
+            clearTargetPressure(job.playerId(), target);
+            job.noteEvent("skip(place_failed p=" + pressure + ") target=" + shortTarget(target));
+            job.advance();
+            return;
+        }
+        if (tries <= MAX_RETRIES_PER_TARGET && tryAutoPlaceSupport(world, player, job, target)) {
+            job.setNode(PlacementJob.TaskNode.ALIGN);
+            return;
+        }
         if (tries < MAX_RETRIES_PER_TARGET) {
             job.noteEvent("retry(place) " + tries + "/" + MAX_RETRIES_PER_TARGET + " target=" + shortTarget(target));
             job.setNode(PlacementJob.TaskNode.MOVE);
@@ -514,6 +770,145 @@ public final class PlacementJobRunner {
         job.recordSkipped();
         job.noteEvent("skip(place_failed) block=" + blockId(job) + " target=" + shortTarget(target));
         job.advance();
+    }
+
+    private static boolean tryAutoClearSoftBlocker(
+        net.minecraft.server.world.ServerWorld world,
+        ServerPlayerEntity player,
+        PlacementJob job,
+        BlockPos target,
+        String reason
+    ) {
+        if (world == null || player == null || job == null || target == null) {
+            return false;
+        }
+        BlockState state = world.getBlockState(target);
+        if (state.isAir() || BuildSafetyPolicy.isProtected(state) || !isSoftRemovable(state, world, target)) {
+            return false;
+        }
+
+        Block removed = state.getBlock();
+        boolean changed = world.setBlockState(target, Blocks.AIR.getDefaultState());
+        if (!changed) {
+            return false;
+        }
+
+        world.spawnParticles(ParticleTypes.CLOUD, target.getX() + 0.5, target.getY() + 0.5, target.getZ() + 0.5, 2, 0.12, 0.12, 0.12, 0.0);
+        job.recordBlocked();
+        job.noteEvent("auto_clear(" + reason + ") removed=" + Registries.BLOCK.getId(removed) + " target=" + shortTarget(target));
+        return true;
+    }
+
+    private static boolean isSoftRemovable(BlockState state, net.minecraft.server.world.ServerWorld world, BlockPos pos) {
+        if (state == null || world == null || pos == null) {
+            return false;
+        }
+        if (state.isAir() || state.hasBlockEntity()) {
+            return false;
+        }
+        if (state.isOf(Blocks.BEDROCK) || state.isOf(Blocks.BARRIER) || state.isOf(Blocks.OBSIDIAN) || state.isOf(Blocks.CRYING_OBSIDIAN)) {
+            return false;
+        }
+        float hardness = state.getHardness(world, pos);
+        if (hardness < 0.0f || hardness > MAX_AUTO_CLEAR_HARDNESS) {
+            return false;
+        }
+        return true;
+    }
+
+    private static boolean tryAutoPlaceSupport(
+        net.minecraft.server.world.ServerWorld world,
+        ServerPlayerEntity player,
+        PlacementJob job,
+        BlockPos target
+    ) {
+        if (world == null || player == null || job == null || target == null) {
+            return false;
+        }
+        BlockState targetState = world.getBlockState(target);
+        if (!targetState.isAir() && !targetState.isReplaceable()) {
+            return false;
+        }
+
+        BlockPos below = target.down();
+        BlockState belowState = world.getBlockState(below);
+        if (BuildSafetyPolicy.isProtected(belowState)) {
+            return false;
+        }
+        if (!belowState.getCollisionShape(world, below).isEmpty()) {
+            return false;
+        }
+
+        Block support = pickSupportBlock(player, job.currentBlock());
+        if (support == null) {
+            return false;
+        }
+        BlockState supportState = support.getDefaultState();
+        if (supportState.isAir() || supportState.getCollisionShape(world, below).isEmpty() || supportState.isReplaceable()) {
+            return false;
+        }
+
+        boolean placed = world.setBlockState(below, supportState);
+        if (!placed) {
+            return false;
+        }
+        consumePlacementItemAfterSuccess(player, support);
+        world.spawnParticles(ParticleTypes.END_ROD, below.getX() + 0.5, below.getY() + 1.05, below.getZ() + 0.5, 1, 0.0, 0.0, 0.0, 0.0);
+        job.noteEvent("auto_support block=" + Registries.BLOCK.getId(support) + " at=" + shortTarget(below) + " for=" + shortTarget(target));
+        return true;
+    }
+
+    private static Block pickSupportBlock(ServerPlayerEntity player, Block preferred) {
+        if (player == null) {
+            return null;
+        }
+        if (player.getAbilities().creativeMode) {
+            return isGoodSupportBlock(preferred) ? preferred : Blocks.COBBLESTONE;
+        }
+
+        if (isGoodSupportBlock(preferred) && hasPlacementItemIfNeeded(player, preferred)) {
+            return preferred;
+        }
+
+        Block best = null;
+        int bestCount = 0;
+        var inv = player.getInventory();
+        for (int i = 0; i < inv.size(); i++) {
+            ItemStack stack = inv.getStack(i);
+            if (stack.isEmpty()) {
+                continue;
+            }
+            Item item = stack.getItem();
+            if (!(item instanceof BlockItem blockItem)) {
+                continue;
+            }
+            Block candidate = blockItem.getBlock();
+            if (!isGoodSupportBlock(candidate)) {
+                continue;
+            }
+            int count = stack.getCount();
+            if (best == null || count > bestCount) {
+                best = candidate;
+                bestCount = count;
+            }
+        }
+        return best;
+    }
+
+    private static boolean isGoodSupportBlock(Block block) {
+        if (block == null || block.asItem() == Items.AIR) {
+            return false;
+        }
+        BlockState state = block.getDefaultState();
+        if (state.isAir() || state.isReplaceable()) {
+            return false;
+        }
+        String id = Registries.BLOCK.getId(block).toString();
+        return !id.contains("sand")
+            && !id.contains("gravel")
+            && !id.contains("powder_snow")
+            && !id.contains("torch")
+            && !id.contains("rail");
     }
 
     private static void trackStuckAndRecover(net.minecraft.server.world.ServerWorld world, ServerPlayerEntity player, PlacementJob job) {
@@ -570,6 +965,7 @@ public final class PlacementJobRunner {
         state.stagnantTicks(0);
         state.cooldownTicks(STUCK_COOLDOWN_TICKS);
         state.bestDistance(distNow);
+        int pressure = addTargetPressure(job.playerId(), target, 2);
 
         job.recordStuckEvent();
         BuildNavigation.noteExternalFailure(job.playerId(), target, "stuck_target", true);
@@ -595,13 +991,91 @@ public final class PlacementJobRunner {
             job.recordPathReplan();
         }
 
+        if (pressure >= TARGET_PRESSURE_SKIP_THRESHOLD
+            && (!job.runtimeSettings().deferUnreachableTargets()
+                || job.currentDeferrals() >= job.runtimeSettings().maxTargetDeferrals())) {
+            job.recordNoReach();
+            job.recordSkipped();
+            clearTargetPressure(job.playerId(), target);
+            job.noteEvent("skip(stuck_pressure=" + pressure + ") target=" + shortTarget(target));
+            job.advance();
+            return;
+        }
+
         job.setNode(PlacementJob.TaskNode.MOVE);
         job.noteEvent("stuck_recover d=" + String.format(Locale.ROOT, "%.2f", distNow)
-            + " rep=" + replanned + " back=" + backtracked);
+            + " rep=" + replanned + " back=" + backtracked + " p=" + pressure);
     }
 
     private static double distanceTo(ServerPlayerEntity player, BlockPos target) {
         return Math.sqrt(player.squaredDistanceTo(target.getX() + 0.5, target.getY() + 0.5, target.getZ() + 0.5));
+    }
+
+    private static int targetPressure(UUID playerId, BlockPos target) {
+        if (playerId == null || target == null) {
+            return 0;
+        }
+        Map<Long, Integer> byTarget = TARGET_PRESSURE.get(playerId);
+        if (byTarget == null) {
+            return 0;
+        }
+        return Math.max(0, byTarget.getOrDefault(target.asLong(), 0));
+    }
+
+    private static int addTargetPressure(UUID playerId, BlockPos target, int delta) {
+        if (playerId == null || target == null || delta <= 0) {
+            return 0;
+        }
+        long key = target.asLong();
+        Map<Long, Integer> byTarget = TARGET_PRESSURE.computeIfAbsent(playerId, ignored -> new ConcurrentHashMap<>());
+        if (!byTarget.containsKey(key) && byTarget.size() >= TARGET_PRESSURE_MAX_TRACKED) {
+            return Math.max(0, byTarget.getOrDefault(key, 0));
+        }
+        int next = byTarget.getOrDefault(key, 0) + delta;
+        if (next > TARGET_PRESSURE_MAX_VALUE) {
+            next = TARGET_PRESSURE_MAX_VALUE;
+        }
+        byTarget.put(key, next);
+        return next;
+    }
+
+    private static void clearTargetPressure(UUID playerId, BlockPos target) {
+        if (playerId == null || target == null) {
+            return;
+        }
+        Map<Long, Integer> byTarget = TARGET_PRESSURE.get(playerId);
+        if (byTarget == null) {
+            return;
+        }
+        byTarget.remove(target.asLong());
+        if (byTarget.isEmpty()) {
+            TARGET_PRESSURE.remove(playerId);
+        }
+    }
+
+    private static void decayTargetPressure() {
+        Iterator<Map.Entry<UUID, Map<Long, Integer>>> it = TARGET_PRESSURE.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<UUID, Map<Long, Integer>> entry = it.next();
+            Map<Long, Integer> byTarget = entry.getValue();
+            if (byTarget == null || byTarget.isEmpty()) {
+                it.remove();
+                continue;
+            }
+            Iterator<Map.Entry<Long, Integer>> targetIt = byTarget.entrySet().iterator();
+            while (targetIt.hasNext()) {
+                Map.Entry<Long, Integer> targetEntry = targetIt.next();
+                int value = targetEntry.getValue() == null ? 0 : targetEntry.getValue();
+                if (value <= 1) {
+                    targetIt.remove();
+                } else {
+                    targetEntry.setValue(value - 1);
+                }
+            }
+            if (byTarget.isEmpty()) {
+                it.remove();
+            }
+        }
     }
 
     private static String detailSummary(String state, PlacementJob job) {
@@ -611,6 +1085,7 @@ public final class PlacementJobRunner {
             BlockPos target = job.currentTarget();
             sb.append(" nextBlock=").append(blockId(job));
             sb.append(" nextTarget=").append(shortTarget(target));
+            sb.append(" pressure=").append(targetPressure(job.playerId(), target));
             sb.append(" attempts=").append(job.currentAttempts());
             sb.append(" defers=").append(job.currentDeferrals());
             sb.append(" node=").append(job.currentNode().name().toLowerCase());
@@ -815,6 +1290,62 @@ public final class PlacementJobRunner {
 
     private static Text blueText(String message) {
         return Text.literal(message).formatted(Formatting.AQUA);
+    }
+
+    private static final class ProgressWatchdog {
+        private int cursor;
+        private int placed;
+        private int skipped;
+        private int moved;
+        private long lastProgressTick;
+        private long lastTriggerTick;
+        private int triggerCount;
+
+        private ProgressWatchdog(int cursor, int placed, int skipped, int moved, long nowTick) {
+            this.cursor = cursor;
+            this.placed = placed;
+            this.skipped = skipped;
+            this.moved = moved;
+            this.lastProgressTick = nowTick;
+            this.lastTriggerTick = Long.MIN_VALUE / 4L;
+            this.triggerCount = 0;
+        }
+
+        static ProgressWatchdog fresh(PlacementJob job, long nowTick) {
+            return new ProgressWatchdog(job.cursor(), job.placedCount(), job.skippedCount(), job.movedCount(), nowTick);
+        }
+
+        boolean observeProgress(PlacementJob job, long nowTick) {
+            if (job.cursor() != cursor
+                || job.placedCount() != placed
+                || job.skippedCount() != skipped
+                || job.movedCount() != moved) {
+                this.cursor = job.cursor();
+                this.placed = job.placedCount();
+                this.skipped = job.skippedCount();
+                this.moved = job.movedCount();
+                this.lastProgressTick = nowTick;
+                return true;
+            }
+            return false;
+        }
+
+        long lastProgressTick() {
+            return lastProgressTick;
+        }
+
+        long lastTriggerTick() {
+            return lastTriggerTick;
+        }
+
+        void markTriggered(long nowTick) {
+            this.lastTriggerTick = nowTick;
+            this.lastProgressTick = nowTick;
+        }
+
+        void bumpTriggerCount() {
+            this.triggerCount++;
+        }
     }
 
     private static final class StuckState {

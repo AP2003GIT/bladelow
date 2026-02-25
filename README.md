@@ -37,7 +37,6 @@ Manual WSL copy:
 - Tabs: `AREA` and `BP`.
 - `AREA` is marker-based build mode (default).
 - `BP` is blueprint/web-import build mode.
-- Old `LINE` mode is removed from HUD flow.
 
 3. Marker area workflow (`AREA`)
 - Set coordinates (`Auto` from player or manual `X/Y/Z`).
@@ -105,6 +104,9 @@ Movement/runtime tuning:
 - `#blademove lookahead <1..96>`
 - `#blademove defer on|off`
 - `#blademove maxdefer <0..8>`
+- `#blademove autoresume on|off`
+- `#blademove trace on|off`
+- `#blademove traceparticles on|off`
 
 Safety:
 - `#bladesafety show`
@@ -190,6 +192,8 @@ Pathing/scheduler tuning:
 - Runtime now includes:
   - dynamic target scheduler (lookahead reprioritization)
   - deferred unreachable retry pipeline (tail defers before final skip)
+  - per-target pressure tracking for stuck/no-path hot spots (auto defer/skip to prevent loops)
+  - auto-resume for pending non-preview jobs when player reconnects
 - Completion/status include diagnostics like `deferred`, `replan`, `already`, `blocked`, `noReach`, `mlSkip`.
 
 ## BuildIt Website Integration

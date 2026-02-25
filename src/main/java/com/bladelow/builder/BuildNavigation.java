@@ -2,14 +2,18 @@ package com.bladelow.builder;
 
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
+import net.minecraft.particle.ParticleTypes;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
+import net.minecraft.text.Text;
+import net.minecraft.util.Formatting;
 import net.minecraft.util.math.BlockPos;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.PriorityQueue;
 import java.util.UUID;
@@ -22,9 +26,12 @@ public final class BuildNavigation {
     private static final long TEMP_BLOCK_MS_SOFT = 8_000L;
     private static final long TEMP_BLOCK_MS_HARD = 18_000L;
     private static final int MAX_TEMP_BLOCKED_PER_PLAYER = 640;
+    private static final long TRACE_MSG_THROTTLE_MS = 550L;
+    private static final int TRACE_PARTICLE_POINTS = 28;
     private static final Map<UUID, Map<PathKey, Long>> TEMP_BLOCKED = new ConcurrentHashMap<>();
     private static final Map<UUID, CachedPathPlan> PATH_PLANS = new ConcurrentHashMap<>();
     private static final Map<UUID, Integer> BLACKLIST_HITS = new ConcurrentHashMap<>();
+    private static final Map<UUID, Long> TRACE_NEXT_MSG_AT = new ConcurrentHashMap<>();
 
     private BuildNavigation() {
     }
@@ -138,7 +145,7 @@ public final class BuildNavigation {
             case WALK -> {
                 for (int i = 0; i < walkAttempts; i++) {
                     ApproachCandidate approach = approaches.get(i);
-                    MoveResult walk = moveWalk(world, player, approach.x(), approach.y(), approach.z(), targetX, targetY, targetZ, reach);
+                    MoveResult walk = moveWalk(world, player, approach.x(), approach.y(), approach.z(), targetX, targetY, targetZ, reach, settings);
                     if (walk.status() >= 0) {
                         yield walk;
                     }
@@ -166,7 +173,7 @@ public final class BuildNavigation {
             case AUTO -> {
                 for (int i = 0; i < walkAttempts; i++) {
                     ApproachCandidate approach = approaches.get(i);
-                    MoveResult walk = moveWalk(world, player, approach.x(), approach.y(), approach.z(), targetX, targetY, targetZ, reach);
+                    MoveResult walk = moveWalk(world, player, approach.x(), approach.y(), approach.z(), targetX, targetY, targetZ, reach, settings);
                     if (walk.status() >= 0) {
                         yield walk;
                     }
@@ -225,7 +232,8 @@ public final class BuildNavigation {
         double targetX,
         double targetY,
         double targetZ,
-        double reach
+        double reach,
+        BuildRuntimeSettings.Snapshot settings
     ) {
         double distNow = Math.sqrt(player.squaredDistanceTo(targetX, targetY, targetZ));
         if (distNow <= reach + 0.1) {
@@ -233,20 +241,31 @@ public final class BuildNavigation {
         }
 
         UUID playerId = player.getUuid();
-        BlockPos start = BlockPos.ofFloored(player.getX(), player.getY(), player.getZ());
         BlockPos goal = BlockPos.ofFloored(approachX, approachY, approachZ);
+        BlockPos start = resolvePathStart(world, player, goal);
 
         // Incremental replanning: reuse cached plan for same goal before doing full A* again.
         CachedPathPlan cached = getUsableCachedPlan(playerId, start, goal);
         if (cached != null) {
+            if (settings.pathTraceParticles()) {
+                emitPathTraceParticles(world, cached.path(), cached.cursor(), TRACE_PARTICLE_POINTS, true);
+            }
             MoveResult fromCache = followPathPlan(world, player, playerId, cached, targetX, targetY, targetZ, reach, "walk_cache");
             if (fromCache.status() >= 0) {
+                trace(settings, player,
+                    "cache hit cursor=" + cached.cursor()
+                        + " moved=" + fromCache.movedSteps()
+                        + " dist=" + format2(fromCache.finalDistance()),
+                    false
+                );
                 return fromCache;
             }
+            trace(settings, player, "cache miss reason=" + fromCache.reason(), true);
             PATH_PLANS.remove(playerId);
         }
 
-        List<BlockPos> path = findPathWithFallback(world, playerId, start, goal);
+        PathSearchResult search = findPathWithFallback(world, playerId, start, goal);
+        List<BlockPos> path = search.path();
         if (path.isEmpty()) {
             double horizontalToGoal = Math.sqrt(square(goal.getX() - start.getX()) + square(goal.getZ() - start.getZ()));
             int adaptiveRadius = Math.max(18, Math.min(64, (int) Math.ceil(horizontalToGoal * 1.8) + 10));
@@ -255,6 +274,14 @@ public final class BuildNavigation {
             int widerVertical = Math.min(20, verticalWindow + 4);
             BlockPos fallback = greedyFallbackStep(world, start, goal, widerRadius, widerVertical);
             if (fallback == null) {
+                trace(settings, player,
+                    "a* no_path exp=" + search.expanded()
+                        + " passes=" + search.passes()
+                        + " r=" + search.radius()
+                        + " v=" + search.vertical()
+                        + " budget=" + search.budget(),
+                    true
+                );
                 rememberTemporarilyBlocked(playerId, goal.getX(), goal.getY(), goal.getZ(), "walk_no_path");
                 return MoveResult.failed("walk_no_path", distNow);
             }
@@ -262,19 +289,93 @@ public final class BuildNavigation {
             player.requestTeleport(fallback.getX() + 0.5, fallback.getY(), fallback.getZ() + 0.5);
             double afterDist = Math.sqrt(player.squaredDistanceTo(targetX, targetY, targetZ));
             if (afterDist > beforeDist + 0.35) {
+                trace(settings, player,
+                    "greedy rejected dBefore=" + format2(beforeDist) + " dAfter=" + format2(afterDist),
+                    true
+                );
                 rememberTemporarilyBlocked(playerId, fallback.getX(), fallback.getY(), fallback.getZ(), "walk_greedy_rejected");
                 return MoveResult.failed("walk_greedy_rejected", afterDist);
             }
+            trace(settings, player,
+                "greedy step -> " + fallback.toShortString()
+                    + " dBefore=" + format2(beforeDist)
+                    + " dAfter=" + format2(afterDist),
+                false
+            );
             return MoveResult.moved("walk_greedy_step", 1, afterDist);
         }
 
         CachedPathPlan freshPlan = new CachedPathPlan(goal, path, System.currentTimeMillis());
         PATH_PLANS.put(playerId, freshPlan);
+        trace(settings, player,
+            "a* path len=" + path.size()
+                + " exp=" + search.expanded()
+                + " passes=" + search.passes()
+                + " r=" + search.radius()
+                + " v=" + search.vertical()
+                + " actions=" + summarizeActions(start, path, 8),
+            false
+        );
+        if (settings.pathTraceParticles()) {
+            emitPathTraceParticles(world, path, 0, TRACE_PARTICLE_POINTS, false);
+        }
         MoveResult fromFresh = followPathPlan(world, player, playerId, freshPlan, targetX, targetY, targetZ, reach, "walk_path");
         if (fromFresh.status() < 0) {
+            trace(settings, player, "path follow failed reason=" + fromFresh.reason(), true);
             PATH_PLANS.remove(playerId);
         }
         return fromFresh;
+    }
+
+    private static BlockPos resolvePathStart(ServerWorld world, ServerPlayerEntity player, BlockPos goal) {
+        BlockPos raw = BlockPos.ofFloored(player.getX(), player.getY(), player.getZ());
+        if (canStandAtBlock(world, raw.getX(), raw.getY(), raw.getZ())) {
+            return raw;
+        }
+
+        int baseY = raw.getY();
+        int bestX = raw.getX();
+        int bestY = raw.getY();
+        int bestZ = raw.getZ();
+        double bestScore = Double.POSITIVE_INFINITY;
+        boolean found = false;
+
+        // If player is mid-air or clipped, anchor A* to nearest standable location first.
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dz = -2; dz <= 2; dz++) {
+                for (int dy = -3; dy <= 2; dy++) {
+                    int x = raw.getX() + dx;
+                    int y = baseY + dy;
+                    int z = raw.getZ() + dz;
+                    if (!canStandAtBlock(world, x, y, z)) {
+                        continue;
+                    }
+
+                    double toPlayer =
+                        square((x + 0.5) - player.getX())
+                            + square(y - player.getY())
+                            + square((z + 0.5) - player.getZ());
+                    double toGoal =
+                        square(goal.getX() - x)
+                            + square(goal.getZ() - z)
+                            + square((goal.getY() - y) * 0.6);
+                    double score = (toPlayer * 1.8) + (toGoal * 0.08) + Math.abs(dy) * 0.6;
+
+                    if (score < bestScore) {
+                        bestScore = score;
+                        bestX = x;
+                        bestY = y;
+                        bestZ = z;
+                        found = true;
+                    }
+                }
+            }
+        }
+
+        if (!found) {
+            return raw;
+        }
+        return new BlockPos(bestX, bestY, bestZ);
     }
 
     private static int computeExpandedBudget(BlockPos start, BlockPos goal, int maxRadius, int maxVerticalOffset) {
@@ -290,7 +391,7 @@ public final class BuildNavigation {
         return Math.min(HARD_MAX_PATH_EXPANDED, Math.max(BASE_MAX_PATH_EXPANDED, budget));
     }
 
-    private static List<BlockPos> findPathWithFallback(
+    private static PathSearchResult findPathWithFallback(
         ServerWorld world,
         UUID playerId,
         BlockPos start,
@@ -301,15 +402,23 @@ public final class BuildNavigation {
         int verticalWindow = Math.max(4, Math.min(14, Math.abs(goal.getY() - start.getY()) + 5));
         int maxExpanded = computeExpandedBudget(start, goal, adaptiveRadius, verticalWindow);
 
-        List<BlockPos> path = findPath(world, playerId, start, goal, adaptiveRadius, verticalWindow, maxExpanded);
-        if (!path.isEmpty()) {
-            return path;
+        PathComputation first = findPath(world, playerId, start, goal, adaptiveRadius, verticalWindow, maxExpanded);
+        if (!first.path().isEmpty()) {
+            return new PathSearchResult(first.path(), first.expanded(), 1, adaptiveRadius, verticalWindow, maxExpanded);
         }
 
         int widerRadius = Math.min(96, adaptiveRadius + 14);
         int widerVertical = Math.min(20, verticalWindow + 4);
         int widerBudget = Math.min(HARD_MAX_PATH_EXPANDED, maxExpanded + 2800);
-        return findPath(world, playerId, start, goal, widerRadius, widerVertical, widerBudget);
+        PathComputation second = findPath(world, playerId, start, goal, widerRadius, widerVertical, widerBudget);
+        return new PathSearchResult(
+            second.path(),
+            first.expanded() + second.expanded(),
+            2,
+            widerRadius,
+            widerVertical,
+            widerBudget
+        );
     }
 
     private static CachedPathPlan getUsableCachedPlan(UUID playerId, BlockPos start, BlockPos goal) {
@@ -465,7 +574,7 @@ public final class BuildNavigation {
         return new BlockPos(best.x, best.y, best.z);
     }
 
-    private static List<BlockPos> findPath(
+    private static PathComputation findPath(
         ServerWorld world,
         UUID playerId,
         BlockPos start,
@@ -475,7 +584,7 @@ public final class BuildNavigation {
         int maxExpanded
     ) {
         if (start.equals(goal)) {
-            return List.of();
+            return new PathComputation(List.of(), 0);
         }
 
         PriorityQueue<PathNode> open = new PriorityQueue<>();
@@ -508,7 +617,7 @@ public final class BuildNavigation {
             }
 
             if (currentKey.equals(goalKey) || currentHeuristic <= 1.25) {
-                return reconstructPath(cameFrom, currentKey);
+                return new PathComputation(reconstructPath(cameFrom, currentKey), expanded);
             }
 
             List<PathEdge> neighbors = neighbors(world, playerId, currentKey, startKey, maxRadius, maxVerticalOffset);
@@ -526,9 +635,9 @@ public final class BuildNavigation {
             }
         }
         if (!bestSoFar.equals(startKey)) {
-            return reconstructPath(cameFrom, bestSoFar);
+            return new PathComputation(reconstructPath(cameFrom, bestSoFar), expanded);
         }
-        return List.of();
+        return new PathComputation(List.of(), expanded);
     }
 
     private static List<PathEdge> neighbors(
@@ -618,6 +727,19 @@ public final class BuildNavigation {
     }
 
     private record PathKey(int x, int y, int z) {
+    }
+
+    private record PathComputation(List<BlockPos> path, int expanded) {
+    }
+
+    private record PathSearchResult(
+        List<BlockPos> path,
+        int expanded,
+        int passes,
+        int radius,
+        int vertical,
+        int budget
+    ) {
     }
 
     private static List<ApproachCandidate> selectApproachCandidates(
@@ -1007,6 +1129,90 @@ public final class BuildNavigation {
             }
             blocked.remove(oldestKey);
         }
+    }
+
+    private static void trace(BuildRuntimeSettings.Snapshot settings, ServerPlayerEntity player, String message, boolean force) {
+        if (settings == null || !settings.pathTraceEnabled() || player == null || message == null || message.isBlank()) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        UUID playerId = player.getUuid();
+        if (!force) {
+            long next = TRACE_NEXT_MSG_AT.getOrDefault(playerId, 0L);
+            if (now < next) {
+                return;
+            }
+        }
+        TRACE_NEXT_MSG_AT.put(playerId, now + TRACE_MSG_THROTTLE_MS);
+        player.sendMessage(Text.literal("[Bladelow][trace] " + message).formatted(Formatting.AQUA), false);
+    }
+
+    private static void emitPathTraceParticles(
+        ServerWorld world,
+        List<BlockPos> path,
+        int fromIndex,
+        int maxPoints,
+        boolean cached
+    ) {
+        if (world == null || path == null || path.isEmpty() || maxPoints <= 0) {
+            return;
+        }
+        int start = Math.max(0, fromIndex);
+        if (start >= path.size()) {
+            return;
+        }
+        int points = 0;
+        int stride = Math.max(1, (path.size() - start) / maxPoints);
+        for (int i = start; i < path.size() && points < maxPoints; i += stride) {
+            BlockPos p = path.get(i);
+            world.spawnParticles(
+                cached ? ParticleTypes.HAPPY_VILLAGER : ParticleTypes.END_ROD,
+                p.getX() + 0.5,
+                p.getY() + 1.05,
+                p.getZ() + 0.5,
+                1,
+                0.0,
+                0.0,
+                0.0,
+                0.0
+            );
+            points++;
+        }
+    }
+
+    private static String summarizeActions(BlockPos start, List<BlockPos> path, int maxSteps) {
+        if (start == null || path == null || path.isEmpty() || maxSteps <= 0) {
+            return "-";
+        }
+        StringBuilder sb = new StringBuilder();
+        PathKey from = new PathKey(start.getX(), start.getY(), start.getZ());
+        int shown = 0;
+        for (BlockPos step : path) {
+            if (step == null) {
+                continue;
+            }
+            if (shown >= maxSteps) {
+                break;
+            }
+            int dx = Integer.compare(step.getX(), from.x);
+            int dz = Integer.compare(step.getZ(), from.z);
+            int dy = step.getY() - from.y;
+            MoveAction action = classifyAction(dx, dz, dy);
+            if (shown > 0) {
+                sb.append(">");
+            }
+            sb.append(action.name().toLowerCase(Locale.ROOT));
+            from = new PathKey(step.getX(), step.getY(), step.getZ());
+            shown++;
+        }
+        if (path.size() > shown) {
+            sb.append(">...");
+        }
+        return sb.toString();
+    }
+
+    private static String format2(double value) {
+        return String.format(Locale.ROOT, "%.2f", value);
     }
 
     private static double square(double v) {

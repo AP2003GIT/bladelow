@@ -20,6 +20,9 @@ public final class BuildRuntimeSettings {
     private static int schedulerLookahead = 14;
     private static boolean deferUnreachableTargets = true;
     private static int maxTargetDeferrals = 2;
+    private static boolean autoResumeEnabled = true;
+    private static boolean pathTraceEnabled = false;
+    private static boolean pathTraceParticles = false;
 
     private BuildRuntimeSettings() {
     }
@@ -112,6 +115,30 @@ public final class BuildRuntimeSettings {
         maxTargetDeferrals = Math.max(0, Math.min(8, maxDeferrals));
     }
 
+    public static synchronized boolean autoResumeEnabled() {
+        return autoResumeEnabled;
+    }
+
+    public static synchronized void setAutoResumeEnabled(boolean enabled) {
+        autoResumeEnabled = enabled;
+    }
+
+    public static synchronized boolean pathTraceEnabled() {
+        return pathTraceEnabled;
+    }
+
+    public static synchronized void setPathTraceEnabled(boolean enabled) {
+        pathTraceEnabled = enabled;
+    }
+
+    public static synchronized boolean pathTraceParticles() {
+        return pathTraceParticles;
+    }
+
+    public static synchronized void setPathTraceParticles(boolean enabled) {
+        pathTraceParticles = enabled;
+    }
+
     public static synchronized String summary() {
         return snapshot().summary();
     }
@@ -126,7 +153,10 @@ public final class BuildRuntimeSettings {
             targetSchedulerEnabled,
             schedulerLookahead,
             deferUnreachableTargets,
-            maxTargetDeferrals
+            maxTargetDeferrals,
+            autoResumeEnabled,
+            pathTraceEnabled,
+            pathTraceParticles
         );
     }
 
@@ -139,7 +169,10 @@ public final class BuildRuntimeSettings {
         boolean targetSchedulerEnabled,
         int schedulerLookahead,
         boolean deferUnreachableTargets,
-        int maxTargetDeferrals
+        int maxTargetDeferrals,
+        boolean autoResumeEnabled,
+        boolean pathTraceEnabled,
+        boolean pathTraceParticles
     ) {
         public String summary() {
             return "smartMove=" + smartMoveEnabled
@@ -150,7 +183,10 @@ public final class BuildRuntimeSettings {
                 + " scheduler=" + (targetSchedulerEnabled ? "on" : "off")
                 + "(lookahead=" + schedulerLookahead + ")"
                 + " defer=" + (deferUnreachableTargets ? "on" : "off")
-                + "(max=" + maxTargetDeferrals + ")";
+                + "(max=" + maxTargetDeferrals + ")"
+                + " autoResume=" + (autoResumeEnabled ? "on" : "off")
+                + " trace=" + (pathTraceEnabled ? "on" : "off")
+                + "(particles=" + (pathTraceParticles ? "on" : "off") + ")";
         }
     }
 }

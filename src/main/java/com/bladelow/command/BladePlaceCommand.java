@@ -16,6 +16,9 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import net.minecraft.block.Block;
 import net.minecraft.command.argument.BlockPosArgumentType;
+import net.minecraft.item.BlockItem;
+import net.minecraft.item.Item;
+import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
 import net.minecraft.particle.ParticleTypes;
 import net.minecraft.registry.Registries;
@@ -28,9 +31,12 @@ import net.minecraft.util.math.BlockPos;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import static net.minecraft.server.command.CommandManager.argument;
 import static net.minecraft.server.command.CommandManager.literal;
@@ -67,7 +73,7 @@ public final class BladePlaceCommand {
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeplace <x> <y> <z> <count> [axis] <blocks_csv>"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeselect markerbox <from> <to> <height> | addhere | add <x> <y> <z> | buildh <height> <blocks_csv>"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeselect export <name> <block_id> | exportscan <name> | copybox <name> <from> <to>"), false);
-                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #blademove mode walk|auto|teleport ; reach <2.0..8.0> ; scheduler on|off ; lookahead <1..96> ; defer on|off ; maxdefer <0..8>"), false);
+                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #blademove mode walk|auto|teleport ; reach <2.0..8.0> ; scheduler on|off ; lookahead <1..96> ; defer on|off ; maxdefer <0..8> ; autoresume on|off ; trace on|off ; traceparticles on|off"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeblueprint list|load|build ; #bladeweb importload <index> [name] ; #bladestatus [detail] ; #bladepause ; #bladecontinue ; #bladecancel"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladediag show | #bladediag export [name]"), false);
                 return 1;
@@ -806,11 +812,17 @@ public final class BladePlaceCommand {
     }
 
     private static int queuePlacement(ServerCommandSource source, ServerPlayerEntity player, List<Block> perTargetBlocks, List<BlockPos> targets, String tag) {
+        MaterialResolution materialResolution = autoResolveMaterials(player, perTargetBlocks);
+        List<Block> resolvedBlocks = materialResolution.blocks();
+        if (!materialResolution.summary().isBlank()) {
+            source.sendFeedback(() -> blueText("[Bladelow] " + materialResolution.summary()), false);
+        }
+
         BuildRuntimeSettings.Snapshot snapshot = BuildRuntimeSettings.snapshot();
         PlacementJob job = new PlacementJob(
             player.getUuid(),
             source.getWorld().getRegistryKey(),
-            perTargetBlocks,
+            resolvedBlocks,
             targets,
             tag,
             snapshot
@@ -822,12 +834,207 @@ public final class BladePlaceCommand {
             : PlacementJobRunner.hasActive(player.getUuid());
         PlacementJobRunner.queueOrPreview(server, job);
         String queuedMessage = "[Bladelow] queued " + tag + " targets=" + targets.size()
-            + " blocks=" + perTargetBlocks.size()
+            + " blocks=" + resolvedBlocks.size()
             + " " + snapshot.summary()
             + (previewMode ? " [pending]" : " [active]")
             + (replaced ? " (replaced previous pending job)" : "");
         source.sendFeedback(() -> blueText(queuedMessage), false);
         return 1;
+    }
+
+    private static MaterialResolution autoResolveMaterials(ServerPlayerEntity player, List<Block> requested) {
+        if (requested == null || requested.isEmpty()) {
+            return new MaterialResolution(List.of(), 0, 0, "");
+        }
+        if (player.getAbilities().creativeMode) {
+            return new MaterialResolution(requested, 0, 0, "");
+        }
+
+        Map<Block, Integer> stock = inventoryBlockStock(player);
+        if (stock.isEmpty()) {
+            int missing = 0;
+            for (Block block : requested) {
+                if (block != null && block.asItem() != Items.AIR) {
+                    missing++;
+                }
+            }
+            String summary = missing > 0
+                ? "material auto-map missing=" + missing + " (no placeable block items found in inventory)"
+                : "";
+            return new MaterialResolution(requested, 0, missing, summary);
+        }
+
+        Set<Block> preferredPalette = new LinkedHashSet<>(requested);
+        List<Block> resolved = new ArrayList<>(requested.size());
+        Map<String, Integer> substitutions = new LinkedHashMap<>();
+        int substituted = 0;
+        int unresolved = 0;
+
+        for (Block desired : requested) {
+            if (hasStock(stock, desired)) {
+                consumeStock(stock, desired);
+                resolved.add(desired);
+                continue;
+            }
+
+            Block fallback = chooseFallbackBlock(desired, stock, preferredPalette);
+            if (fallback != null) {
+                consumeStock(stock, fallback);
+                resolved.add(fallback);
+                substituted++;
+                String key = shortBlockId(desired) + "->" + shortBlockId(fallback);
+                substitutions.merge(key, 1, Integer::sum);
+                continue;
+            }
+
+            resolved.add(desired);
+            if (desired != null && desired.asItem() != Items.AIR) {
+                unresolved++;
+            }
+        }
+
+        if (substituted == 0 && unresolved == 0) {
+            return new MaterialResolution(resolved, 0, 0, "");
+        }
+
+        StringBuilder summary = new StringBuilder("material auto-map");
+        if (substituted > 0) {
+            summary.append(" substitutions=").append(substituted);
+        }
+        if (unresolved > 0) {
+            summary.append(" missing=").append(unresolved);
+        }
+        if (!substitutions.isEmpty()) {
+            summary.append(" map=");
+            int shown = 0;
+            for (Map.Entry<String, Integer> entry : substitutions.entrySet()) {
+                if (shown > 0) {
+                    summary.append(", ");
+                }
+                summary.append(entry.getKey()).append("(").append(entry.getValue()).append(")");
+                shown++;
+                if (shown >= 4) {
+                    break;
+                }
+            }
+            if (substitutions.size() > 4) {
+                summary.append(", +").append(substitutions.size() - 4).append(" more");
+            }
+        }
+        return new MaterialResolution(resolved, substituted, unresolved, summary.toString());
+    }
+
+    private static Map<Block, Integer> inventoryBlockStock(ServerPlayerEntity player) {
+        Map<Block, Integer> stock = new HashMap<>();
+        var inventory = player.getInventory();
+        for (int i = 0; i < inventory.size(); i++) {
+            ItemStack stack = inventory.getStack(i);
+            if (stack == null || stack.isEmpty()) {
+                continue;
+            }
+            Item item = stack.getItem();
+            if (!(item instanceof BlockItem blockItem)) {
+                continue;
+            }
+            Block block = blockItem.getBlock();
+            if (block == null || block.asItem() == Items.AIR) {
+                continue;
+            }
+            stock.merge(block, stack.getCount(), Integer::sum);
+        }
+        return stock;
+    }
+
+    private static Block chooseFallbackBlock(Block desired, Map<Block, Integer> stock, Set<Block> preferredPalette) {
+        if (stock == null || stock.isEmpty()) {
+            return null;
+        }
+
+        String desiredGroup = materialGroup(desired);
+        Block bestSameGroup = bestStockedBlock(stock, candidate -> candidate != desired && materialGroup(candidate).equals(desiredGroup));
+        if (bestSameGroup != null) {
+            return bestSameGroup;
+        }
+
+        Block bestPreferred = bestStockedBlock(stock, candidate -> candidate != desired && preferredPalette.contains(candidate));
+        if (bestPreferred != null) {
+            return bestPreferred;
+        }
+
+        return bestStockedBlock(stock, candidate -> candidate != desired);
+    }
+
+    private static Block bestStockedBlock(Map<Block, Integer> stock, java.util.function.Predicate<Block> predicate) {
+        Block best = null;
+        int bestCount = 0;
+        String bestId = "";
+        for (Map.Entry<Block, Integer> entry : stock.entrySet()) {
+            Block candidate = entry.getKey();
+            int count = entry.getValue() == null ? 0 : entry.getValue();
+            if (candidate == null || count <= 0 || !predicate.test(candidate)) {
+                continue;
+            }
+            String id = blockId(candidate);
+            if (best == null || count > bestCount || (count == bestCount && id.compareTo(bestId) < 0)) {
+                best = candidate;
+                bestCount = count;
+                bestId = id;
+            }
+        }
+        return best;
+    }
+
+    private static boolean hasStock(Map<Block, Integer> stock, Block block) {
+        if (block == null || block.asItem() == Items.AIR) {
+            return false;
+        }
+        return stock.getOrDefault(block, 0) > 0;
+    }
+
+    private static void consumeStock(Map<Block, Integer> stock, Block block) {
+        if (stock == null || block == null) {
+            return;
+        }
+        Integer count = stock.get(block);
+        if (count == null || count <= 1) {
+            stock.remove(block);
+            return;
+        }
+        stock.put(block, count - 1);
+    }
+
+    private static String materialGroup(Block block) {
+        if (block == null) {
+            return "unknown";
+        }
+        String path = Registries.BLOCK.getId(block).getPath().toLowerCase();
+        if (path.contains("planks")) return "planks";
+        if (path.contains("log") || path.contains("wood")) return "wood";
+        if (path.contains("stone") || path.contains("cobble") || path.contains("deepslate")) return "stone";
+        if (path.contains("brick")) return "brick";
+        if (path.contains("glass")) return "glass";
+        if (path.contains("concrete")) return "concrete";
+        if (path.contains("terracotta")) return "terracotta";
+        if (path.contains("slab")) return "slab";
+        if (path.contains("stairs")) return "stairs";
+        int split = path.indexOf('_');
+        return split > 0 ? path.substring(0, split) : path;
+    }
+
+    private static String shortBlockId(Block block) {
+        String id = blockId(block);
+        if (id.startsWith("minecraft:")) {
+            return id.substring("minecraft:".length());
+        }
+        return id;
+    }
+
+    private static String blockId(Block block) {
+        if (block == null) {
+            return "minecraft:air";
+        }
+        Identifier id = Registries.BLOCK.getId(block);
+        return id == null ? "minecraft:air" : id.toString();
     }
 
     private static List<Block> parseBlockSpec(String blockSpec, ServerCommandSource source) {
@@ -1131,6 +1338,48 @@ public final class BladePlaceCommand {
                         ctx.getSource().sendFeedback(() -> blueText(
                             "[Bladelow] max deferrals per target set to " + BuildRuntimeSettings.maxTargetDeferrals()
                         ), false);
+                        return 1;
+                    })
+                )
+            )
+            .then(literal("autoresume")
+                .then(argument("enabled", StringArgumentType.word())
+                    .executes(ctx -> {
+                        String enabled = StringArgumentType.getString(ctx, "enabled");
+                        if (!enabled.equalsIgnoreCase("on") && !enabled.equalsIgnoreCase("off")) {
+                            ctx.getSource().sendError(blueText("[Bladelow] use on|off"));
+                            return 0;
+                        }
+                        BuildRuntimeSettings.setAutoResumeEnabled(enabled.equalsIgnoreCase("on"));
+                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] auto-resume set to " + enabled), false);
+                        return 1;
+                    })
+                )
+            )
+            .then(literal("trace")
+                .then(argument("enabled", StringArgumentType.word())
+                    .executes(ctx -> {
+                        String enabled = StringArgumentType.getString(ctx, "enabled");
+                        if (!enabled.equalsIgnoreCase("on") && !enabled.equalsIgnoreCase("off")) {
+                            ctx.getSource().sendError(blueText("[Bladelow] use on|off"));
+                            return 0;
+                        }
+                        BuildRuntimeSettings.setPathTraceEnabled(enabled.equalsIgnoreCase("on"));
+                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] path trace set to " + enabled), false);
+                        return 1;
+                    })
+                )
+            )
+            .then(literal("traceparticles")
+                .then(argument("enabled", StringArgumentType.word())
+                    .executes(ctx -> {
+                        String enabled = StringArgumentType.getString(ctx, "enabled");
+                        if (!enabled.equalsIgnoreCase("on") && !enabled.equalsIgnoreCase("off")) {
+                            ctx.getSource().sendError(blueText("[Bladelow] use on|off"));
+                            return 0;
+                        }
+                        BuildRuntimeSettings.setPathTraceParticles(enabled.equalsIgnoreCase("on"));
+                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] path trace particles set to " + enabled), false);
                         return 1;
                     })
                 )
@@ -1681,6 +1930,9 @@ public final class BladePlaceCommand {
         WALL,
         FLOOR,
         DETAIL
+    }
+
+    private record MaterialResolution(List<Block> blocks, int substitutions, int unresolved, String summary) {
     }
 
     private static void registerBladeModel(CommandDispatcher<ServerCommandSource> dispatcher) {

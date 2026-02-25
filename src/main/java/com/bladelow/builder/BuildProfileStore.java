@@ -45,6 +45,9 @@ public final class BuildProfileStore {
         p.setProperty(n + ".reach", Double.toString(BuildRuntimeSettings.reachDistance()));
         p.setProperty(n + ".strictAir", Boolean.toString(BuildRuntimeSettings.strictAirOnly()));
         p.setProperty(n + ".preview", Boolean.toString(BuildRuntimeSettings.previewBeforeBuild()));
+        p.setProperty(n + ".autoResume", Boolean.toString(BuildRuntimeSettings.autoResumeEnabled()));
+        p.setProperty(n + ".trace", Boolean.toString(BuildRuntimeSettings.pathTraceEnabled()));
+        p.setProperty(n + ".traceParticles", Boolean.toString(BuildRuntimeSettings.pathTraceParticles()));
         return storeProps(server, p, "saved profile " + n);
     }
 
@@ -56,6 +59,9 @@ public final class BuildProfileStore {
             BuildRuntimeSettings.setReachDistance(4.5);
             BuildRuntimeSettings.setStrictAirOnly(false);
             BuildRuntimeSettings.setPreviewBeforeBuild(false);
+            BuildRuntimeSettings.setAutoResumeEnabled(true);
+            BuildRuntimeSettings.setPathTraceEnabled(false);
+            BuildRuntimeSettings.setPathTraceParticles(false);
             return "loaded profile builder";
         }
         if ("safe".equals(n)) {
@@ -64,6 +70,9 @@ public final class BuildProfileStore {
             BuildRuntimeSettings.setReachDistance(4.0);
             BuildRuntimeSettings.setStrictAirOnly(true);
             BuildRuntimeSettings.setPreviewBeforeBuild(true);
+            BuildRuntimeSettings.setAutoResumeEnabled(true);
+            BuildRuntimeSettings.setPathTraceEnabled(false);
+            BuildRuntimeSettings.setPathTraceParticles(false);
             return "loaded profile safe";
         }
         if ("fast".equals(n)) {
@@ -72,6 +81,9 @@ public final class BuildProfileStore {
             BuildRuntimeSettings.setReachDistance(6.0);
             BuildRuntimeSettings.setStrictAirOnly(false);
             BuildRuntimeSettings.setPreviewBeforeBuild(false);
+            BuildRuntimeSettings.setAutoResumeEnabled(true);
+            BuildRuntimeSettings.setPathTraceEnabled(false);
+            BuildRuntimeSettings.setPathTraceParticles(false);
             return "loaded profile fast";
         }
 
@@ -89,6 +101,9 @@ public final class BuildProfileStore {
         }
         BuildRuntimeSettings.setStrictAirOnly(Boolean.parseBoolean(p.getProperty(n + ".strictAir", "false")));
         BuildRuntimeSettings.setPreviewBeforeBuild(Boolean.parseBoolean(p.getProperty(n + ".preview", "false")));
+        BuildRuntimeSettings.setAutoResumeEnabled(Boolean.parseBoolean(p.getProperty(n + ".autoResume", "true")));
+        BuildRuntimeSettings.setPathTraceEnabled(Boolean.parseBoolean(p.getProperty(n + ".trace", "false")));
+        BuildRuntimeSettings.setPathTraceParticles(Boolean.parseBoolean(p.getProperty(n + ".traceParticles", "false")));
         return "loaded profile " + n;
     }
 

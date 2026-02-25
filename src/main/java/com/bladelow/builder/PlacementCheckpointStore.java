@@ -134,6 +134,9 @@ public final class PlacementCheckpointStore {
         props.setProperty(prefix + "rt.lookahead", Integer.toString(rt.schedulerLookahead()));
         props.setProperty(prefix + "rt.defer", Boolean.toString(rt.deferUnreachableTargets()));
         props.setProperty(prefix + "rt.maxDefers", Integer.toString(rt.maxTargetDeferrals()));
+        props.setProperty(prefix + "rt.autoResume", Boolean.toString(rt.autoResumeEnabled()));
+        props.setProperty(prefix + "rt.trace", Boolean.toString(rt.pathTraceEnabled()));
+        props.setProperty(prefix + "rt.traceParticles", Boolean.toString(rt.pathTraceParticles()));
 
         List<PlacementJob.EntrySnapshot> entries = snapshot.entries();
         props.setProperty(prefix + "entries.count", Integer.toString(entries.size()));
@@ -181,7 +184,10 @@ public final class PlacementCheckpointStore {
             parseBoolean(props.getProperty(prefix + "rt.scheduler"), true),
             parseInt(props.getProperty(prefix + "rt.lookahead"), 14),
             parseBoolean(props.getProperty(prefix + "rt.defer"), true),
-            parseInt(props.getProperty(prefix + "rt.maxDefers"), 2)
+            parseInt(props.getProperty(prefix + "rt.maxDefers"), 2),
+            parseBoolean(props.getProperty(prefix + "rt.autoResume"), true),
+            parseBoolean(props.getProperty(prefix + "rt.trace"), false),
+            parseBoolean(props.getProperty(prefix + "rt.traceParticles"), false)
         );
 
         int entryCount = parseInt(props.getProperty(prefix + "entries.count"), 0);
