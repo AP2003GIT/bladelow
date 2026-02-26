@@ -771,7 +771,7 @@ public class BladelowHudScreen extends Screen {
         drawBorder(context, barX, barY, barW, barH, borderColor);
 
         String primary = hasValidation ? "Need: " + validationText : statusText;
-        String secondary = hasValidation ? "Fix required fields to run." : modeHintText();
+        String secondary = flowProgressText() + " | " + modeHintText();
         String clippedPrimary = this.textRenderer.trimToWidth(primary, barW - sx(10));
         String clippedSecondary = this.textRenderer.trimToWidth(secondary, barW - sx(10));
         context.drawText(this.textRenderer, Text.literal(clippedPrimary), barX + sx(4), barY + sx(3), textColor, false);
@@ -792,10 +792,10 @@ public class BladelowHudScreen extends Screen {
 
     private String modeHintText() {
         return switch (activeFlow) {
-            case FLOW_AREA -> "Area: set XYZ/A/B, height, then Mark Box.";
-            case FLOW_BLOCKS -> "Blocks: search and assign up to 3 slot blocks.";
-            case FLOW_SOURCE -> "Source: choose SEL/BP and optional BuildIt import.";
-            case FLOW_RUN -> "Run: Start, Stop, Continue, Confirm, and status.";
+            case FLOW_AREA -> "Area";
+            case FLOW_BLOCKS -> "Blocks";
+            case FLOW_SOURCE -> "Source";
+            case FLOW_RUN -> "Run";
             default -> "Ready";
         };
     }
@@ -804,7 +804,7 @@ public class BladelowHudScreen extends Screen {
         this.activeFlow = normalizeFlow(flow);
         updateFlowUi();
         updateRunGuard();
-        statusText = "Step: " + activeFlow.toUpperCase(Locale.ROOT);
+        statusText = "Step " + flowStep(activeFlow) + "/4: " + activeFlow.toUpperCase(Locale.ROOT);
     }
 
     private String normalizeFlow(String flow) {
@@ -893,10 +893,10 @@ public class BladelowHudScreen extends Screen {
         if (flowAreaButton == null) {
             return;
         }
-        flowAreaButton.setMessage(Text.literal(FLOW_AREA.equals(activeFlow) ? "AREA*" : "AREA"));
-        flowBlocksButton.setMessage(Text.literal(FLOW_BLOCKS.equals(activeFlow) ? "BLOCKS*" : "BLOCKS"));
-        flowSourceButton.setMessage(Text.literal(FLOW_SOURCE.equals(activeFlow) ? "SOURCE*" : "SOURCE"));
-        flowRunButton.setMessage(Text.literal(FLOW_RUN.equals(activeFlow) ? "RUN*" : "RUN"));
+        flowAreaButton.setMessage(Text.literal(FLOW_AREA.equals(activeFlow) ? "1 AREA*" : "1 AREA"));
+        flowBlocksButton.setMessage(Text.literal(FLOW_BLOCKS.equals(activeFlow) ? "2 BLOCKS*" : "2 BLOCKS"));
+        flowSourceButton.setMessage(Text.literal(FLOW_SOURCE.equals(activeFlow) ? "3 SOURCE*" : "3 SOURCE"));
+        flowRunButton.setMessage(Text.literal(FLOW_RUN.equals(activeFlow) ? "4 RUN*" : "4 RUN"));
     }
 
     private void setVisible(ButtonWidget widget, boolean visible) {
@@ -1682,6 +1682,9 @@ public class BladelowHudScreen extends Screen {
         if (runButton != null) {
             runButton.active = validationText.isEmpty();
         }
+        if (validationText.isEmpty() && FLOW_RUN.equals(activeFlow)) {
+            statusText = "Run ready";
+        }
     }
 
     private String validateForRun() {
@@ -1707,6 +1710,28 @@ public class BladelowHudScreen extends Screen {
         }
 
         return "";
+    }
+
+    private int flowStep(String flow) {
+        return switch (normalizeFlow(flow)) {
+            case FLOW_AREA -> 1;
+            case FLOW_BLOCKS -> 2;
+            case FLOW_SOURCE -> 3;
+            case FLOW_RUN -> 4;
+            default -> 1;
+        };
+    }
+
+    private String flowProgressText() {
+        String area = (markerA != null && markerB != null) ? "A:OK" : "A:--";
+        boolean blocksReady = selectedBlockSpec() != null;
+        String blocks = blocksReady ? "B:OK" : "B:--";
+        boolean sourceReady = !MODE_BLUEPRINT.equals(activeMode)
+            || (blueprintField != null && !blueprintField.getText().trim().isEmpty())
+            || (webField != null && !webField.getText().trim().isEmpty());
+        String source = sourceReady ? "S:OK" : "S:--";
+        String run = validationText.isEmpty() ? "R:OK" : "R:--";
+        return area + " " + blocks + " " + source + " " + run;
     }
 
     private boolean isBlockInAnySlot(String blockId) {

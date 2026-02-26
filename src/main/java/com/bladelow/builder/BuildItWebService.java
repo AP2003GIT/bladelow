@@ -52,6 +52,8 @@ public final class BuildItWebService {
 
     private static final int MAX_HTTP_RETRIES = 3;
     private static final int MAX_LINK_IMPORT_ATTEMPTS = 8;
+    private static final int MAX_NORMALIZED_PLACEMENTS = 50000;
+    private static final int MAX_NORMALIZED_AXIS = 256;
 
     private static final String[] CATALOG_URLS = {
         "https://builditapp.com/wp-json/wp/v2/posts?per_page=%d&_fields=title,link",
@@ -231,20 +233,22 @@ public final class BuildItWebService {
                 return Result.error("json missing 'placements'");
             }
             String finalName = (name == null || name.isBlank()) ? inferName(sourceUrl) : sanitizeName(name);
-            JsonObject normalized = normalizeImportedBlueprint(root, finalName, sourceUrl);
-            if (normalized == null || !hasPlacements(normalized)) {
-                return Result.error("blueprint normalization failed (no valid placements)");
+            NormalizationResult normalized = normalizeImportedBlueprint(root, finalName, sourceUrl);
+            if (!normalized.ok()) {
+                return Result.error("blueprint normalization failed: " + normalized.error());
             }
 
             Path dir = server.getRunDirectory().resolve("config").resolve("bladelow").resolve("blueprints");
             Files.createDirectories(dir);
             Path out = dir.resolve(finalName + ".json");
             try (Writer writer = Files.newBufferedWriter(out)) {
-                GSON.toJson(normalized, writer);
+                GSON.toJson(normalized.blueprint(), writer);
             }
 
             String reload = BlueprintLibrary.reload(server);
-            return Result.ok("imported '" + finalName + "'; " + reload);
+            return Result.ok("imported '" + finalName + "' placements=" + normalized.placements()
+                + " size=" + normalized.sizeX() + "x" + normalized.sizeY() + "x" + normalized.sizeZ()
+                + "; " + reload);
         } catch (IllegalArgumentException ex) {
             return Result.error("invalid url");
         } catch (IOException | InterruptedException | JsonParseException ex) {
@@ -404,11 +408,14 @@ public final class BuildItWebService {
         return obj != null && obj.has("placements") && obj.get("placements").isJsonArray();
     }
 
-    private static JsonObject normalizeImportedBlueprint(JsonObject root, String finalName, String sourceUrl) {
+    private static NormalizationResult normalizeImportedBlueprint(JsonObject root, String finalName, String sourceUrl) {
         JsonArray rawPlacements = root.getAsJsonArray("placements");
         List<NormalizedPlacement> placements = extractNormalizedPlacements(rawPlacements);
         if (placements.isEmpty()) {
-            return null;
+            return NormalizationResult.error("no valid placements");
+        }
+        if (placements.size() > MAX_NORMALIZED_PLACEMENTS) {
+            return NormalizationResult.error("placement count exceeds " + MAX_NORMALIZED_PLACEMENTS);
         }
 
         JsonObject out = new JsonObject();
@@ -438,15 +445,53 @@ public final class BuildItWebService {
         out.add("palette", palette);
         out.add("palette_map", inferRolePalette(placements, paletteCounts));
 
-        JsonObject meta = new JsonObject();
-        meta.addProperty("source", sourceUrl);
-        meta.addProperty("placements", placements.size());
+        int minX = placements.stream().mapToInt(NormalizedPlacement::x).min().orElse(0);
+        int minY = placements.stream().mapToInt(NormalizedPlacement::y).min().orElse(0);
+        int minZ = placements.stream().mapToInt(NormalizedPlacement::z).min().orElse(0);
         int maxX = placements.stream().mapToInt(NormalizedPlacement::x).max().orElse(0);
         int maxY = placements.stream().mapToInt(NormalizedPlacement::y).max().orElse(0);
         int maxZ = placements.stream().mapToInt(NormalizedPlacement::z).max().orElse(0);
-        meta.addProperty("size", (maxX + 1) + "x" + (maxY + 1) + "x" + (maxZ + 1));
+        int sizeX = (maxX - minX) + 1;
+        int sizeY = (maxY - minY) + 1;
+        int sizeZ = (maxZ - minZ) + 1;
+        if (sizeX > MAX_NORMALIZED_AXIS || sizeY > MAX_NORMALIZED_AXIS || sizeZ > MAX_NORMALIZED_AXIS) {
+            return NormalizationResult.error("build bounds exceed " + MAX_NORMALIZED_AXIS + " blocks per axis");
+        }
+
+        JsonObject origin = new JsonObject();
+        origin.addProperty("x", 0);
+        origin.addProperty("y", 0);
+        origin.addProperty("z", 0);
+        out.add("origin", origin);
+
+        JsonObject bounds = new JsonObject();
+        JsonObject min = new JsonObject();
+        min.addProperty("x", minX);
+        min.addProperty("y", minY);
+        min.addProperty("z", minZ);
+        JsonObject max = new JsonObject();
+        max.addProperty("x", maxX);
+        max.addProperty("y", maxY);
+        max.addProperty("z", maxZ);
+        JsonObject size = new JsonObject();
+        size.addProperty("x", sizeX);
+        size.addProperty("y", sizeY);
+        size.addProperty("z", sizeZ);
+        bounds.add("min", min);
+        bounds.add("max", max);
+        bounds.add("size", size);
+        out.add("bounds", bounds);
+        out.add("role_palette", inferRolePalette(placements, paletteCounts));
+
+        JsonObject meta = new JsonObject();
+        meta.addProperty("source", sourceUrl);
+        meta.addProperty("placements", placements.size());
+        meta.addProperty("size", sizeX + "x" + sizeY + "x" + sizeZ);
+        meta.addProperty("sizeX", sizeX);
+        meta.addProperty("sizeY", sizeY);
+        meta.addProperty("sizeZ", sizeZ);
         out.add("meta", meta);
-        return out;
+        return NormalizationResult.ok(out, placements.size(), sizeX, sizeY, sizeZ);
     }
 
     private static List<NormalizedPlacement> extractNormalizedPlacements(JsonArray rawPlacements) {
@@ -808,6 +853,24 @@ public final class BuildItWebService {
     }
 
     public record CatalogItem(int index, String title, String url) {
+    }
+
+    private record NormalizationResult(
+        boolean ok,
+        String error,
+        JsonObject blueprint,
+        int placements,
+        int sizeX,
+        int sizeY,
+        int sizeZ
+    ) {
+        static NormalizationResult ok(JsonObject blueprint, int placements, int sizeX, int sizeY, int sizeZ) {
+            return new NormalizationResult(true, "", blueprint, placements, sizeX, sizeY, sizeZ);
+        }
+
+        static NormalizationResult error(String error) {
+            return new NormalizationResult(false, error, null, 0, 0, 0, 0);
+        }
     }
 
     public record Result(boolean ok, String message) {

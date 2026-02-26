@@ -30,11 +30,13 @@ import net.minecraft.util.Formatting;
 import net.minecraft.util.math.BlockPos;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -770,45 +772,8 @@ public final class BladePlaceCommand {
     }
 
     private static int runPlacement(ServerCommandSource source, ServerPlayerEntity player, List<Block> blocks, List<BlockPos> targets, String tag) {
-        List<BlockPos> orderedTargets = orderTargetsForExecution(player, targets, tag);
-        List<Block> perTargetBlocks = assignPaletteForTargets(blocks, orderedTargets, tag);
-        return queuePlacement(source, player, perTargetBlocks, orderedTargets, tag);
-    }
-
-    private static List<BlockPos> orderTargetsForExecution(ServerPlayerEntity player, List<BlockPos> targets, String tag) {
-        if (targets.size() <= 1) {
-            return targets;
-        }
-        if ("bladeplace".equals(tag)) {
-            return targets;
-        }
-
-        List<BlockPos> remaining = new ArrayList<>(targets);
-        List<BlockPos> ordered = new ArrayList<>(targets.size());
-
-        BlockPos current = nearestTo(remaining, player.getX(), player.getY(), player.getZ());
-        if (current == null) {
-            return targets;
-        }
-        ordered.add(current);
-        remaining.remove(current);
-
-        while (!remaining.isEmpty()) {
-            BlockPos next = nearestTo(remaining, current.getX() + 0.5, current.getY() + 0.5, current.getZ() + 0.5);
-            ordered.add(next);
-            remaining.remove(next);
-            current = next;
-        }
-        return ordered;
-    }
-
-    private static BlockPos nearestTo(List<BlockPos> points, double x, double y, double z) {
-        if (points.isEmpty()) {
-            return null;
-        }
-        return points.stream()
-            .min(Comparator.comparingDouble(p -> p.getSquaredDistance(x, y, z)))
-            .orElse(null);
+        List<Block> perTargetBlocks = assignPaletteForTargets(blocks, targets, tag);
+        return queuePlacement(source, player, perTargetBlocks, targets, tag);
     }
 
     private static int queuePlacement(ServerCommandSource source, ServerPlayerEntity player, List<Block> perTargetBlocks, List<BlockPos> targets, String tag) {
@@ -818,12 +783,13 @@ public final class BladePlaceCommand {
             source.sendFeedback(() -> blueText("[Bladelow] " + materialResolution.summary()), false);
         }
 
+        ExecutionPlan executionPlan = dependencyAwarePlan(player, resolvedBlocks, targets, tag);
         BuildRuntimeSettings.Snapshot snapshot = BuildRuntimeSettings.snapshot();
         PlacementJob job = new PlacementJob(
             player.getUuid(),
             source.getWorld().getRegistryKey(),
-            resolvedBlocks,
-            targets,
+            executionPlan.blocks(),
+            executionPlan.targets(),
             tag,
             snapshot
         );
@@ -833,8 +799,11 @@ public final class BladePlaceCommand {
             ? PlacementJobRunner.hasPending(player.getUuid())
             : PlacementJobRunner.hasActive(player.getUuid());
         PlacementJobRunner.queueOrPreview(server, job);
-        String queuedMessage = "[Bladelow] queued " + tag + " targets=" + targets.size()
-            + " blocks=" + resolvedBlocks.size()
+        String queuedMessage = "[Bladelow] queued " + tag + " targets=" + executionPlan.targets().size()
+            + " blocks=" + executionPlan.blocks().size()
+            + " feasible=" + String.format(Locale.ROOT, "%.1f", materialResolution.feasibilityPercent()) + "%"
+            + " deps=" + executionPlan.dependencyEdges()
+            + " order=" + (executionPlan.dependencyOrdered() ? "support-first" : "path-first")
             + " " + snapshot.summary()
             + (previewMode ? " [pending]" : " [active]")
             + (replaced ? " (replaced previous pending job)" : "");
@@ -844,10 +813,16 @@ public final class BladePlaceCommand {
 
     private static MaterialResolution autoResolveMaterials(ServerPlayerEntity player, List<Block> requested) {
         if (requested == null || requested.isEmpty()) {
-            return new MaterialResolution(List.of(), 0, 0, "");
+            return new MaterialResolution(List.of(), 0, 0, 0, 0, 100.0, "");
         }
         if (player.getAbilities().creativeMode) {
-            return new MaterialResolution(requested, 0, 0, "");
+            int required = 0;
+            for (Block block : requested) {
+                if (block != null && block.asItem() != Items.AIR) {
+                    required++;
+                }
+            }
+            return new MaterialResolution(requested, 0, 0, required, required, 100.0, "");
         }
 
         Map<Block, Integer> stock = inventoryBlockStock(player);
@@ -861,7 +836,8 @@ public final class BladePlaceCommand {
             String summary = missing > 0
                 ? "material auto-map missing=" + missing + " (no placeable block items found in inventory)"
                 : "";
-            return new MaterialResolution(requested, 0, missing, summary);
+            double feasibility = missing <= 0 ? 100.0 : 0.0;
+            return new MaterialResolution(requested, 0, missing, missing, 0, feasibility, summary);
         }
 
         Set<Block> preferredPalette = new LinkedHashSet<>(requested);
@@ -869,8 +845,12 @@ public final class BladePlaceCommand {
         Map<String, Integer> substitutions = new LinkedHashMap<>();
         int substituted = 0;
         int unresolved = 0;
+        int required = 0;
 
         for (Block desired : requested) {
+            if (desired != null && desired.asItem() != Items.AIR) {
+                required++;
+            }
             if (hasStock(stock, desired)) {
                 consumeStock(stock, desired);
                 resolved.add(desired);
@@ -894,7 +874,7 @@ public final class BladePlaceCommand {
         }
 
         if (substituted == 0 && unresolved == 0) {
-            return new MaterialResolution(resolved, 0, 0, "");
+            return new MaterialResolution(resolved, 0, 0, required, required, 100.0, "");
         }
 
         StringBuilder summary = new StringBuilder("material auto-map");
@@ -921,7 +901,60 @@ public final class BladePlaceCommand {
                 summary.append(", +").append(substitutions.size() - 4).append(" more");
             }
         }
-        return new MaterialResolution(resolved, substituted, unresolved, summary.toString());
+        int covered = Math.max(0, required - unresolved);
+        double feasibility = required <= 0 ? 100.0 : (covered * 100.0) / required;
+        summary.append(" feasible=").append(String.format(Locale.ROOT, "%.1f%%", feasibility));
+        return new MaterialResolution(resolved, substituted, unresolved, required, covered, feasibility, summary.toString());
+    }
+
+    private static ExecutionPlan dependencyAwarePlan(
+        ServerPlayerEntity player,
+        List<Block> blocks,
+        List<BlockPos> targets,
+        String tag
+    ) {
+        if (blocks == null || targets == null || blocks.size() != targets.size() || targets.isEmpty()) {
+            return new ExecutionPlan(blocks == null ? List.of() : blocks, targets == null ? List.of() : targets, 0, false);
+        }
+        if (targets.size() == 1 || "bladeplace".equals(tag)) {
+            return new ExecutionPlan(blocks, targets, 0, false);
+        }
+
+        Map<BlockPos, Integer> indexByPos = new HashMap<>(targets.size() * 2);
+        for (int i = 0; i < targets.size(); i++) {
+            indexByPos.putIfAbsent(targets.get(i), i);
+        }
+
+        int dependencyEdges = 0;
+        for (BlockPos pos : targets) {
+            if (indexByPos.containsKey(pos.down())) {
+                dependencyEdges++;
+            }
+        }
+        if (dependencyEdges <= 0) {
+            return new ExecutionPlan(blocks, targets, 0, false);
+        }
+
+        List<Integer> order = new ArrayList<>(targets.size());
+        for (int i = 0; i < targets.size(); i++) {
+            order.add(i);
+        }
+        double px = player.getX();
+        double py = player.getY();
+        double pz = player.getZ();
+        Collections.sort(order, Comparator
+            .comparingInt((Integer i) -> targets.get(i).getY())
+            .thenComparingDouble(i -> targets.get(i).getSquaredDistance(px, py, pz))
+            .thenComparingInt(i -> targets.get(i).getX())
+            .thenComparingInt(i -> targets.get(i).getZ()));
+
+        List<Block> orderedBlocks = new ArrayList<>(blocks.size());
+        List<BlockPos> orderedTargets = new ArrayList<>(targets.size());
+        for (Integer idx : order) {
+            orderedBlocks.add(blocks.get(idx));
+            orderedTargets.add(targets.get(idx));
+        }
+        return new ExecutionPlan(orderedBlocks, orderedTargets, dependencyEdges, true);
     }
 
     private static Map<Block, Integer> inventoryBlockStock(ServerPlayerEntity player) {
@@ -1932,7 +1965,23 @@ public final class BladePlaceCommand {
         DETAIL
     }
 
-    private record MaterialResolution(List<Block> blocks, int substitutions, int unresolved, String summary) {
+    private record MaterialResolution(
+        List<Block> blocks,
+        int substitutions,
+        int unresolved,
+        int required,
+        int covered,
+        double feasibilityPercent,
+        String summary
+    ) {
+    }
+
+    private record ExecutionPlan(
+        List<Block> blocks,
+        List<BlockPos> targets,
+        int dependencyEdges,
+        boolean dependencyOrdered
+    ) {
     }
 
     private static void registerBladeModel(CommandDispatcher<ServerCommandSource> dispatcher) {

@@ -36,6 +36,7 @@ public final class PlacementJobRunner {
     private static final Map<UUID, DiagSnapshot> LAST_DIAG = new ConcurrentHashMap<>();
     private static final Map<UUID, Long> AUTO_RESUME_READY_AT = new ConcurrentHashMap<>();
     private static final Map<UUID, Map<Long, Integer>> TARGET_PRESSURE = new ConcurrentHashMap<>();
+    private static final Map<UUID, NodeGuard> NODE_GUARD = new ConcurrentHashMap<>();
     private static final Map<UUID, StuckState> STUCK = new ConcurrentHashMap<>();
     private static final Map<UUID, ProgressWatchdog> WATCHDOG = new ConcurrentHashMap<>();
     private static final int MAX_RETRIES_PER_TARGET = 3;
@@ -49,6 +50,10 @@ public final class PlacementJobRunner {
     private static final int TARGET_PRESSURE_MAX_TRACKED = 768;
     private static final int TARGET_PRESSURE_MAX_VALUE = 30;
     private static final int TARGET_PRESSURE_DECAY_TICKS = 120;
+    private static final int MOVE_NODE_TIMEOUT_TICKS = 200;
+    private static final int ALIGN_NODE_TIMEOUT_TICKS = 120;
+    private static final int PLACE_NODE_TIMEOUT_TICKS = 80;
+    private static final int RECOVER_NODE_TIMEOUT_TICKS = 180;
     private static final int STUCK_TICKS_THRESHOLD = 26;
     private static final int STUCK_COOLDOWN_TICKS = 18;
     private static final double STUCK_PROGRESS_EPS = 0.08;
@@ -90,6 +95,7 @@ public final class PlacementJobRunner {
         AUTO_RESUME_READY_AT.remove(job.playerId());
         TARGET_PRESSURE.remove(job.playerId());
         WATCHDOG.remove(job.playerId());
+        NODE_GUARD.remove(job.playerId());
         if (!job.runtimeSettings().previewBeforeBuild()) {
             PENDING.remove(job.playerId());
             submit(job);
@@ -112,6 +118,7 @@ public final class PlacementJobRunner {
         TARGET_PRESSURE.remove(playerId);
         STUCK.remove(playerId);
         WATCHDOG.remove(playerId);
+        NODE_GUARD.remove(playerId);
         BuildNavigation.invalidateCachedPath(playerId);
         BuildNavigation.consumeBlacklistHits(playerId);
         boolean active = activeJob != null;
@@ -137,6 +144,7 @@ public final class PlacementJobRunner {
         TARGET_PRESSURE.remove(playerId);
         STUCK.remove(playerId);
         WATCHDOG.remove(playerId);
+        NODE_GUARD.remove(playerId);
         BuildNavigation.invalidateCachedPath(playerId);
         PENDING.put(playerId, active);
         saveCheckpoint(server);
@@ -155,6 +163,7 @@ public final class PlacementJobRunner {
         TARGET_PRESSURE.remove(playerId);
         STUCK.remove(playerId);
         WATCHDOG.remove(playerId);
+        NODE_GUARD.remove(playerId);
         BuildNavigation.invalidateCachedPath(playerId);
         JOBS.put(playerId, pending);
         saveCheckpoint(server);
@@ -170,6 +179,7 @@ public final class PlacementJobRunner {
         TARGET_PRESSURE.remove(playerId);
         STUCK.remove(playerId);
         WATCHDOG.remove(playerId);
+        NODE_GUARD.remove(playerId);
         BuildNavigation.invalidateCachedPath(playerId);
         JOBS.put(playerId, pending);
         saveCheckpoint(server);
@@ -278,6 +288,7 @@ public final class PlacementJobRunner {
                 TARGET_PRESSURE.remove(job.playerId());
                 STUCK.remove(job.playerId());
                 WATCHDOG.remove(job.playerId());
+                NODE_GUARD.remove(job.playerId());
                 BuildNavigation.invalidateCachedPath(job.playerId());
                 BuildNavigation.consumeBlacklistHits(job.playerId());
                 stateChanged = true;
@@ -291,6 +302,7 @@ public final class PlacementJobRunner {
                 TARGET_PRESSURE.remove(job.playerId());
                 STUCK.remove(job.playerId());
                 WATCHDOG.remove(job.playerId());
+                NODE_GUARD.remove(job.playerId());
                 BuildNavigation.invalidateCachedPath(job.playerId());
                 BuildNavigation.consumeBlacklistHits(job.playerId());
                 stateChanged = true;
@@ -307,6 +319,7 @@ public final class PlacementJobRunner {
                 TARGET_PRESSURE.remove(job.playerId());
                 STUCK.remove(job.playerId());
                 WATCHDOG.remove(job.playerId());
+                NODE_GUARD.remove(job.playerId());
                 BuildNavigation.invalidateCachedPath(job.playerId());
                 BuildNavigation.consumeBlacklistHits(job.playerId());
                 stateChanged = true;
@@ -315,6 +328,18 @@ public final class PlacementJobRunner {
 
             if (job.runtimeSettings().targetSchedulerEnabled() && job.currentNode() == PlacementJob.TaskNode.MOVE) {
                 job.selectBestTargetNear(player.getBlockPos(), job.runtimeSettings().schedulerLookahead());
+            }
+            if (enforceNodeTimeout(server, player, job)) {
+                int blacklistHits = BuildNavigation.consumeBlacklistHits(job.playerId());
+                if (blacklistHits > 0) {
+                    job.recordBlacklistHits(blacklistHits);
+                }
+                trackStuckAndRecover(world, player, job);
+                runProgressWatchdog(world, player, job, server.getTicks());
+                if (job.shouldReportProgress()) {
+                    player.sendMessage(blueText(job.progressSummary()), false);
+                }
+                continue;
             }
             runTaskNode(world, player, job);
             int blacklistHits = BuildNavigation.consumeBlacklistHits(job.playerId());
@@ -335,6 +360,7 @@ public final class PlacementJobRunner {
                 TARGET_PRESSURE.remove(job.playerId());
                 STUCK.remove(job.playerId());
                 WATCHDOG.remove(job.playerId());
+                NODE_GUARD.remove(job.playerId());
                 BuildNavigation.invalidateCachedPath(job.playerId());
                 BuildNavigation.consumeBlacklistHits(job.playerId());
                 stateChanged = true;
@@ -359,6 +385,68 @@ public final class PlacementJobRunner {
             case PLACE -> nodePlace(world, player, job);
             case RECOVER -> nodeRecover(world, player, job);
         }
+    }
+
+    private static boolean enforceNodeTimeout(MinecraftServer server, ServerPlayerEntity player, PlacementJob job) {
+        if (server == null || player == null || job == null || job.isComplete()) {
+            return false;
+        }
+        PlacementJob.TaskNode node = job.currentNode();
+        int timeoutTicks = nodeTimeoutTicks(node);
+        if (timeoutTicks <= 0) {
+            return false;
+        }
+
+        long nowTick = server.getTicks();
+        NodeGuard guard = NODE_GUARD.computeIfAbsent(job.playerId(), ignored -> NodeGuard.fresh(job.cursor(), node, nowTick));
+        if (guard.cursor() != job.cursor() || guard.node() != node) {
+            guard.reset(job.cursor(), node, nowTick);
+            return false;
+        }
+
+        long elapsed = nowTick - guard.startedAtTick();
+        if (elapsed < timeoutTicks) {
+            return false;
+        }
+
+        guard.reset(job.cursor(), node, nowTick);
+        BlockPos target = job.currentTarget();
+        int pressure = addTargetPressure(job.playerId(), target, 2);
+        BuildNavigation.noteExternalFailure(job.playerId(), target, "task_timeout_" + node.name().toLowerCase(Locale.ROOT), true);
+        BuildNavigation.invalidateCachedPath(job.playerId());
+
+        switch (node) {
+            case MOVE, ALIGN -> job.startRecover(
+                PlacementJob.RecoverReason.OUT_OF_REACH,
+                "reason=task_timeout_" + node.name().toLowerCase(Locale.ROOT) + " target=" + shortTarget(target)
+            );
+            case PLACE -> job.startRecover(
+                PlacementJob.RecoverReason.PLACE_FAILED,
+                "reason=task_timeout_place target=" + shortTarget(target)
+            );
+            case RECOVER -> {
+                if (pressure >= TARGET_PRESSURE_SKIP_THRESHOLD) {
+                    job.recordNoReach();
+                    job.recordSkipped();
+                    clearTargetPressure(job.playerId(), target);
+                    job.noteEvent("skip(recover_timeout p=" + pressure + ") target=" + shortTarget(target));
+                    job.advance();
+                } else {
+                    job.setNode(PlacementJob.TaskNode.MOVE);
+                }
+            }
+        }
+        job.noteEvent("timeout(node=" + node.name().toLowerCase(Locale.ROOT) + " elapsed=" + elapsed + "t p=" + pressure + " target=" + shortTarget(target) + ")");
+        return true;
+    }
+
+    private static int nodeTimeoutTicks(PlacementJob.TaskNode node) {
+        return switch (node) {
+            case MOVE -> MOVE_NODE_TIMEOUT_TICKS;
+            case ALIGN -> ALIGN_NODE_TIMEOUT_TICKS;
+            case PLACE -> PLACE_NODE_TIMEOUT_TICKS;
+            case RECOVER -> RECOVER_NODE_TIMEOUT_TICKS;
+        };
     }
 
     private static boolean processPendingAutoResume(MinecraftServer server) {
@@ -409,6 +497,7 @@ public final class PlacementJobRunner {
             TARGET_PRESSURE.remove(playerId);
             STUCK.remove(playerId);
             WATCHDOG.remove(playerId);
+            NODE_GUARD.remove(playerId);
             BuildNavigation.invalidateCachedPath(playerId);
             JOBS.put(playerId, job);
             player.sendMessage(blueText("[Bladelow] auto-resumed pending build."), false);
@@ -1290,6 +1379,40 @@ public final class PlacementJobRunner {
 
     private static Text blueText(String message) {
         return Text.literal(message).formatted(Formatting.AQUA);
+    }
+
+    private static final class NodeGuard {
+        private int cursor;
+        private PlacementJob.TaskNode node;
+        private long startedAtTick;
+
+        private NodeGuard(int cursor, PlacementJob.TaskNode node, long startedAtTick) {
+            this.cursor = cursor;
+            this.node = node;
+            this.startedAtTick = startedAtTick;
+        }
+
+        static NodeGuard fresh(int cursor, PlacementJob.TaskNode node, long nowTick) {
+            return new NodeGuard(cursor, node, nowTick);
+        }
+
+        int cursor() {
+            return cursor;
+        }
+
+        PlacementJob.TaskNode node() {
+            return node;
+        }
+
+        long startedAtTick() {
+            return startedAtTick;
+        }
+
+        void reset(int cursor, PlacementJob.TaskNode node, long nowTick) {
+            this.cursor = cursor;
+            this.node = node;
+            this.startedAtTick = nowTick;
+        }
     }
 
     private static final class ProgressWatchdog {
