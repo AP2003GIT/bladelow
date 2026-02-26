@@ -24,7 +24,9 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
@@ -602,12 +604,40 @@ public final class PlacementJobRunner {
             return;
         }
 
-        BuildNavigation.MoveResult move = BuildNavigation.ensureInRangeForPlacement(world, player, target, job.runtimeSettings());
+        CandidatePlan plan = solvePlacementCandidates(world, player, target, job.runtimeSettings().reachDistance());
+        if (plan.candidates().isEmpty()) {
+            addTargetPressure(job.playerId(), target, 1);
+            job.updatePathDebug(0, 0, Double.NaN, "none");
+            job.noteRetryReason("no_candidate");
+            double dist = Math.sqrt(player.squaredDistanceTo(target.getX() + 0.5, target.getY() + 0.5, target.getZ() + 0.5));
+            job.startRecover(
+                PlacementJob.RecoverReason.OUT_OF_REACH,
+                "target=" + shortTarget(target) + " reason=no_solver_candidate dist="
+                    + String.format(Locale.ROOT, "%.2f", dist)
+            );
+            return;
+        }
+
+        int selectedIdx = Math.min(Math.max(job.currentAttempts(), 0), plan.candidates().size() - 1);
+        PlacementCandidate selected = plan.candidates().get(selectedIdx);
+        job.updatePathDebug(plan.candidates().size(), selectedIdx + 1, selected.score(), selected.label());
+
+        BuildNavigation.MoveResult move = BuildNavigation.ensureInRangeForPlacement(
+            world,
+            player,
+            target,
+            job.runtimeSettings(),
+            selected.stand()
+        );
         if (move.status() < 0) {
             addTargetPressure(job.playerId(), target, 1);
+            job.noteRetryReason(move.reason());
             String detail = "target=" + shortTarget(target)
                 + " reason=" + move.reason()
-                + " dist=" + String.format(Locale.ROOT, "%.2f", move.finalDistance());
+                + " dist=" + String.format(Locale.ROOT, "%.2f", move.finalDistance())
+                + " cand=" + (selectedIdx + 1) + "/" + plan.candidates().size()
+                + " cscore=" + String.format(Locale.ROOT, "%.2f", selected.score())
+                + " clabel=" + selected.label();
             job.startRecover(PlacementJob.RecoverReason.OUT_OF_REACH, detail);
             return;
         }
@@ -615,6 +645,7 @@ public final class PlacementJobRunner {
             job.recordMoved();
             job.noteEvent("moved(" + move.reason() + ") target=" + shortTarget(target));
         }
+        job.noteRetryReason("ok");
         job.setNode(PlacementJob.TaskNode.ALIGN);
     }
 
@@ -637,18 +668,22 @@ public final class PlacementJobRunner {
             return;
         }
         if (BuildSafetyPolicy.isProtected(existingState)) {
+            job.noteRetryReason("protected");
             job.startRecover(PlacementJob.RecoverReason.PROTECTED_BLOCK, "target=" + shortTarget(target));
             return;
         }
         if (job.runtimeSettings().strictAirOnly() && !existingState.isAir()) {
+            job.noteRetryReason("blocked:strict_air");
             job.startRecover(PlacementJob.RecoverReason.BLOCKED_STRICT_AIR, "target=" + shortTarget(target));
             return;
         }
         if (!existingState.isAir() && !existingState.isReplaceable()) {
+            job.noteRetryReason("blocked:solid");
             job.startRecover(PlacementJob.RecoverReason.BLOCKED_SOLID, "target=" + shortTarget(target));
             return;
         }
         if (!hasPlacementItemIfNeeded(player, job.currentBlock())) {
+            job.noteRetryReason("no_item");
             job.startRecover(PlacementJob.RecoverReason.NO_ITEM, "block=" + blockId(job));
             return;
         }
@@ -665,6 +700,7 @@ public final class PlacementJobRunner {
 
         if (!model.shouldPlace(features)) {
             model.train(features, false);
+            job.noteRetryReason("ml_rejected");
             job.startRecover(PlacementJob.RecoverReason.ML_REJECTED, "target=" + shortTarget(target));
             return;
         }
@@ -680,6 +716,7 @@ public final class PlacementJobRunner {
             return;
         }
         addTargetPressure(job.playerId(), target, 2);
+        job.noteRetryReason("place_failed");
         job.startRecover(PlacementJob.RecoverReason.PLACE_FAILED, "target=" + shortTarget(target));
     }
 
@@ -725,6 +762,10 @@ public final class PlacementJobRunner {
 
     private static void recoverOutOfReach(ServerPlayerEntity player, PlacementJob job, BlockPos target, int tries) {
         String recoverDetail = job.recoverDetail();
+        String recoverReasonToken = recoverReasonToken(recoverDetail);
+        if (!recoverReasonToken.isBlank()) {
+            job.noteRetryReason("out_of_reach:" + recoverReasonToken);
+        }
         if (recoverDetail.contains("reason=smart_move_disabled")) {
             job.recordNoReach();
             job.recordSkipped();
@@ -778,6 +819,7 @@ public final class PlacementJobRunner {
         }
 
         if (tries < MAX_RETRIES_PER_TARGET) {
+            job.noteRetryReason("retry:out_of_reach");
             job.noteEvent("retry(out_of_reach) " + tries + "/" + MAX_RETRIES_PER_TARGET + " target=" + shortTarget(target));
             job.setNode(PlacementJob.TaskNode.MOVE);
             return;
@@ -790,10 +832,12 @@ public final class PlacementJobRunner {
         }
         job.recordNoReach();
         if (deferred) {
+            job.noteRetryReason("defer:out_of_reach");
             job.noteEvent("defer(out_of_reach) target=" + shortTarget(target));
             return;
         }
         job.recordSkipped();
+        job.noteRetryReason("skip:out_of_reach");
         job.noteEvent("skip(out_of_reach) target=" + shortTarget(target));
         job.advance();
     }
@@ -807,6 +851,7 @@ public final class PlacementJobRunner {
         String reason
     ) {
         int pressure = addTargetPressure(job.playerId(), target, 1);
+        job.noteRetryReason("blocked:" + reason);
         if (pressure >= TARGET_PRESSURE_SKIP_THRESHOLD) {
             job.recordBlocked();
             job.recordSkipped();
@@ -820,12 +865,14 @@ public final class PlacementJobRunner {
             return;
         }
         if (tries < MAX_BLOCKED_RETRIES) {
+            job.noteRetryReason("retry:blocked:" + reason);
             job.noteEvent("retry(blocked:" + reason + ") " + tries + "/" + MAX_BLOCKED_RETRIES + " target=" + shortTarget(target));
             job.setNode(PlacementJob.TaskNode.ALIGN);
             return;
         }
         job.recordBlocked();
         job.recordSkipped();
+        job.noteRetryReason("skip:blocked:" + reason);
         job.noteEvent("skip(blocked:" + reason + ") target=" + shortTarget(target));
         job.advance();
     }
@@ -838,6 +885,7 @@ public final class PlacementJobRunner {
         int tries
     ) {
         int pressure = addTargetPressure(job.playerId(), target, 1);
+        job.noteRetryReason("place_failed");
         if (pressure >= TARGET_PRESSURE_SKIP_THRESHOLD) {
             job.recordFailed();
             job.recordSkipped();
@@ -851,12 +899,14 @@ public final class PlacementJobRunner {
             return;
         }
         if (tries < MAX_RETRIES_PER_TARGET) {
+            job.noteRetryReason("retry:place");
             job.noteEvent("retry(place) " + tries + "/" + MAX_RETRIES_PER_TARGET + " target=" + shortTarget(target));
             job.setNode(PlacementJob.TaskNode.MOVE);
             return;
         }
         job.recordFailed();
         job.recordSkipped();
+        job.noteRetryReason("skip:place_failed");
         job.noteEvent("skip(place_failed) block=" + blockId(job) + " target=" + shortTarget(target));
         job.advance();
     }
@@ -1167,6 +1217,138 @@ public final class PlacementJobRunner {
         }
     }
 
+    private static CandidatePlan solvePlacementCandidates(
+        net.minecraft.server.world.ServerWorld world,
+        ServerPlayerEntity player,
+        BlockPos target,
+        double reach
+    ) {
+        if (world == null || player == null || target == null) {
+            return new CandidatePlan(List.of());
+        }
+        int[][] offsets = {
+            {1, 0}, {-1, 0}, {0, 1}, {0, -1},
+            {1, 1}, {1, -1}, {-1, 1}, {-1, -1},
+            {2, 0}, {-2, 0}, {0, 2}, {0, -2}
+        };
+        Map<Long, PlacementCandidate> bestByPos = new HashMap<>();
+        double targetX = target.getX() + 0.5;
+        double targetY = target.getY() + 0.5;
+        double targetZ = target.getZ() + 0.5;
+
+        for (int[] offset : offsets) {
+            int dx = offset[0];
+            int dz = offset[1];
+            int baseX = target.getX() + dx;
+            int baseZ = target.getZ() + dz;
+            for (int dy = -1; dy <= 2; dy++) {
+                int feetY = target.getY() + dy;
+                PlacementCandidate candidate = scorePlacementCandidate(
+                    world,
+                    player,
+                    baseX,
+                    feetY,
+                    baseZ,
+                    targetX,
+                    targetY,
+                    targetZ,
+                    reach,
+                    dx,
+                    dz,
+                    dy
+                );
+                upsertPlacementCandidate(bestByPos, candidate);
+            }
+        }
+
+        List<PlacementCandidate> out = new ArrayList<>(bestByPos.values());
+        out.sort((a, b) -> Double.compare(a.score(), b.score()));
+        if (out.size() > 18) {
+            out = new ArrayList<>(out.subList(0, 18));
+        }
+        return new CandidatePlan(out);
+    }
+
+    private static PlacementCandidate scorePlacementCandidate(
+        net.minecraft.server.world.ServerWorld world,
+        ServerPlayerEntity player,
+        int standX,
+        int feetY,
+        int standZ,
+        double targetX,
+        double targetY,
+        double targetZ,
+        double reach,
+        int dx,
+        int dz,
+        int dy
+    ) {
+        if (!canStandAt(world, standX, feetY, standZ)) {
+            return null;
+        }
+        double sx = standX + 0.5;
+        double sy = feetY;
+        double sz = standZ + 0.5;
+        double distToTarget = Math.sqrt((sx - targetX) * (sx - targetX) + ((sy + 1.0) - targetY) * ((sy + 1.0) - targetY) + (sz - targetZ) * (sz - targetZ));
+        if (distToTarget > reach + 0.5) {
+            return null;
+        }
+
+        double distFromPlayer = Math.sqrt(player.squaredDistanceTo(sx, sy, sz));
+        double horizontal = Math.sqrt(dx * dx + dz * dz);
+        double score = distFromPlayer
+            + distToTarget * 0.62
+            + Math.abs(dy) * 0.18
+            + horizontal * 0.1;
+
+        String label = "dx" + dx + "_dz" + dz + "_dy" + dy;
+        return new PlacementCandidate(new BlockPos(standX, feetY, standZ), score, label);
+    }
+
+    private static void upsertPlacementCandidate(Map<Long, PlacementCandidate> bestByPos, PlacementCandidate candidate) {
+        if (bestByPos == null || candidate == null || candidate.stand() == null) {
+            return;
+        }
+        long key = candidate.stand().asLong();
+        PlacementCandidate existing = bestByPos.get(key);
+        if (existing == null || candidate.score() < existing.score()) {
+            bestByPos.put(key, candidate);
+        }
+    }
+
+    private static boolean canStandAt(net.minecraft.server.world.ServerWorld world, int x, int y, int z) {
+        if (world == null || y <= world.getBottomY() || y + 1 > world.getTopYInclusive()) {
+            return false;
+        }
+        BlockPos feet = new BlockPos(x, y, z);
+        BlockPos head = feet.up();
+        BlockPos below = feet.down();
+        boolean feetFree = world.getBlockState(feet).getCollisionShape(world, feet).isEmpty();
+        boolean headFree = world.getBlockState(head).getCollisionShape(world, head).isEmpty();
+        boolean supported = !world.getBlockState(below).getCollisionShape(world, below).isEmpty();
+        return feetFree && headFree && supported;
+    }
+
+    private static String recoverReasonToken(String detail) {
+        if (detail == null || detail.isBlank()) {
+            return "";
+        }
+        int idx = detail.indexOf("reason=");
+        if (idx < 0) {
+            return "";
+        }
+        int from = idx + "reason=".length();
+        int to = detail.indexOf(' ', from);
+        if (to < 0) {
+            to = detail.length();
+        }
+        String token = detail.substring(from, to).trim();
+        if (token.length() > 36) {
+            token = token.substring(0, 36);
+        }
+        return token;
+    }
+
     private static String detailSummary(String state, PlacementJob job) {
         StringBuilder sb = new StringBuilder();
         sb.append("[Bladelow] ").append(state).append(" ").append(job.progressSummary());
@@ -1178,6 +1360,18 @@ public final class PlacementJobRunner {
             sb.append(" attempts=").append(job.currentAttempts());
             sb.append(" defers=").append(job.currentDeferrals());
             sb.append(" node=").append(job.currentNode().name().toLowerCase());
+            if (job.lastCandidateCount() > 0) {
+                sb.append(" cand=").append(job.lastCandidateIndex()).append("/").append(job.lastCandidateCount());
+                if (!Double.isNaN(job.lastCandidateScore())) {
+                    sb.append(" cScore=").append(String.format(Locale.ROOT, "%.2f", job.lastCandidateScore()));
+                }
+                if (!job.lastCandidateLabel().isBlank()) {
+                    sb.append(" cTag=").append(job.lastCandidateLabel());
+                }
+            }
+            if (!job.lastRetryReason().isBlank()) {
+                sb.append(" retry=").append(job.lastRetryReason());
+            }
             if (job.currentNode() == PlacementJob.TaskNode.RECOVER) {
                 sb.append(" reason=").append(job.recoverReason().name().toLowerCase());
             }
@@ -1224,6 +1418,11 @@ public final class PlacementJobRunner {
         sb.append("backtracks=").append(snapshot.metrics().backtracks()).append('\n');
         sb.append("blacklist_hits=").append(snapshot.metrics().blacklistHits()).append('\n');
         sb.append("avg_score=").append(String.format("%.3f", snapshot.metrics().avgScore())).append('\n');
+        sb.append("candidate_count=").append(snapshot.metrics().candidateCount()).append('\n');
+        sb.append("candidate_index=").append(snapshot.metrics().candidateIndex()).append('\n');
+        sb.append("candidate_score=").append(String.format("%.2f", snapshot.metrics().candidateScore())).append('\n');
+        sb.append("candidate_label=").append(snapshot.metrics().candidateLabel()).append('\n');
+        sb.append("retry_reason=").append(snapshot.metrics().retryReason()).append('\n');
         sb.append("last_event=").append(snapshot.metrics().lastEvent()).append('\n');
         sb.append("current_status=").append(status(playerId)).append('\n');
         sb.append("current_detail=").append(statusDetail(playerId)).append('\n');
@@ -1289,6 +1488,11 @@ public final class PlacementJobRunner {
             job.backtracksCount(),
             job.blacklistHitsCount(),
             job.averageScore(),
+            job.lastCandidateCount(),
+            job.lastCandidateIndex(),
+            job.lastCandidateScore(),
+            job.lastCandidateLabel(),
+            job.lastRetryReason(),
             job.lastEvent()
         );
     }
@@ -1546,6 +1750,12 @@ public final class PlacementJobRunner {
         }
     }
 
+    private record PlacementCandidate(BlockPos stand, double score, String label) {
+    }
+
+    private record CandidatePlan(List<PlacementCandidate> candidates) {
+    }
+
     private record DiagSnapshot(Instant createdAt, String phase, String summary, String detail, JobMetrics metrics) {
     }
 
@@ -1574,6 +1784,11 @@ public final class PlacementJobRunner {
         int backtracks,
         int blacklistHits,
         double avgScore,
+        int candidateCount,
+        int candidateIndex,
+        double candidateScore,
+        String candidateLabel,
+        String retryReason,
         String lastEvent
     ) {
     }

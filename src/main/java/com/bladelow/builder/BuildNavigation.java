@@ -92,6 +92,16 @@ public final class BuildNavigation {
         BlockPos target,
         BuildRuntimeSettings.Snapshot settings
     ) {
+        return ensureInRangeForPlacement(world, player, target, settings, null);
+    }
+
+    public static MoveResult ensureInRangeForPlacement(
+        ServerWorld world,
+        ServerPlayerEntity player,
+        BlockPos target,
+        BuildRuntimeSettings.Snapshot settings,
+        BlockPos preferredStand
+    ) {
         UUID playerId = player.getUuid();
         pruneCachedPlan(playerId);
 
@@ -110,7 +120,7 @@ public final class BuildNavigation {
             return MoveResult.failed("smart_move_disabled", dist);
         }
 
-        List<ApproachCandidate> approaches = selectApproachCandidates(world, player, targetX, targetY, targetZ, reach);
+        List<ApproachCandidate> approaches = selectApproachCandidates(world, player, targetX, targetY, targetZ, reach, preferredStand);
         if (approaches.isEmpty()) {
             return MoveResult.failed("no_approach_candidate", dist);
         }
@@ -748,11 +758,17 @@ public final class BuildNavigation {
         double targetX,
         double targetY,
         double targetZ,
-        double reach
+        double reach,
+        BlockPos preferredStand
     ) {
         int playerFeetY = (int) Math.floor(player.getY());
         int targetFeetY = (int) Math.floor(targetY);
         Map<ApproachKey, ApproachCandidate> bestByPos = new HashMap<>();
+
+        // Seed direct placement anchors first (cardinals/diagonals) to bias movement toward
+        // practical face-adjacent stand spots before broader ring sampling.
+        seedDirectPlacementCandidates(world, player, targetX, targetY, targetZ, reach, targetFeetY, bestByPos);
+        injectPreferredCandidate(world, player, targetX, targetY, targetZ, reach, preferredStand, bestByPos);
 
         for (double radius = 1.2; radius <= Math.min(reach + 1.8, 8.2); radius += 0.5) {
             int samples = Math.max(8, (int) Math.ceil(radius * 7.0));
@@ -763,14 +779,14 @@ public final class BuildNavigation {
 
                 for (int feetY = targetFeetY - 3; feetY <= targetFeetY + 3; feetY++) {
                     upsertCandidate(bestByPos, scoreApproachCandidate(
-                        world, player, blockX, feetY, blockZ, targetX, targetY, targetZ, reach, radius
+                        world, player, blockX, feetY, blockZ, targetX, targetY, targetZ, reach, radius, 0.0
                     ));
                 }
 
                 if (Math.abs(playerFeetY - targetFeetY) > 2) {
                     for (int feetY = playerFeetY - 2; feetY <= playerFeetY + 2; feetY++) {
                         upsertCandidate(bestByPos, scoreApproachCandidate(
-                            world, player, blockX, feetY, blockZ, targetX, targetY, targetZ, reach, radius
+                            world, player, blockX, feetY, blockZ, targetX, targetY, targetZ, reach, radius, 0.0
                         ));
                     }
                 }
@@ -810,6 +826,79 @@ public final class BuildNavigation {
         return new ArrayList<>(filtered.subList(0, 12));
     }
 
+    private static void seedDirectPlacementCandidates(
+        ServerWorld world,
+        ServerPlayerEntity player,
+        double targetX,
+        double targetY,
+        double targetZ,
+        double reach,
+        int targetFeetY,
+        Map<ApproachKey, ApproachCandidate> bestByPos
+    ) {
+        int[][] directOffsets = {
+            {1, 0}, {-1, 0}, {0, 1}, {0, -1},
+            {1, 1}, {1, -1}, {-1, 1}, {-1, -1},
+            {2, 0}, {-2, 0}, {0, 2}, {0, -2}
+        };
+        for (int[] offset : directOffsets) {
+            int dx = offset[0];
+            int dz = offset[1];
+            int blockX = (int) Math.floor(targetX) + dx;
+            int blockZ = (int) Math.floor(targetZ) + dz;
+            double horizontal = Math.sqrt(square(dx) + square(dz));
+            double bias = horizontal <= 1.1 ? -0.95 : (horizontal <= 1.6 ? -0.55 : -0.25);
+
+            for (int feetY = targetFeetY - 1; feetY <= targetFeetY + 2; feetY++) {
+                upsertCandidate(bestByPos, scoreApproachCandidate(
+                    world,
+                    player,
+                    blockX,
+                    feetY,
+                    blockZ,
+                    targetX,
+                    targetY,
+                    targetZ,
+                    reach,
+                    horizontal,
+                    bias
+                ));
+            }
+        }
+    }
+
+    private static void injectPreferredCandidate(
+        ServerWorld world,
+        ServerPlayerEntity player,
+        double targetX,
+        double targetY,
+        double targetZ,
+        double reach,
+        BlockPos preferredStand,
+        Map<ApproachKey, ApproachCandidate> bestByPos
+    ) {
+        if (preferredStand == null) {
+            return;
+        }
+        int blockX = preferredStand.getX();
+        int feetY = preferredStand.getY();
+        int blockZ = preferredStand.getZ();
+        double horizontal = Math.sqrt(square((blockX + 0.5) - targetX) + square((blockZ + 0.5) - targetZ));
+        upsertCandidate(bestByPos, scoreApproachCandidate(
+            world,
+            player,
+            blockX,
+            feetY,
+            blockZ,
+            targetX,
+            targetY,
+            targetZ,
+            reach,
+            horizontal,
+            -1.35
+        ));
+    }
+
     private static void coarseApproachSearch(
         ServerWorld world,
         ServerPlayerEntity player,
@@ -839,7 +928,7 @@ public final class BuildNavigation {
                 int maxY = Math.max(playerFeetY, targetFeetY) + 3;
                 for (int feetY = minY; feetY <= maxY; feetY++) {
                     upsertCandidate(bestByPos, scoreApproachCandidate(
-                        world, player, blockX, feetY, blockZ, targetX, targetY, targetZ, reach, horizontal
+                        world, player, blockX, feetY, blockZ, targetX, targetY, targetZ, reach, horizontal, 0.0
                     ));
                 }
             }
@@ -856,7 +945,8 @@ public final class BuildNavigation {
         double targetY,
         double targetZ,
         double reach,
-        double radius
+        double radius,
+        double scoreBias
     ) {
         if (!canStandAtBlock(world, blockX, feetY, blockZ)) {
             return null;
@@ -874,7 +964,8 @@ public final class BuildNavigation {
         double score = distPlayer
             + distTarget * 0.45
             + Math.abs(radius - (reach - 0.35)) * 0.05
-            + Math.abs(standY - player.getY()) * 0.18;
+            + Math.abs(standY - player.getY()) * 0.18
+            + scoreBias;
         return new ApproachCandidate(standX, standY, standZ, score);
     }
 

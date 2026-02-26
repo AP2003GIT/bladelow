@@ -42,6 +42,11 @@ public class PlacementJob {
     private TaskNode node = TaskNode.MOVE;
     private RecoverReason recoverReason = RecoverReason.NONE;
     private String recoverDetail = "";
+    private int lastCandidateCount;
+    private int lastCandidateIndex;
+    private double lastCandidateScore = Double.NaN;
+    private String lastCandidateLabel = "";
+    private String lastRetryReason = "";
 
     public PlacementJob(
         UUID playerId,
@@ -175,6 +180,7 @@ public class PlacementJob {
     public void advance() {
         cursor++;
         resetTaskNode();
+        resetPathDebug();
     }
 
     public int currentAttempts() {
@@ -230,6 +236,7 @@ public class PlacementJob {
         entries.add(current);
         deferred++;
         resetTaskNode();
+        resetPathDebug();
         return true;
     }
 
@@ -349,6 +356,55 @@ public class PlacementJob {
             String trimmed = detail.trim();
             this.recoverDetail = trimmed.length() > 96 ? trimmed.substring(0, 96) : trimmed;
         }
+    }
+
+    public int lastCandidateCount() {
+        return lastCandidateCount;
+    }
+
+    public int lastCandidateIndex() {
+        return lastCandidateIndex;
+    }
+
+    public double lastCandidateScore() {
+        return lastCandidateScore;
+    }
+
+    public String lastCandidateLabel() {
+        return lastCandidateLabel;
+    }
+
+    public String lastRetryReason() {
+        return lastRetryReason;
+    }
+
+    public void updatePathDebug(int candidateCount, int candidateIndex, double candidateScore, String label) {
+        this.lastCandidateCount = Math.max(0, candidateCount);
+        this.lastCandidateIndex = Math.max(0, candidateIndex);
+        this.lastCandidateScore = candidateScore;
+        if (label == null) {
+            this.lastCandidateLabel = "";
+        } else {
+            String trimmed = label.trim();
+            this.lastCandidateLabel = trimmed.length() > 48 ? trimmed.substring(0, 48) : trimmed;
+        }
+    }
+
+    public void noteRetryReason(String reason) {
+        if (reason == null) {
+            this.lastRetryReason = "";
+            return;
+        }
+        String trimmed = reason.trim();
+        this.lastRetryReason = trimmed.length() > 64 ? trimmed.substring(0, 64) : trimmed;
+    }
+
+    public void resetPathDebug() {
+        this.lastCandidateCount = 0;
+        this.lastCandidateIndex = 0;
+        this.lastCandidateScore = Double.NaN;
+        this.lastCandidateLabel = "";
+        this.lastRetryReason = "";
     }
 
     public void resetTaskNode() {

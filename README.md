@@ -192,9 +192,17 @@ Pathing/scheduler tuning:
 - Runtime now includes:
   - dynamic target scheduler (lookahead reprioritization)
   - deferred unreachable retry pipeline (tail defers before final skip)
+  - candidate stand-position solver per target (face/edge based stand spots)
+  - attempt-index fallback through candidate list before skip/defer
   - per-target pressure tracking for stuck/no-path hot spots (auto defer/skip to prevent loops)
+  - task-node timeout guards for `move/align/place/recover`
   - auto-resume for pending non-preview jobs when player reconnects
 - Completion/status include diagnostics like `deferred`, `replan`, `already`, `blocked`, `noReach`, `mlSkip`.
+- `#bladestatus detail` now also reports:
+  - `cand=<idx>/<count>` active candidate index and pool size
+  - `cScore=<value>` selected candidate score
+  - `cTag=<label>` selected candidate offset label
+  - `retry=<reason>` latest retry/fallback reason
 
 ## BuildIt Website Integration
 
@@ -240,6 +248,9 @@ Example:
   - `#blademove scheduler on`
   - `#blademove lookahead 20`
   - `#blademove defer on`
+  - inspect `#bladestatus detail`:
+    - if `cand` stays low/empty, move closer or raise `reach`
+    - if `retry=out_of_reach:*`, enable `auto` mode or teleport mode for tough terrain
 
 3. Build pending but not executing
 - Use `#bladecontinue` if paused
@@ -254,7 +265,7 @@ Example:
   - `out_of_reach`
   - `blocked`
   - `protected`
-  - `attempts/defers` in `#bladestatus detail`
+- `attempts/defers/cand/cScore/retry` in `#bladestatus detail`
 
 5. Missing blocks in picker
 - Use search field and page arrows (registry-based block list).
