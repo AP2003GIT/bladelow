@@ -2,12 +2,14 @@ package com.bladelow.command;
 
 import com.bladelow.builder.BuildRuntimeSettings;
 import com.bladelow.builder.BlueprintLibrary;
+import com.bladelow.builder.BlueprintStateCodec;
 import com.bladelow.builder.BuildItWebService;
 import com.bladelow.builder.BuildProfileStore;
 import com.bladelow.builder.PlacementAxis;
 import com.bladelow.builder.PlacementJob;
 import com.bladelow.builder.PlacementJobRunner;
 import com.bladelow.builder.SelectionState;
+import com.bladelow.builder.TownZoneStore;
 import com.bladelow.ml.BladelowLearning;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
@@ -15,6 +17,8 @@ import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import net.minecraft.block.Block;
+import net.minecraft.block.BlockState;
+import net.minecraft.block.Blocks;
 import net.minecraft.command.argument.BlockPosArgumentType;
 import net.minecraft.item.BlockItem;
 import net.minecraft.item.Item;
@@ -64,6 +68,7 @@ public final class BladePlaceCommand {
         registerBladeSafety(dispatcher);
         registerBladeProfile(dispatcher);
         registerBladeWeb(dispatcher);
+        registerBladeZone(dispatcher);
         registerBladeBlueprint(dispatcher);
         registerBladeSelect(dispatcher);
     }
@@ -75,8 +80,9 @@ public final class BladePlaceCommand {
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeplace <x> <y> <z> <count> [axis] <blocks_csv>"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeselect markerbox <from> <to> <height> | addhere | add <x> <y> <z> | buildh <height> <blocks_csv>"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeselect export <name> <block_id> | exportscan <name> | copybox <name> <from> <to>"), false);
+                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladezone set residential|market|workshop|civic | box <type> <from> <to> | list | clear [type]"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #blademove mode walk|auto|teleport ; reach <2.0..8.0> ; scheduler on|off ; lookahead <1..96> ; defer on|off ; maxdefer <0..8> ; autoresume on|off ; trace on|off ; traceparticles on|off"), false);
-                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeblueprint list|load|build ; #bladeweb importload <index> [name] ; #bladestatus [detail] ; #bladepause ; #bladecontinue ; #bladecancel"), false);
+                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeblueprint list|townlist|load|build|townfill|townfillsel ; #bladeweb importload <index> [name] ; #bladestatus [detail] ; #bladepause ; #bladecontinue ; #bladecancel"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladediag show | #bladediag export [name]"), false);
                 return 1;
             })
@@ -491,12 +497,7 @@ public final class BladePlaceCommand {
                 skippedUnsupported++;
                 continue;
             }
-            Identifier id = Registries.BLOCK.getId(block);
-            if (id == null) {
-                skippedUnsupported++;
-                continue;
-            }
-            placements.add(new BlueprintLibrary.BlueprintPlacement(pos, id.toString()));
+            placements.add(new BlueprintLibrary.BlueprintPlacement(pos, BlueprintStateCodec.stringify(state)));
         }
         if (placements.isEmpty()) {
             ctx.getSource().sendError(blueText(
@@ -576,12 +577,7 @@ public final class BladePlaceCommand {
                         skippedUnsupported++;
                         continue;
                     }
-                    Identifier id = Registries.BLOCK.getId(block);
-                    if (id == null) {
-                        skippedUnsupported++;
-                        continue;
-                    }
-                    placements.add(new BlueprintLibrary.BlueprintPlacement(pos, id.toString()));
+                    placements.add(new BlueprintLibrary.BlueprintPlacement(pos, BlueprintStateCodec.stringify(state)));
                 }
             }
         }
@@ -773,22 +769,22 @@ public final class BladePlaceCommand {
 
     private static int runPlacement(ServerCommandSource source, ServerPlayerEntity player, List<Block> blocks, List<BlockPos> targets, String tag) {
         List<Block> perTargetBlocks = assignPaletteForTargets(blocks, targets, tag);
-        return queuePlacement(source, player, perTargetBlocks, targets, tag);
+        return queueStatePlacement(source, player, defaultStates(perTargetBlocks), targets, tag);
     }
 
-    private static int queuePlacement(ServerCommandSource source, ServerPlayerEntity player, List<Block> perTargetBlocks, List<BlockPos> targets, String tag) {
-        MaterialResolution materialResolution = autoResolveMaterials(player, perTargetBlocks);
-        List<Block> resolvedBlocks = materialResolution.blocks();
+    private static int queueStatePlacement(ServerCommandSource source, ServerPlayerEntity player, List<BlockState> requestedStates, List<BlockPos> targets, String tag) {
+        MaterialStateResolution materialResolution = autoResolveMaterialStates(player, requestedStates);
+        List<BlockState> resolvedStates = materialResolution.blockStates();
         if (!materialResolution.summary().isBlank()) {
             source.sendFeedback(() -> blueText("[Bladelow] " + materialResolution.summary()), false);
         }
 
-        ExecutionPlan executionPlan = dependencyAwarePlan(player, resolvedBlocks, targets, tag);
+        ExecutionStatePlan executionPlan = dependencyAwarePlan(player, resolvedStates, targets, tag);
         BuildRuntimeSettings.Snapshot snapshot = BuildRuntimeSettings.snapshot();
         PlacementJob job = new PlacementJob(
             player.getUuid(),
             source.getWorld().getRegistryKey(),
-            executionPlan.blocks(),
+            executionPlan.blockStates(),
             executionPlan.targets(),
             tag,
             snapshot
@@ -800,7 +796,7 @@ public final class BladePlaceCommand {
             : PlacementJobRunner.hasActive(player.getUuid());
         PlacementJobRunner.queueOrPreview(server, job);
         String queuedMessage = "[Bladelow] queued " + tag + " targets=" + executionPlan.targets().size()
-            + " blocks=" + executionPlan.blocks().size()
+            + " blocks=" + executionPlan.blockStates().size()
             + " feasible=" + String.format(Locale.ROOT, "%.1f", materialResolution.feasibilityPercent()) + "%"
             + " deps=" + executionPlan.dependencyEdges()
             + " order=" + (executionPlan.dependencyOrdered() ? "support-first" : "path-first")
@@ -811,24 +807,34 @@ public final class BladePlaceCommand {
         return 1;
     }
 
-    private static MaterialResolution autoResolveMaterials(ServerPlayerEntity player, List<Block> requested) {
+    private static List<BlockState> defaultStates(List<Block> blocks) {
+        List<BlockState> out = new ArrayList<>(blocks.size());
+        for (Block block : blocks) {
+            out.add(block.getDefaultState());
+        }
+        return out;
+    }
+
+    private static MaterialStateResolution autoResolveMaterialStates(ServerPlayerEntity player, List<BlockState> requested) {
         if (requested == null || requested.isEmpty()) {
-            return new MaterialResolution(List.of(), 0, 0, 0, 0, 100.0, "");
+            return new MaterialStateResolution(List.of(), 0, 0, 0, 0, 100.0, "");
         }
         if (player.getAbilities().creativeMode) {
             int required = 0;
-            for (Block block : requested) {
+            for (BlockState state : requested) {
+                Block block = state == null ? Blocks.AIR : state.getBlock();
                 if (block != null && block.asItem() != Items.AIR) {
                     required++;
                 }
             }
-            return new MaterialResolution(requested, 0, 0, required, required, 100.0, "");
+            return new MaterialStateResolution(requested, 0, 0, required, required, 100.0, "");
         }
 
         Map<Block, Integer> stock = inventoryBlockStock(player);
         if (stock.isEmpty()) {
             int missing = 0;
-            for (Block block : requested) {
+            for (BlockState state : requested) {
+                Block block = state == null ? Blocks.AIR : state.getBlock();
                 if (block != null && block.asItem() != Items.AIR) {
                     missing++;
                 }
@@ -837,44 +843,50 @@ public final class BladePlaceCommand {
                 ? "material auto-map missing=" + missing + " (no placeable block items found in inventory)"
                 : "";
             double feasibility = missing <= 0 ? 100.0 : 0.0;
-            return new MaterialResolution(requested, 0, missing, missing, 0, feasibility, summary);
+            return new MaterialStateResolution(requested, 0, missing, missing, 0, feasibility, summary);
         }
 
-        Set<Block> preferredPalette = new LinkedHashSet<>(requested);
-        List<Block> resolved = new ArrayList<>(requested.size());
+        Set<Block> preferredPalette = new LinkedHashSet<>();
+        for (BlockState state : requested) {
+            if (state != null) {
+                preferredPalette.add(state.getBlock());
+            }
+        }
+        List<BlockState> resolved = new ArrayList<>(requested.size());
         Map<String, Integer> substitutions = new LinkedHashMap<>();
         int substituted = 0;
         int unresolved = 0;
         int required = 0;
 
-        for (Block desired : requested) {
+        for (BlockState desiredState : requested) {
+            Block desired = desiredState == null ? Blocks.AIR : desiredState.getBlock();
             if (desired != null && desired.asItem() != Items.AIR) {
                 required++;
             }
             if (hasStock(stock, desired)) {
                 consumeStock(stock, desired);
-                resolved.add(desired);
+                resolved.add(desiredState);
                 continue;
             }
 
             Block fallback = chooseFallbackBlock(desired, stock, preferredPalette);
             if (fallback != null) {
                 consumeStock(stock, fallback);
-                resolved.add(fallback);
+                resolved.add(fallback == desired ? desiredState : fallback.getDefaultState());
                 substituted++;
                 String key = shortBlockId(desired) + "->" + shortBlockId(fallback);
                 substitutions.merge(key, 1, Integer::sum);
                 continue;
             }
 
-            resolved.add(desired);
+            resolved.add(desiredState);
             if (desired != null && desired.asItem() != Items.AIR) {
                 unresolved++;
             }
         }
 
         if (substituted == 0 && unresolved == 0) {
-            return new MaterialResolution(resolved, 0, 0, required, required, 100.0, "");
+            return new MaterialStateResolution(resolved, 0, 0, required, required, 100.0, "");
         }
 
         StringBuilder summary = new StringBuilder("material auto-map");
@@ -904,20 +916,20 @@ public final class BladePlaceCommand {
         int covered = Math.max(0, required - unresolved);
         double feasibility = required <= 0 ? 100.0 : (covered * 100.0) / required;
         summary.append(" feasible=").append(String.format(Locale.ROOT, "%.1f%%", feasibility));
-        return new MaterialResolution(resolved, substituted, unresolved, required, covered, feasibility, summary.toString());
+        return new MaterialStateResolution(resolved, substituted, unresolved, required, covered, feasibility, summary.toString());
     }
 
-    private static ExecutionPlan dependencyAwarePlan(
+    private static ExecutionStatePlan dependencyAwarePlan(
         ServerPlayerEntity player,
-        List<Block> blocks,
+        List<BlockState> blockStates,
         List<BlockPos> targets,
         String tag
     ) {
-        if (blocks == null || targets == null || blocks.size() != targets.size() || targets.isEmpty()) {
-            return new ExecutionPlan(blocks == null ? List.of() : blocks, targets == null ? List.of() : targets, 0, false);
+        if (blockStates == null || targets == null || blockStates.size() != targets.size() || targets.isEmpty()) {
+            return new ExecutionStatePlan(blockStates == null ? List.of() : blockStates, targets == null ? List.of() : targets, 0, false);
         }
         if (targets.size() == 1 || "bladeplace".equals(tag)) {
-            return new ExecutionPlan(blocks, targets, 0, false);
+            return new ExecutionStatePlan(blockStates, targets, 0, false);
         }
 
         Map<BlockPos, Integer> indexByPos = new HashMap<>(targets.size() * 2);
@@ -932,7 +944,7 @@ public final class BladePlaceCommand {
             }
         }
         if (dependencyEdges <= 0) {
-            return new ExecutionPlan(blocks, targets, 0, false);
+            return new ExecutionStatePlan(blockStates, targets, 0, false);
         }
 
         List<Integer> order = new ArrayList<>(targets.size());
@@ -948,13 +960,13 @@ public final class BladePlaceCommand {
             .thenComparingInt(i -> targets.get(i).getX())
             .thenComparingInt(i -> targets.get(i).getZ()));
 
-        List<Block> orderedBlocks = new ArrayList<>(blocks.size());
+        List<BlockState> orderedStates = new ArrayList<>(blockStates.size());
         List<BlockPos> orderedTargets = new ArrayList<>(targets.size());
         for (Integer idx : order) {
-            orderedBlocks.add(blocks.get(idx));
+            orderedStates.add(blockStates.get(idx));
             orderedTargets.add(targets.get(idx));
         }
-        return new ExecutionPlan(orderedBlocks, orderedTargets, dependencyEdges, true);
+        return new ExecutionStatePlan(orderedStates, orderedTargets, dependencyEdges, true);
     }
 
     private static Map<Block, Integer> inventoryBlockStock(ServerPlayerEntity player) {
@@ -1680,6 +1692,121 @@ public final class BladePlaceCommand {
         return "web_idx_" + index;
     }
 
+    private static void registerBladeZone(CommandDispatcher<ServerCommandSource> dispatcher) {
+        dispatcher.register(literal("bladezone")
+            .then(literal("set")
+                .then(argument("type", StringArgumentType.word())
+                    .executes(ctx -> runBladeZoneSetSelection(ctx.getSource(), StringArgumentType.getString(ctx, "type")))
+                )
+            )
+            .then(literal("box")
+                .then(argument("type", StringArgumentType.word())
+                    .then(argument("from", BlockPosArgumentType.blockPos())
+                        .then(argument("to", BlockPosArgumentType.blockPos())
+                            .executes(ctx -> runBladeZoneBox(
+                                ctx.getSource(),
+                                StringArgumentType.getString(ctx, "type"),
+                                BlockPosArgumentType.getLoadedBlockPos(ctx, "from"),
+                                BlockPosArgumentType.getLoadedBlockPos(ctx, "to")
+                            ))
+                        )
+                    )
+                )
+            )
+            .then(literal("list")
+                .executes(ctx -> runBladeZoneList(ctx.getSource()))
+            )
+            .then(literal("clear")
+                .executes(ctx -> runBladeZoneClear(ctx.getSource(), null))
+                .then(argument("type", StringArgumentType.word())
+                    .executes(ctx -> runBladeZoneClear(ctx.getSource(), StringArgumentType.getString(ctx, "type")))
+                )
+            )
+        );
+    }
+
+    private static int runBladeZoneSetSelection(ServerCommandSource source, String type) throws CommandSyntaxException {
+        ServerPlayerEntity player = source.getPlayer();
+        if (player == null) {
+            source.sendError(blueText("Player context required."));
+            return 0;
+        }
+        var worldKey = source.getWorld().getRegistryKey();
+        List<BlockPos> points = SelectionState.snapshot(player.getUuid(), worldKey);
+        TownZoneStore.ZoneResult result = TownZoneStore.setSelection(player.getUuid(), worldKey, type, points);
+        if (!result.ok()) {
+            source.sendError(blueText("[Bladelow] " + result.message()));
+            return 0;
+        }
+        source.sendFeedback(() -> blueText("[Bladelow] " + result.message()), false);
+        return 1;
+    }
+
+    private static int runBladeZoneBox(ServerCommandSource source, String type, BlockPos from, BlockPos to) throws CommandSyntaxException {
+        ServerPlayerEntity player = source.getPlayer();
+        if (player == null) {
+            source.sendError(blueText("Player context required."));
+            return 0;
+        }
+        TownZoneStore.ZoneResult result = TownZoneStore.setBox(player.getUuid(), source.getWorld().getRegistryKey(), type, from, to);
+        if (!result.ok()) {
+            source.sendError(blueText("[Bladelow] " + result.message()));
+            return 0;
+        }
+        source.sendFeedback(() -> blueText("[Bladelow] " + result.message()), false);
+        return 1;
+    }
+
+    private static int runBladeZoneList(ServerCommandSource source) throws CommandSyntaxException {
+        ServerPlayerEntity player = source.getPlayer();
+        if (player == null) {
+            source.sendError(blueText("Player context required."));
+            return 0;
+        }
+        List<TownZoneStore.Zone> zones = TownZoneStore.snapshot(player.getUuid(), source.getWorld().getRegistryKey());
+        if (zones.isEmpty()) {
+            source.sendFeedback(() -> blueText("[Bladelow] no saved zones"), false);
+            return 1;
+        }
+        Map<String, Integer> counts = TownZoneStore.summarizeByType(zones);
+        List<String> summary = counts.entrySet().stream()
+            .map(entry -> entry.getKey() + "=" + entry.getValue())
+            .toList();
+        source.sendFeedback(() -> blueText("[Bladelow] zones " + String.join(", ", summary)), false);
+        int shown = Math.min(6, zones.size());
+        for (int i = 0; i < shown; i++) {
+            TownZoneStore.Zone zone = zones.get(i);
+            int index = i + 1;
+            source.sendFeedback(() -> blueText("[Bladelow] zone#" + index + " " + zone.summary()), false);
+        }
+        if (zones.size() > shown) {
+            source.sendFeedback(() -> blueText("[Bladelow] +" + (zones.size() - shown) + " more zones"), false);
+        }
+        return 1;
+    }
+
+    private static int runBladeZoneClear(ServerCommandSource source, String type) throws CommandSyntaxException {
+        ServerPlayerEntity player = source.getPlayer();
+        if (player == null) {
+            source.sendError(blueText("Player context required."));
+            return 0;
+        }
+        String normalizedType = type == null ? null : TownZoneStore.normalizeType(type);
+        if (type != null && normalizedType.isBlank()) {
+            source.sendError(blueText("[Bladelow] zone type must be residential|market|workshop|civic"));
+            return 0;
+        }
+        int removed = type == null
+            ? TownZoneStore.clear(player.getUuid(), source.getWorld().getRegistryKey())
+            : TownZoneStore.clear(player.getUuid(), source.getWorld().getRegistryKey(), normalizedType);
+        source.sendFeedback(() -> blueText(
+            type == null
+                ? "[Bladelow] cleared zones=" + removed
+                : "[Bladelow] cleared " + normalizedType + " zones=" + removed
+        ), false);
+        return 1;
+    }
+
     private static void registerBladeBlueprint(CommandDispatcher<ServerCommandSource> dispatcher) {
         dispatcher.register(literal("bladeblueprint")
             .then(literal("reload")
@@ -1697,6 +1824,20 @@ public final class BladePlaceCommand {
                         return 1;
                     }
                     ctx.getSource().sendFeedback(() -> blueText("[Bladelow] blueprints: " + String.join(", ", names)), false);
+                    return 1;
+                })
+            )
+            .then(literal("townlist")
+                .executes(ctx -> {
+                    List<BlueprintLibrary.BlueprintInfo> infos = BlueprintLibrary.listTownInfos();
+                    if (infos.isEmpty()) {
+                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] no town blueprints loaded; run /bladeblueprint reload"), false);
+                        return 1;
+                    }
+                    List<String> names = infos.stream()
+                        .map(info -> info.name() + "(" + info.plotWidth() + "x" + info.plotDepth() + ")")
+                        .toList();
+                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] town blueprints: " + String.join(", ", names)), false);
                     return 1;
                 })
             )
@@ -1747,6 +1888,16 @@ public final class BladePlaceCommand {
                     })
                 )
             )
+            .then(literal("townfill")
+                .then(argument("from", BlockPosArgumentType.blockPos())
+                    .then(argument("to", BlockPosArgumentType.blockPos())
+                        .executes(ctx -> runTownFill(ctx.getSource(), BlockPosArgumentType.getLoadedBlockPos(ctx, "from"), BlockPosArgumentType.getLoadedBlockPos(ctx, "to")))
+                    )
+                )
+            )
+            .then(literal("townfillsel")
+                .executes(ctx -> runTownFillSelection(ctx.getSource()))
+            )
             .then(literal("build")
                 .then(argument("start", BlockPosArgumentType.blockPos())
                     .executes(ctx -> {
@@ -1762,7 +1913,7 @@ public final class BladePlaceCommand {
                             ctx.getSource().sendError(blueText("[Bladelow] " + plan.message()));
                             return 0;
                         }
-                        return queuePlacement(ctx.getSource(), player, plan.blocks(), plan.targets(), "blueprint:" + plan.message());
+                        return queueStatePlacement(ctx.getSource(), player, plan.blockStates(), plan.targets(), "blueprint:" + plan.message());
                     })
                     .then(argument("block", StringArgumentType.greedyString())
                         .executes(ctx -> {
@@ -1784,7 +1935,7 @@ public final class BladePlaceCommand {
                                 return 0;
                             }
                             List<Block> blocks = applyPaletteOverride(plan.blocks(), plan.targets(), override);
-                            return queuePlacement(ctx.getSource(), player, blocks, plan.targets(), "blueprint:" + plan.message());
+                            return queueStatePlacement(ctx.getSource(), player, defaultStates(blocks), plan.targets(), "blueprint:" + plan.message());
                         })
                     )
                 )
@@ -1805,7 +1956,7 @@ public final class BladePlaceCommand {
                                 return 0;
                             }
                             BlueprintLibrary.select(player.getUuid(), name);
-                            return queuePlacement(ctx.getSource(), player, plan.blocks(), plan.targets(), "blueprint:" + plan.message());
+                            return queueStatePlacement(ctx.getSource(), player, plan.blockStates(), plan.targets(), "blueprint:" + plan.message());
                         })
                         .then(argument("block", StringArgumentType.greedyString())
                             .executes(ctx -> {
@@ -1829,13 +1980,57 @@ public final class BladePlaceCommand {
                                 }
                                 List<Block> blocks = applyPaletteOverride(plan.blocks(), plan.targets(), override);
                                 BlueprintLibrary.select(player.getUuid(), name);
-                                return queuePlacement(ctx.getSource(), player, blocks, plan.targets(), "blueprint:" + plan.message());
+                                return queueStatePlacement(ctx.getSource(), player, defaultStates(blocks), plan.targets(), "blueprint:" + plan.message());
                             })
                         )
                     )
                 )
             )
         );
+    }
+
+    private static int runTownFillSelection(ServerCommandSource source) throws CommandSyntaxException {
+        ServerPlayerEntity player = source.getPlayer();
+        if (player == null) {
+            source.sendError(blueText("Player context required."));
+            return 0;
+        }
+        var worldKey = source.getWorld().getRegistryKey();
+        List<BlockPos> points = SelectionState.snapshot(player.getUuid(), worldKey);
+        if (points.isEmpty()) {
+            source.sendError(blueText("[Bladelow] selection is empty; use #bladeselect markerbox first"));
+            return 0;
+        }
+        int minX = Integer.MAX_VALUE;
+        int minY = Integer.MAX_VALUE;
+        int minZ = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE;
+        int maxY = Integer.MIN_VALUE;
+        int maxZ = Integer.MIN_VALUE;
+        for (BlockPos point : points) {
+            minX = Math.min(minX, point.getX());
+            minY = Math.min(minY, point.getY());
+            minZ = Math.min(minZ, point.getZ());
+            maxX = Math.max(maxX, point.getX());
+            maxY = Math.max(maxY, point.getY());
+            maxZ = Math.max(maxZ, point.getZ());
+        }
+        return runTownFill(source, new BlockPos(minX, minY, minZ), new BlockPos(maxX, maxY, maxZ));
+    }
+
+    private static int runTownFill(ServerCommandSource source, BlockPos from, BlockPos to) throws CommandSyntaxException {
+        ServerPlayerEntity player = source.getPlayer();
+        if (player == null) {
+            source.sendError(blueText("Player context required."));
+            return 0;
+        }
+        BlueprintLibrary.BuildPlan plan = BlueprintLibrary.resolveTownFill(source.getWorld(), player.getUuid(), from, to);
+        if (!plan.ok()) {
+            source.sendError(blueText("[Bladelow] " + plan.message()));
+            return 0;
+        }
+        source.sendFeedback(() -> blueText("[Bladelow] townfill area from=" + from.toShortString() + " to=" + to.toShortString()), false);
+        return queueStatePlacement(source, player, plan.blockStates(), plan.targets(), "blueprint:" + plan.message());
     }
 
     private static List<Block> applyPaletteOverride(List<Block> targets, List<BlockPos> positions, List<Block> palette) {
@@ -1965,8 +2160,8 @@ public final class BladePlaceCommand {
         DETAIL
     }
 
-    private record MaterialResolution(
-        List<Block> blocks,
+    private record MaterialStateResolution(
+        List<BlockState> blockStates,
         int substitutions,
         int unresolved,
         int required,
@@ -1976,8 +2171,8 @@ public final class BladePlaceCommand {
     ) {
     }
 
-    private record ExecutionPlan(
-        List<Block> blocks,
+    private record ExecutionStatePlan(
+        List<BlockState> blockStates,
         List<BlockPos> targets,
         int dependencyEdges,
         boolean dependencyOrdered

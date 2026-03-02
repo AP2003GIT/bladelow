@@ -95,6 +95,12 @@ Selection:
 - `#bladeselect exportscan <name>`
 - `#bladeselect copybox <name> <x1> <y1> <z1> <x2> <y2> <z2>`
 
+Zoning:
+- `#bladezone set residential|market|workshop|civic`
+- `#bladezone box <type> <x1> <y1> <z1> <x2> <y2> <z2>`
+- `#bladezone list`
+- `#bladezone clear [type]`
+
 Movement/runtime tuning:
 - `#blademove show`
 - `#blademove on|off`
@@ -121,11 +127,14 @@ Profiles:
 Blueprints:
 - `#bladeblueprint reload`
 - `#bladeblueprint list`
+- `#bladeblueprint townlist`
 - `#bladeblueprint load <name>`
 - `#bladeblueprint info`
 - `#bladeblueprint info <name>`
 - `#bladeblueprint build <x> <y> <z> [blocks_csv]`
 - `#bladeblueprint build <name> <x> <y> <z> [blocks_csv]`
+- `#bladeblueprint townfill <x1> <y1> <z1> <x2> <y2> <z2>`
+- `#bladeblueprint townfillsel`
 
 Web import:
 - `#bladeweb catalog [limit]`
@@ -143,6 +152,23 @@ Notes:
 - `#bladelow` is an alias for `#bladehelp`.
 - `<blocks_csv>` supports 1 to 3 blocks, e.g. `minecraft:stone,minecraft:glass,minecraft:oak_planks`.
 
+## Town Fill Workflow
+
+1. Mark a base area for the district:
+- `#bladeselect markerbox <x1> <y1> <z1> <x2> <y2> <z2> <height>`
+2. Optional: reserve districts before fill:
+- `#bladezone set residential`
+- `#bladezone box market <x1> <y1> <z1> <x2> <y2> <z2>`
+- `#bladezone list`
+3. Inspect available town blueprints:
+- `#bladeblueprint townlist`
+4. Auto-fill the selected area with fitting town buildings:
+- `#bladeblueprint townfillsel`
+5. Or fill any explicit bounds directly:
+- `#bladeblueprint townfill <x1> <y1> <z1> <x2> <y2> <z2>`
+
+The planner uses deterministic city-layout scoring, not generic ML. It detects or synthesizes a street grid, places road blocks for those corridors, expands major intersections into plaza cells, derives ordered lots from road edges, rotates blueprints to face their assigned street side, scores those lots against center, wall, gate, road-adjacent, and user-zoned districts, avoids overlap, and queues one combined build job.
+
 ## Command Examples
 
 Selection workflow:
@@ -159,6 +185,16 @@ Copy + recreate workflow:
 #bladeselect copybox my_house 100 64 100 124 78 124
 #bladeblueprint load my_house
 #bladeblueprint build my_house 200 64 200
+```
+
+Zoned town workflow:
+
+```text
+#bladeselect markerbox 10 -60 10 90 -60 90 8
+#bladezone box civic 42 -60 42 58 -60 58
+#bladezone box market 12 -60 36 26 -60 54
+#bladezone set residential
+#bladeblueprint townfillsel
 ```
 
 Direct place build:
@@ -227,12 +263,36 @@ Example:
 
 ```json
 {
-  "name": "line20",
+  "name": "town_house_small",
+  "category": "town",
+  "plotWidth": 7,
+  "plotDepth": 9,
+  "priority": 8,
+  "entranceX": 3,
+  "entranceZ": 0,
+  "roadSide": "north",
+  "themeTags": ["medieval", "oak", "village"],
+  "tags": ["house", "residential", "small"],
   "placements": [
-    { "x": 0, "y": 0, "z": 0, "block": "minecraft:stone" }
+    { "x": 0, "y": 0, "z": 0, "block": "minecraft:stone_brick_stairs[facing=north,half=bottom,shape=straight,waterlogged=false]" }
   ]
 }
 ```
+
+Optional metadata used by the town planner:
+- `category: "town"` includes the blueprint in `townlist` / `townfill`.
+- `plotWidth` / `plotDepth` define the reserved footprint.
+- `priority` lets larger or more important buildings win first during placement.
+- `entranceX` / `entranceZ` define the local entrance point the planner scores against roads and gates.
+- `roadSide` tells the planner which plot edge should prefer road contact (`north|south|east|west`).
+- `themeTags` describe the material/style family for future palette theming.
+- `tags` drive zoning preferences such as house, market, smithy, residential, utility.
+- `placements[].block` accepts a plain block id or a full block-state string.
+- Exported blueprints now keep exact saved block states, so stairs, doors, trapdoors, furnaces, and other facing-sensitive blocks survive rebuilds.
+- Town fill now places buildings on ordered lots beside detected or synthetic road corridors instead of scanning every cell as a free plot.
+- Blueprint footprints and saved block states are rotated automatically so their entrance/road side faces the assigned street edge.
+- Synthetic roads are built with stone-brick / cobblestone corridors when the selected area has no usable road network yet.
+- Plaza cells are generated around major street intersections and built with polished-andesite accents.
 
 ## Troubleshooting
 

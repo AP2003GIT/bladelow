@@ -1,6 +1,7 @@
 package com.bladelow.builder;
 
 import net.minecraft.block.Block;
+import net.minecraft.block.BlockState;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.RegistryKey;
 import net.minecraft.registry.RegistryKeys;
@@ -51,19 +52,19 @@ public class PlacementJob {
     public PlacementJob(
         UUID playerId,
         RegistryKey<World> worldKey,
-        List<Block> blocks,
+        List<BlockState> blockStates,
         List<BlockPos> targets,
         String tag,
         BuildRuntimeSettings.Snapshot runtimeSettings
     ) {
-        if (blocks.size() != targets.size()) {
-            throw new IllegalArgumentException("blocks and targets size mismatch");
+        if (blockStates.size() != targets.size()) {
+            throw new IllegalArgumentException("blockStates and targets size mismatch");
         }
         this.playerId = playerId;
         this.worldKey = worldKey;
         this.entries = new ArrayList<>(targets.size());
         for (int i = 0; i < targets.size(); i++) {
-            this.entries.add(new Entry(blocks.get(i), targets.get(i)));
+            this.entries.add(new Entry(blockStates.get(i), targets.get(i)));
         }
         this.tag = tag;
         this.runtimeSettings = runtimeSettings;
@@ -170,7 +171,11 @@ public class PlacementJob {
     }
 
     public Block currentBlock() {
-        return entries.get(cursor).block;
+        return entries.get(cursor).blockState.getBlock();
+    }
+
+    public BlockState currentBlockState() {
+        return entries.get(cursor).blockState;
     }
 
     public BlockPos targetAt(int idx) {
@@ -479,12 +484,12 @@ public class PlacementJob {
     public JobSnapshot snapshot() {
         List<EntrySnapshot> entrySnapshots = new ArrayList<>(entries.size());
         for (Entry entry : entries) {
-            Identifier blockId = Registries.BLOCK.getId(entry.block);
-            if (blockId == null) {
+            String blockSpec = BlueprintStateCodec.stringify(entry.blockState);
+            if (blockSpec == null || blockSpec.isBlank()) {
                 return null;
             }
             entrySnapshots.add(new EntrySnapshot(
-                blockId.toString(),
+                blockSpec,
                 entry.target.getX(),
                 entry.target.getY(),
                 entry.target.getZ(),
@@ -532,28 +537,24 @@ public class PlacementJob {
             return null;
         }
 
-        List<Block> blocks = new ArrayList<>(snapshot.entries().size());
+        List<BlockState> blockStates = new ArrayList<>(snapshot.entries().size());
         List<BlockPos> targets = new ArrayList<>(snapshot.entries().size());
         for (EntrySnapshot entry : snapshot.entries()) {
             if (entry == null) {
                 return null;
             }
-            Identifier blockId = Identifier.tryParse(entry.blockId());
-            if (blockId == null || !Registries.BLOCK.containsId(blockId)) {
+            BlockState state = BlueprintStateCodec.tryParse(entry.blockId());
+            if (state == null) {
                 return null;
             }
-            Block block = Registries.BLOCK.get(blockId);
-            if (block == null) {
-                return null;
-            }
-            blocks.add(block);
+            blockStates.add(state);
             targets.add(new BlockPos(entry.x(), entry.y(), entry.z()));
         }
 
         PlacementJob job = new PlacementJob(
             snapshot.playerId(),
             RegistryKey.of(RegistryKeys.WORLD, worldId),
-            blocks,
+            blockStates,
             targets,
             snapshot.tag(),
             snapshot.runtimeSettings()
@@ -652,13 +653,13 @@ public class PlacementJob {
     }
 
     private static final class Entry {
-        private final Block block;
+        private final BlockState blockState;
         private final BlockPos target;
         private int attempts;
         private int deferrals;
 
-        private Entry(Block block, BlockPos target) {
-            this.block = block;
+        private Entry(BlockState blockState, BlockPos target) {
+            this.blockState = blockState;
             this.target = target;
         }
     }

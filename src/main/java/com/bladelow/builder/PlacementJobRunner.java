@@ -659,7 +659,7 @@ public final class PlacementJobRunner {
         }
 
         var existingState = world.getBlockState(target);
-        if (existingState.isOf(job.currentBlock())) {
+        if (existingState.equals(job.currentBlockState())) {
             clearTargetPressure(job.playerId(), target);
             job.recordAlreadyPlaced();
             job.recordSkipped();
@@ -692,7 +692,7 @@ public final class PlacementJobRunner {
 
     private static void nodePlace(net.minecraft.server.world.ServerWorld world, ServerPlayerEntity player, PlacementJob job) {
         BlockPos target = job.currentTarget();
-        var desiredState = job.currentBlock().getDefaultState();
+        var desiredState = job.currentBlockState();
         var features = PlacementFeatureExtractor.extract(world, player, target);
         var model = BladelowLearning.model();
         double score = model.score(features);
