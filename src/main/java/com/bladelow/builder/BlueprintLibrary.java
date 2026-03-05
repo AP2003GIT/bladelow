@@ -480,8 +480,12 @@ public final class BlueprintLibrary {
         ensureExampleIfMissing(dir.resolve("wall5x5.json"), exampleWall5x5());
         ensureExampleIfMissing(dir.resolve("town_house_small.json"), exampleTownHouseSmall());
         ensureExampleIfMissing(dir.resolve("town_house_tall.json"), exampleTownHouseTall());
+        ensureExampleIfMissing(dir.resolve("town_house_corner.json"), exampleTownHouseCorner());
         ensureExampleIfMissing(dir.resolve("town_smithy.json"), exampleTownSmithy());
+        ensureExampleIfMissing(dir.resolve("town_warehouse.json"), exampleTownWarehouse());
         ensureExampleIfMissing(dir.resolve("town_market_stall.json"), exampleTownMarketStall());
+        ensureExampleIfMissing(dir.resolve("town_civic_hall.json"), exampleTownCivicHall());
+        ensureExampleIfMissing(dir.resolve("town_plaza_fountain.json"), exampleTownPlazaFountain());
     }
 
     private static void ensureExampleIfMissing(Path file, BlueprintJson example) throws IOException {
@@ -661,6 +665,161 @@ public final class BlueprintLibrary {
         addPlacement(json, 2, 1, 3, "minecraft:chest");
         addPlacement(json, 3, 1, 3, "minecraft:oak_planks");
         addPlacement(json, 2, 1, 2, "minecraft:barrel");
+        return json;
+    }
+
+    private static BlueprintJson exampleTownHouseCorner() {
+        BlueprintJson json = townJson(
+            "town_house_corner",
+            8,
+            8,
+            8,
+            "north",
+            3,
+            0,
+            List.of("medieval", "oak", "residential"),
+            "house",
+            "residential",
+            "detail"
+        );
+        for (int y = 1; y <= 3; y++) {
+            for (int x = 1; x <= 6; x++) {
+                addPlacement(json, x, y, 1, x == 3 && y <= 2 ? null : "minecraft:spruce_planks");
+                addPlacement(json, x, y, 6, "minecraft:spruce_planks");
+            }
+            for (int z = 2; z <= 5; z++) {
+                addPlacement(json, 1, y, z, "minecraft:spruce_planks");
+                addPlacement(json, 6, y, z, "minecraft:spruce_planks");
+            }
+        }
+        for (int y = 1; y <= 3; y++) {
+            addPlacement(json, 1, y, 1, "minecraft:dark_oak_log");
+            addPlacement(json, 6, y, 1, "minecraft:dark_oak_log");
+            addPlacement(json, 1, y, 6, "minecraft:dark_oak_log");
+            addPlacement(json, 6, y, 6, "minecraft:dark_oak_log");
+        }
+        addPlacement(json, 2, 2, 6, "minecraft:glass_pane");
+        addPlacement(json, 5, 2, 6, "minecraft:glass_pane");
+        addPlacement(json, 1, 2, 3, "minecraft:glass_pane");
+        addPlacement(json, 6, 2, 4, "minecraft:glass_pane");
+        fillRect(json, 1, 4, 1, 6, 4, 6, "minecraft:oak_planks");
+        fillRect(json, 2, 5, 2, 5, 5, 5, "minecraft:oak_slab");
+        addPlacement(json, 4, 1, 4, "minecraft:crafting_table");
+        addPlacement(json, 5, 1, 4, "minecraft:barrel");
+        return json;
+    }
+
+    private static BlueprintJson exampleTownWarehouse() {
+        BlueprintJson json = townJson(
+            "town_warehouse",
+            12,
+            9,
+            9,
+            "north",
+            5,
+            0,
+            List.of("medieval", "storage", "utility"),
+            "workshop",
+            "utility",
+            "storage"
+        );
+        for (int y = 1; y <= 4; y++) {
+            for (int x = 1; x <= 10; x++) {
+                addPlacement(json, x, y, 1, x == 5 && y <= 2 ? null : "minecraft:stone_bricks");
+                addPlacement(json, x, y, 7, "minecraft:stone_bricks");
+            }
+            for (int z = 2; z <= 6; z++) {
+                addPlacement(json, 1, y, z, "minecraft:stone_bricks");
+                addPlacement(json, 10, y, z, "minecraft:stone_bricks");
+            }
+        }
+        for (int y = 1; y <= 4; y++) {
+            addPlacement(json, 1, y, 1, "minecraft:deepslate_bricks");
+            addPlacement(json, 10, y, 1, "minecraft:deepslate_bricks");
+            addPlacement(json, 1, y, 7, "minecraft:deepslate_bricks");
+            addPlacement(json, 10, y, 7, "minecraft:deepslate_bricks");
+        }
+        addPlacement(json, 3, 2, 1, "minecraft:glass");
+        addPlacement(json, 8, 2, 1, "minecraft:glass");
+        addPlacement(json, 3, 2, 7, "minecraft:glass");
+        addPlacement(json, 8, 2, 7, "minecraft:glass");
+        fillRect(json, 1, 5, 1, 10, 5, 7, "minecraft:spruce_planks");
+        fillRect(json, 2, 6, 2, 9, 6, 6, "minecraft:spruce_slab");
+        addPlacement(json, 3, 1, 3, "minecraft:barrel");
+        addPlacement(json, 4, 1, 3, "minecraft:chest");
+        addPlacement(json, 7, 1, 3, "minecraft:barrel");
+        addPlacement(json, 8, 1, 3, "minecraft:chest");
+        addPlacement(json, 5, 1, 5, "minecraft:anvil");
+        return json;
+    }
+
+    private static BlueprintJson exampleTownCivicHall() {
+        BlueprintJson json = townJson(
+            "town_civic_hall",
+            13,
+            11,
+            11,
+            "north",
+            6,
+            0,
+            List.of("medieval", "civic", "stone"),
+            "civic",
+            "hall",
+            "plaza"
+        );
+        for (int y = 1; y <= 5; y++) {
+            for (int x = 1; x <= 11; x++) {
+                addPlacement(json, x, y, 1, x == 6 && y <= 2 ? null : "minecraft:stone_bricks");
+                addPlacement(json, x, y, 9, "minecraft:stone_bricks");
+            }
+            for (int z = 2; z <= 8; z++) {
+                addPlacement(json, 1, y, z, "minecraft:stone_bricks");
+                addPlacement(json, 11, y, z, "minecraft:stone_bricks");
+            }
+        }
+        for (int y = 1; y <= 5; y++) {
+            addPlacement(json, 1, y, 1, "minecraft:polished_andesite");
+            addPlacement(json, 11, y, 1, "minecraft:polished_andesite");
+            addPlacement(json, 1, y, 9, "minecraft:polished_andesite");
+            addPlacement(json, 11, y, 9, "minecraft:polished_andesite");
+        }
+        addPlacement(json, 3, 2, 1, "minecraft:glass_pane");
+        addPlacement(json, 9, 2, 1, "minecraft:glass_pane");
+        addPlacement(json, 3, 2, 9, "minecraft:glass_pane");
+        addPlacement(json, 9, 2, 9, "minecraft:glass_pane");
+        addPlacement(json, 2, 3, 5, "minecraft:glass_pane");
+        addPlacement(json, 10, 3, 5, "minecraft:glass_pane");
+        fillRect(json, 1, 6, 1, 11, 6, 9, "minecraft:deepslate_tiles");
+        fillRect(json, 2, 7, 2, 10, 7, 8, "minecraft:deepslate_tile_slab");
+        addPlacement(json, 6, 1, 5, "minecraft:lectern");
+        addPlacement(json, 5, 1, 5, "minecraft:oak_stairs");
+        addPlacement(json, 7, 1, 5, "minecraft:oak_stairs");
+        return json;
+    }
+
+    private static BlueprintJson exampleTownPlazaFountain() {
+        BlueprintJson json = townJson(
+            "town_plaza_fountain",
+            7,
+            7,
+            6,
+            "north",
+            3,
+            0,
+            List.of("medieval", "plaza", "decor"),
+            "civic",
+            "plaza",
+            "decor"
+        );
+        fillRect(json, 0, 1, 0, 6, 1, 6, "minecraft:stone_bricks");
+        fillRect(json, 1, 1, 1, 5, 1, 5, "minecraft:polished_andesite");
+        addPlacement(json, 3, 1, 3, "minecraft:water");
+        addPlacement(json, 3, 2, 3, "minecraft:water");
+        addPlacement(json, 3, 3, 3, "minecraft:stone_brick_wall");
+        addPlacement(json, 2, 2, 3, "minecraft:stone_brick_stairs");
+        addPlacement(json, 4, 2, 3, "minecraft:stone_brick_stairs");
+        addPlacement(json, 3, 2, 2, "minecraft:stone_brick_stairs");
+        addPlacement(json, 3, 2, 4, "minecraft:stone_brick_stairs");
         return json;
     }
 

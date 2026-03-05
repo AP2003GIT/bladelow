@@ -58,6 +58,8 @@ public final class TownPlanner {
 
         Set<Long> reserved = new HashSet<>(area.streetCells());
         Map<String, Integer> usageCounts = new HashMap<>();
+        LinkedHashMap<String, Integer> districtUsage = initDistrictCounters();
+        LinkedHashMap<String, Integer> zoneUsage = initDistrictCounters();
         List<BlockState> blockStates = new ArrayList<>();
         List<BlockPos> targets = new ArrayList<>();
         LinkedHashSet<String> used = new LinkedHashSet<>();
@@ -67,7 +69,7 @@ public final class TownPlanner {
         int consumedLots = 0;
 
         for (LotCandidate lot : lots) {
-            PlotPlacement placement = chooseLotPlacement(area, lot, reserved, usable, usageCounts);
+            PlotPlacement placement = chooseLotPlacement(area, lot, reserved, usable, usageCounts, districtUsage);
             if (placement == null) {
                 continue;
             }
@@ -76,6 +78,14 @@ public final class TownPlanner {
             }
             reservePlot(reserved, placement.originX(), placement.originZ(), placement.blueprint().plotWidth(), placement.blueprint().plotDepth(), PLOT_SPACING);
             usageCounts.merge(placement.blueprint().name(), 1, Integer::sum);
+            districtUsage.merge(districtTypeOf(placement.blueprint()), 1, Integer::sum);
+            String zone = area.zoneTypeAt(
+                placement.originX() + Math.max(0, placement.blueprint().plotWidth() / 2),
+                placement.originZ() + Math.max(0, placement.blueprint().plotDepth() / 2)
+            );
+            if (!zone.isBlank()) {
+                zoneUsage.merge(zone, 1, Integer::sum);
+            }
             if (used.size() < 8) {
                 used.add(
                     placement.blueprint().name()
@@ -105,6 +115,10 @@ public final class TownPlanner {
             message.append(" layout=synthetic-grid");
         } else {
             message.append(" layout=detected-roads");
+        }
+        message.append(" districts=").append(formatDistrictCounters(districtUsage));
+        if (zoneUsage.values().stream().anyMatch(v -> v > 0)) {
+            message.append(" zoneHits=").append(formatDistrictCounters(zoneUsage));
         }
         if (!used.isEmpty()) {
             message.append(" sample=").append(String.join(",", used));
@@ -138,6 +152,7 @@ public final class TownPlanner {
 
     private static List<LotCandidate> buildLots(TownArea area) {
         Map<String, LotCandidate> unique = new LinkedHashMap<>();
+        Map<String, LotCandidate> fallback = new LinkedHashMap<>();
         int order = 0;
         for (RoadNode road : area.orderedRoads()) {
             for (String side : List.of("north", "south", "west", "east")) {
@@ -155,8 +170,16 @@ public final class TownPlanner {
                     + area.gateScore(entryX, entryZ) * 5.0
                     + area.zonePresenceScore(entryX, entryZ) * 3.0
                     + (road.primary() ? 4.0 : 0.0);
-                unique.put(key, new LotCandidate(road.x(), road.z(), entryX, entryZ, side, road.primary(), order++, baseScore));
+                LotCandidate candidate = new LotCandidate(road.x(), road.z(), entryX, entryZ, side, road.primary(), order++, baseScore);
+                if (area.hasZones() && !area.hasZoneNearby(entryX, entryZ, 2)) {
+                    fallback.put(key, candidate);
+                } else {
+                    unique.put(key, candidate);
+                }
             }
+        }
+        if (unique.isEmpty() && !fallback.isEmpty()) {
+            unique.putAll(fallback);
         }
         List<LotCandidate> lots = new ArrayList<>(unique.values());
         lots.sort(
@@ -172,7 +195,8 @@ public final class TownPlanner {
         LotCandidate lot,
         Set<Long> reserved,
         List<TownBlueprint> blueprints,
-        Map<String, Integer> usageCounts
+        Map<String, Integer> usageCounts,
+        Map<String, Integer> districtUsage
     ) {
         PlotPlacement best = null;
         for (TownBlueprint blueprint : blueprints) {
@@ -188,7 +212,16 @@ public final class TownPlanner {
             if (!isPlotClear(area.world(), originX, area.baseY(), originZ, oriented)) {
                 continue;
             }
-            double score = scoreBlueprint(area, originX, originZ, lot, oriented, usageCounts.getOrDefault(blueprint.name(), 0));
+            String districtType = districtTypeOf(oriented);
+            double score = scoreBlueprint(
+                area,
+                originX,
+                originZ,
+                lot,
+                oriented,
+                usageCounts.getOrDefault(blueprint.name(), 0),
+                districtUsage.getOrDefault(districtType, 0)
+            );
             if (best == null || score > best.score()) {
                 best = new PlotPlacement(oriented, lot, originX, originZ, score);
             }
@@ -212,7 +245,7 @@ public final class TownPlanner {
         return true;
     }
 
-    private static double scoreBlueprint(TownArea area, int originX, int originZ, LotCandidate lot, TownBlueprint blueprint, int usedCount) {
+    private static double scoreBlueprint(TownArea area, int originX, int originZ, LotCandidate lot, TownBlueprint blueprint, int usedCount, int districtUsedCount) {
         int plotCenterX = originX + Math.max(0, blueprint.plotWidth() / 2);
         int plotCenterZ = originZ + Math.max(0, blueprint.plotDepth() / 2);
         int entranceX = originX + blueprint.entranceOffsetX();
@@ -268,8 +301,47 @@ public final class TownPlanner {
             score -= 8.0;
         }
         score -= usedCount * 14.0;
+        score -= districtUsedCount * 4.0;
         score += Math.floorMod(originX * 17 + originZ * 13 + blueprint.name().hashCode(), 11) / 100.0;
         return score;
+    }
+
+    private static LinkedHashMap<String, Integer> initDistrictCounters() {
+        LinkedHashMap<String, Integer> counts = new LinkedHashMap<>();
+        for (TownDistrictType type : TownDistrictType.values()) {
+            counts.put(type.id(), 0);
+        }
+        return counts;
+    }
+
+    private static String formatDistrictCounters(Map<String, Integer> counts) {
+        List<String> parts = new ArrayList<>();
+        for (TownDistrictType type : TownDistrictType.values()) {
+            int value = counts.getOrDefault(type.id(), 0);
+            if (value > 0) {
+                parts.add(type.id() + "=" + value);
+            }
+        }
+        return parts.isEmpty() ? "none" : String.join(",", parts);
+    }
+
+    private static String districtTypeOf(TownBlueprint blueprint) {
+        if (blueprint == null) {
+            return TownDistrictType.MIXED.id();
+        }
+        if (blueprint.hasAnyTag("civic", "hall", "keep", "plaza")) {
+            return TownDistrictType.CIVIC.id();
+        }
+        if (blueprint.hasAnyTag("market", "stall", "shop")) {
+            return TownDistrictType.MARKET.id();
+        }
+        if (blueprint.hasAnyTag("smithy", "workshop", "utility", "storage")) {
+            return TownDistrictType.WORKSHOP.id();
+        }
+        if (blueprint.hasAnyTag("house", "residential")) {
+            return TownDistrictType.RESIDENTIAL.id();
+        }
+        return TownDistrictType.MIXED.id();
     }
 
     private static double roadSideScore(TownArea area, int originX, int originZ, TownBlueprint blueprint) {
@@ -723,11 +795,33 @@ public final class TownPlanner {
             String centerZone = zoneTypeAt(centerX, centerZ);
             String entranceZone = zoneTypeAt(entranceX, entranceZ);
             if (centerZone.isBlank() && entranceZone.isBlank()) {
+                if (!zones.isEmpty()) {
+                    // Hard bias: if districts exist, out-of-zone buildings are strongly discouraged.
+                    return -24.0;
+                }
                 return 0.0;
             }
             double centerScore = zonePreferenceScore(blueprint, centerZone);
             double entranceScore = zonePreferenceScore(blueprint, entranceZone) * 0.85;
             return Math.max(centerScore, entranceScore);
+        }
+
+        private boolean hasZones() {
+            return !zones.isEmpty();
+        }
+
+        private boolean hasZoneNearby(int x, int z, int radius) {
+            if (zones.isEmpty()) {
+                return true;
+            }
+            for (int dx = -radius; dx <= radius; dx++) {
+                for (int dz = -radius; dz <= radius; dz++) {
+                    if (!zoneTypeAt(x + dx, z + dz).isBlank()) {
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
 
         private String zoneTypeAt(int x, int z) {
@@ -817,6 +911,24 @@ public final class TownPlanner {
                     }
                     if (blueprint.hasAnyTag("smithy", "workshop", "utility")) {
                         yield -8.0;
+                    }
+                    yield 0.0;
+                }
+                case "mixed" -> {
+                    if (blueprint.hasAnyTag("house", "residential")) {
+                        yield 16.0;
+                    }
+                    if (blueprint.hasAnyTag("market", "stall", "shop")) {
+                        yield 16.0;
+                    }
+                    if (blueprint.hasAnyTag("smithy", "workshop", "utility")) {
+                        yield 16.0;
+                    }
+                    if (blueprint.hasAnyTag("civic", "hall", "keep", "plaza")) {
+                        yield 12.0;
+                    }
+                    if (blueprint.hasAnyTag("decor", "detail")) {
+                        yield 10.0;
                     }
                     yield 0.0;
                 }

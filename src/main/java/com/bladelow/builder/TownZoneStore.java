@@ -7,7 +7,6 @@ import net.minecraft.world.World;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -21,7 +20,7 @@ public final class TownZoneStore {
     public static synchronized ZoneResult setBox(UUID playerId, RegistryKey<World> worldKey, String type, BlockPos from, BlockPos to) {
         String normalized = normalizeType(type);
         if (normalized.isBlank()) {
-            return ZoneResult.error("zone type must be residential|market|workshop|civic");
+            return ZoneResult.error("district type must be " + TownDistrictType.idsCsv());
         }
         if (from == null || to == null) {
             return ZoneResult.error("zone box is invalid");
@@ -91,23 +90,21 @@ public final class TownZoneStore {
 
     public static Map<String, Integer> summarizeByType(List<Zone> zones) {
         LinkedHashMap<String, Integer> counts = new LinkedHashMap<>();
+        for (TownDistrictType type : TownDistrictType.values()) {
+            counts.put(type.id(), 0);
+        }
         if (zones == null) {
             return counts;
         }
         for (Zone zone : zones) {
             counts.merge(zone.type(), 1, Integer::sum);
         }
+        counts.entrySet().removeIf(entry -> entry.getValue() == 0);
         return counts;
     }
 
     public static String normalizeType(String type) {
-        if (type == null) {
-            return "";
-        }
-        return switch (type.trim().toLowerCase(Locale.ROOT)) {
-            case "residential", "market", "workshop", "civic" -> type.trim().toLowerCase(Locale.ROOT);
-            default -> "";
-        };
+        return TownDistrictType.normalize(type);
     }
 
     private static ZoneKey zoneKey(UUID playerId, RegistryKey<World> worldKey) {

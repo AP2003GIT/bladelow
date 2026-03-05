@@ -9,6 +9,7 @@ import com.bladelow.builder.PlacementAxis;
 import com.bladelow.builder.PlacementJob;
 import com.bladelow.builder.PlacementJobRunner;
 import com.bladelow.builder.SelectionState;
+import com.bladelow.builder.TownDistrictType;
 import com.bladelow.builder.TownZoneStore;
 import com.bladelow.ml.BladelowLearning;
 import com.mojang.brigadier.CommandDispatcher;
@@ -80,9 +81,9 @@ public final class BladePlaceCommand {
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeplace <x> <y> <z> <count> [axis] <blocks_csv>"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeselect markerbox <from> <to> <height> | addhere | add <x> <y> <z> | buildh <height> <blocks_csv>"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeselect export <name> <block_id> | exportscan <name> | copybox <name> <from> <to>"), false);
-                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladezone set residential|market|workshop|civic | box <type> <from> <to> | list | clear [type]"), false);
+                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladezone set " + TownDistrictType.idsCsv() + " | box <type> <from> <to> | list | clear [type]"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #blademove mode walk|auto|teleport ; reach <2.0..8.0> ; scheduler on|off ; lookahead <1..96> ; defer on|off ; maxdefer <0..8> ; autoresume on|off ; trace on|off ; traceparticles on|off"), false);
-                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeblueprint list|townlist|load|build|townfill|townfillsel ; #bladeweb importload <index> [name] ; #bladestatus [detail] ; #bladepause ; #bladecontinue ; #bladecancel"), false);
+                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeblueprint list|townlist|load|build|townfill|townfillsel|townpreview|townpreviewsel ; #bladeweb importload <index> [name] ; #bladestatus [detail] ; #bladepause ; #bladecontinue ; #bladecancel"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladediag show | #bladediag export [name]"), false);
                 return 1;
             })
@@ -773,6 +774,17 @@ public final class BladePlaceCommand {
     }
 
     private static int queueStatePlacement(ServerCommandSource source, ServerPlayerEntity player, List<BlockState> requestedStates, List<BlockPos> targets, String tag) {
+        return queueStatePlacement(source, player, requestedStates, targets, tag, false);
+    }
+
+    private static int queueStatePlacement(
+        ServerCommandSource source,
+        ServerPlayerEntity player,
+        List<BlockState> requestedStates,
+        List<BlockPos> targets,
+        String tag,
+        boolean forcePreviewMode
+    ) {
         MaterialStateResolution materialResolution = autoResolveMaterialStates(player, requestedStates);
         List<BlockState> resolvedStates = materialResolution.blockStates();
         if (!materialResolution.summary().isBlank()) {
@@ -781,6 +793,9 @@ public final class BladePlaceCommand {
 
         ExecutionStatePlan executionPlan = dependencyAwarePlan(player, resolvedStates, targets, tag);
         BuildRuntimeSettings.Snapshot snapshot = BuildRuntimeSettings.snapshot();
+        if (forcePreviewMode && !snapshot.previewBeforeBuild()) {
+            snapshot = withPreview(snapshot, true);
+        }
         PlacementJob job = new PlacementJob(
             player.getUuid(),
             source.getWorld().getRegistryKey(),
@@ -805,6 +820,23 @@ public final class BladePlaceCommand {
             + (replaced ? " (replaced previous pending job)" : "");
         source.sendFeedback(() -> blueText(queuedMessage), false);
         return 1;
+    }
+
+    private static BuildRuntimeSettings.Snapshot withPreview(BuildRuntimeSettings.Snapshot snapshot, boolean preview) {
+        return new BuildRuntimeSettings.Snapshot(
+            snapshot.smartMoveEnabled(),
+            snapshot.reachDistance(),
+            snapshot.moveMode(),
+            snapshot.strictAirOnly(),
+            preview,
+            snapshot.targetSchedulerEnabled(),
+            snapshot.schedulerLookahead(),
+            snapshot.deferUnreachableTargets(),
+            snapshot.maxTargetDeferrals(),
+            snapshot.autoResumeEnabled(),
+            snapshot.pathTraceEnabled(),
+            snapshot.pathTraceParticles()
+        );
     }
 
     private static List<BlockState> defaultStates(List<Block> blocks) {
@@ -1793,7 +1825,7 @@ public final class BladePlaceCommand {
         }
         String normalizedType = type == null ? null : TownZoneStore.normalizeType(type);
         if (type != null && normalizedType.isBlank()) {
-            source.sendError(blueText("[Bladelow] zone type must be residential|market|workshop|civic"));
+            source.sendError(blueText("[Bladelow] district type must be " + TownDistrictType.idsCsv()));
             return 0;
         }
         int removed = type == null
@@ -1898,6 +1930,16 @@ public final class BladePlaceCommand {
             .then(literal("townfillsel")
                 .executes(ctx -> runTownFillSelection(ctx.getSource()))
             )
+            .then(literal("townpreview")
+                .then(argument("from", BlockPosArgumentType.blockPos())
+                    .then(argument("to", BlockPosArgumentType.blockPos())
+                        .executes(ctx -> runTownPreview(ctx.getSource(), BlockPosArgumentType.getLoadedBlockPos(ctx, "from"), BlockPosArgumentType.getLoadedBlockPos(ctx, "to")))
+                    )
+                )
+            )
+            .then(literal("townpreviewsel")
+                .executes(ctx -> runTownPreviewSelection(ctx.getSource()))
+            )
             .then(literal("build")
                 .then(argument("start", BlockPosArgumentType.blockPos())
                     .executes(ctx -> {
@@ -1995,11 +2037,32 @@ public final class BladePlaceCommand {
             source.sendError(blueText("Player context required."));
             return 0;
         }
+        BlockPos[] bounds = selectionBoundsFromMarkers(source, player);
+        if (bounds == null) {
+            return 0;
+        }
+        return runTownFill(source, bounds[0], bounds[1]);
+    }
+
+    private static int runTownPreviewSelection(ServerCommandSource source) throws CommandSyntaxException {
+        ServerPlayerEntity player = source.getPlayer();
+        if (player == null) {
+            source.sendError(blueText("Player context required."));
+            return 0;
+        }
+        BlockPos[] bounds = selectionBoundsFromMarkers(source, player);
+        if (bounds == null) {
+            return 0;
+        }
+        return runTownPreview(source, bounds[0], bounds[1]);
+    }
+
+    private static BlockPos[] selectionBoundsFromMarkers(ServerCommandSource source, ServerPlayerEntity player) {
         var worldKey = source.getWorld().getRegistryKey();
         List<BlockPos> points = SelectionState.snapshot(player.getUuid(), worldKey);
         if (points.isEmpty()) {
             source.sendError(blueText("[Bladelow] selection is empty; use #bladeselect markerbox first"));
-            return 0;
+            return null;
         }
         int minX = Integer.MAX_VALUE;
         int minY = Integer.MAX_VALUE;
@@ -2015,7 +2078,7 @@ public final class BladePlaceCommand {
             maxY = Math.max(maxY, point.getY());
             maxZ = Math.max(maxZ, point.getZ());
         }
-        return runTownFill(source, new BlockPos(minX, minY, minZ), new BlockPos(maxX, maxY, maxZ));
+        return new BlockPos[]{new BlockPos(minX, minY, minZ), new BlockPos(maxX, maxY, maxZ)};
     }
 
     private static int runTownFill(ServerCommandSource source, BlockPos from, BlockPos to) throws CommandSyntaxException {
@@ -2031,6 +2094,21 @@ public final class BladePlaceCommand {
         }
         source.sendFeedback(() -> blueText("[Bladelow] townfill area from=" + from.toShortString() + " to=" + to.toShortString()), false);
         return queueStatePlacement(source, player, plan.blockStates(), plan.targets(), "blueprint:" + plan.message());
+    }
+
+    private static int runTownPreview(ServerCommandSource source, BlockPos from, BlockPos to) throws CommandSyntaxException {
+        ServerPlayerEntity player = source.getPlayer();
+        if (player == null) {
+            source.sendError(blueText("Player context required."));
+            return 0;
+        }
+        BlueprintLibrary.BuildPlan plan = BlueprintLibrary.resolveTownFill(source.getWorld(), player.getUuid(), from, to);
+        if (!plan.ok()) {
+            source.sendError(blueText("[Bladelow] " + plan.message()));
+            return 0;
+        }
+        source.sendFeedback(() -> blueText("[Bladelow] townpreview area from=" + from.toShortString() + " to=" + to.toShortString()), false);
+        return queueStatePlacement(source, player, plan.blockStates(), plan.targets(), "blueprint:" + plan.message(), true);
     }
 
     private static List<Block> applyPaletteOverride(List<Block> targets, List<BlockPos> positions, List<Block> palette) {
