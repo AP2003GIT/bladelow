@@ -101,12 +101,42 @@ public final class BlueprintLibrary {
     }
 
     public static synchronized BuildPlan resolveTownFill(ServerWorld world, UUID playerId, BlockPos from, BlockPos to) {
+        return resolveTownFill(world, playerId, from, to, "", true, true);
+    }
+
+    public static synchronized BuildPlan resolveTownFill(
+        ServerWorld world,
+        UUID playerId,
+        BlockPos from,
+        BlockPos to,
+        String requiredZoneType,
+        boolean lockLots
+    ) {
+        return resolveTownFill(world, playerId, from, to, requiredZoneType, lockLots, true);
+    }
+
+    public static synchronized BuildPlan resolveTownFill(
+        ServerWorld world,
+        UUID playerId,
+        BlockPos from,
+        BlockPos to,
+        String requiredZoneType,
+        boolean lockLots,
+        boolean includeRoads
+    ) {
         List<TownZoneStore.Zone> zones = playerId == null ? List.of() : TownZoneStore.snapshot(playerId, world.getRegistryKey());
-        TownPlan plan = TownPlanner.plan(world, from, to, townBlueprints(), zones);
+        TownPlan plan = TownPlanner.plan(world, playerId, from, to, townBlueprints(), zones, requiredZoneType, lockLots, includeRoads);
         if (!plan.ok()) {
             return BuildPlan.error(plan.message());
         }
         return BuildPlan.ok(plan.message(), plan.blockStates(), plan.targets());
+    }
+
+    public static synchronized int clearTownLotLocks(ServerWorld world, UUID playerId) {
+        if (world == null || playerId == null) {
+            return 0;
+        }
+        return TownPlanner.clearLockedLots(playerId, world.getRegistryKey().getValue().toString());
     }
 
     public static synchronized BlueprintInfo info(String name) {

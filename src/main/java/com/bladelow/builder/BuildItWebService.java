@@ -5,6 +5,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.registry.Registries;
 import net.minecraft.util.Identifier;
 import net.minecraft.server.MinecraftServer;
@@ -29,6 +30,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -66,6 +69,48 @@ public final class BuildItWebService {
     private static final int MAX_CACHED_CATALOG_ENTRIES = 100;
 
     private BuildItWebService() {
+    }
+
+    /**
+     * Async version of syncCatalog — runs HTTP on a background thread,
+     * then calls callback on the server thread via server.execute().
+     * Use this from command handlers to avoid blocking the tick thread.
+     */
+    public static void syncCatalogAsync(MinecraftServer server, UUID playerId, int limit,
+                                         Consumer<BuildItWebService.Result> callback) {
+        CompletableFuture.supplyAsync(() -> syncCatalog(playerId, limit))
+            .thenAccept(result -> server.execute(() -> callback.accept(result)))
+            .exceptionally(ex -> {
+                server.execute(() -> callback.accept(Result.error("catalog async failed: " + ex.getMessage())));
+                return null;
+            });
+    }
+
+    /**
+     * Async version of importFromUrl — runs HTTP + file I/O on a background thread,
+     * then calls callback on the server thread via server.execute().
+     */
+    public static void importFromUrlAsync(MinecraftServer server, String sourceUrl, String name,
+                                           Consumer<BuildItWebService.Result> callback) {
+        CompletableFuture.supplyAsync(() -> importFromUrl(server, sourceUrl, name))
+            .thenAccept(result -> server.execute(() -> callback.accept(result)))
+            .exceptionally(ex -> {
+                server.execute(() -> callback.accept(Result.error("import async failed: " + ex.getMessage())));
+                return null;
+            });
+    }
+
+    /**
+     * Async version of importPicked.
+     */
+    public static void importPickedAsync(MinecraftServer server, UUID playerId, int index, String name,
+                                          Consumer<BuildItWebService.Result> callback) {
+        CompletableFuture.supplyAsync(() -> importPicked(server, playerId, index, name))
+            .thenAccept(result -> server.execute(() -> callback.accept(result)))
+            .exceptionally(ex -> {
+                server.execute(() -> callback.accept(Result.error("import async failed: " + ex.getMessage())));
+                return null;
+            });
     }
 
     public static Result syncCatalog(UUID playerId, int limit) {
@@ -128,7 +173,8 @@ public final class BuildItWebService {
     }
 
     private static Path catalogCachePath(UUID playerId) {
-        return Path.of(System.getProperty("user.home"), ".bladelow", "catalog-cache", playerId + ".json");
+        return FabricLoader.getInstance().getGameDir()
+            .resolve("config/bladelow/cache/" + playerId + ".json");
     }
 
     private static void saveCatalogCache(UUID playerId, List<CatalogItem> items) {

@@ -54,24 +54,23 @@ public final class BladePlaceCommand {
     private BladePlaceCommand() {
     }
 
+    /**
+     * Main entry point — registers all Bladelow commands by delegating to
+     * focused command modules. Only #bladeplace, #bladeselect, and
+     * #bladeblueprint remain here pending their own extraction.
+     */
     public static void register(CommandDispatcher<ServerCommandSource> dispatcher) {
+        // ---- Extracted modules ----
+        RuntimeCommands.register(dispatcher);   // cancel, pause, continue, confirm, preview,
+                                                // status, diag, move, safety, profile, model
+        ZoneCommands.register(dispatcher);      // bladezone
+        WebCommands.register(dispatcher);       // bladeweb
+
+        // ---- Still inline (next split candidates) ----
         registerBladeHelp(dispatcher);
         registerBladePlace(dispatcher);
-        registerBladeCancel(dispatcher);
-        registerBladePause(dispatcher);
-        registerBladeContinue(dispatcher);
-        registerBladeConfirm(dispatcher);
-        registerBladePreview(dispatcher);
-        registerBladeStatus(dispatcher);
-        registerBladeDiag(dispatcher);
-        registerBladeModel(dispatcher);
-        registerBladeMove(dispatcher);
-        registerBladeSafety(dispatcher);
-        registerBladeProfile(dispatcher);
-        registerBladeWeb(dispatcher);
-        registerBladeZone(dispatcher);
-        registerBladeBlueprint(dispatcher);
         registerBladeSelect(dispatcher);
+        registerBladeBlueprint(dispatcher);
     }
 
     private static void registerBladeHelp(CommandDispatcher<ServerCommandSource> dispatcher) {
@@ -83,7 +82,7 @@ public final class BladePlaceCommand {
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeselect export <name> <block_id> | exportscan <name> | copybox <name> <from> <to>"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladezone set " + TownDistrictType.idsCsv() + " | box <type> <from> <to> | list | clear [type]"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #blademove mode walk|auto|teleport ; reach <2.0..8.0> ; scheduler on|off ; lookahead <1..96> ; defer on|off ; maxdefer <0..8> ; autoresume on|off ; trace on|off ; traceparticles on|off"), false);
-                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeblueprint list|townlist|load|build|townfill|townfillsel|townpreview|townpreviewsel ; #bladeweb importload <index> [name] ; #bladestatus [detail] ; #bladepause ; #bladecontinue ; #bladecancel"), false);
+                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeblueprint list|townlist|load|build|townfill|townfillsel|townpreview|townpreviewsel|townfillzone|townpreviewzone|townruncity|townclearlocks ; #bladeweb importload <index> [name] ; #bladestatus [detail] ; #bladepause ; #bladecontinue ; #bladecancel"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladediag show | #bladediag export [name]"), false);
                 return 1;
             })
@@ -130,7 +129,7 @@ public final class BladePlaceCommand {
             return 0;
         }
 
-        List<Block> blocks = parseBlockSpec(blockSpec, ctx.getSource());
+        List<Block> blocks = MaterialResolver.parseBlockSpec(blockSpec, ctx.getSource());
         if (blocks.isEmpty()) {
             return 0;
         }
@@ -342,7 +341,7 @@ public final class BladePlaceCommand {
                                 return 0;
                             }
 
-                            List<Block> blocks = parseBlockSpec(StringArgumentType.getString(ctx, "block"), ctx.getSource());
+                            List<Block> blocks = MaterialResolver.parseBlockSpec(StringArgumentType.getString(ctx, "block"), ctx.getSource());
                             if (blocks.isEmpty()) {
                                 return 0;
                             }
@@ -382,7 +381,7 @@ public final class BladePlaceCommand {
                                 return 0;
                             }
 
-                            List<Block> blocks = parseBlockSpec(StringArgumentType.getString(ctx, "block"), ctx.getSource());
+                            List<Block> blocks = MaterialResolver.parseBlockSpec(StringArgumentType.getString(ctx, "block"), ctx.getSource());
                             if (blocks.isEmpty()) {
                                 return 0;
                             }
@@ -769,12 +768,11 @@ public final class BladePlaceCommand {
     }
 
     private static int runPlacement(ServerCommandSource source, ServerPlayerEntity player, List<Block> blocks, List<BlockPos> targets, String tag) {
-        List<Block> perTargetBlocks = assignPaletteForTargets(blocks, targets, tag);
-        return queueStatePlacement(source, player, defaultStates(perTargetBlocks), targets, tag);
+        return PlacementPipeline.run(source, player, blocks, targets, tag);
     }
 
     private static int queueStatePlacement(ServerCommandSource source, ServerPlayerEntity player, List<BlockState> requestedStates, List<BlockPos> targets, String tag) {
-        return queueStatePlacement(source, player, requestedStates, targets, tag, false);
+        return PlacementPipeline.queue(source, player, requestedStates, targets, tag, false);
     }
 
     private static int queueStatePlacement(
@@ -785,1058 +783,7 @@ public final class BladePlaceCommand {
         String tag,
         boolean forcePreviewMode
     ) {
-        MaterialStateResolution materialResolution = autoResolveMaterialStates(player, requestedStates);
-        List<BlockState> resolvedStates = materialResolution.blockStates();
-        if (!materialResolution.summary().isBlank()) {
-            source.sendFeedback(() -> blueText("[Bladelow] " + materialResolution.summary()), false);
-        }
-
-        ExecutionStatePlan executionPlan = dependencyAwarePlan(player, resolvedStates, targets, tag);
-        BuildRuntimeSettings.Snapshot snapshot = BuildRuntimeSettings.snapshot();
-        if (forcePreviewMode && !snapshot.previewBeforeBuild()) {
-            snapshot = withPreview(snapshot, true);
-        }
-        PlacementJob job = new PlacementJob(
-            player.getUuid(),
-            source.getWorld().getRegistryKey(),
-            executionPlan.blockStates(),
-            executionPlan.targets(),
-            tag,
-            snapshot
-        );
-        var server = source.getServer();
-        boolean previewMode = snapshot.previewBeforeBuild();
-        boolean replaced = previewMode
-            ? PlacementJobRunner.hasPending(player.getUuid())
-            : PlacementJobRunner.hasActive(player.getUuid());
-        PlacementJobRunner.queueOrPreview(server, job);
-        String queuedMessage = "[Bladelow] queued " + tag + " targets=" + executionPlan.targets().size()
-            + " blocks=" + executionPlan.blockStates().size()
-            + " feasible=" + String.format(Locale.ROOT, "%.1f", materialResolution.feasibilityPercent()) + "%"
-            + " deps=" + executionPlan.dependencyEdges()
-            + " order=" + (executionPlan.dependencyOrdered() ? "support-first" : "path-first")
-            + " " + snapshot.summary()
-            + (previewMode ? " [pending]" : " [active]")
-            + (replaced ? " (replaced previous pending job)" : "");
-        source.sendFeedback(() -> blueText(queuedMessage), false);
-        return 1;
-    }
-
-    private static BuildRuntimeSettings.Snapshot withPreview(BuildRuntimeSettings.Snapshot snapshot, boolean preview) {
-        return new BuildRuntimeSettings.Snapshot(
-            snapshot.smartMoveEnabled(),
-            snapshot.reachDistance(),
-            snapshot.moveMode(),
-            snapshot.strictAirOnly(),
-            preview,
-            snapshot.targetSchedulerEnabled(),
-            snapshot.schedulerLookahead(),
-            snapshot.deferUnreachableTargets(),
-            snapshot.maxTargetDeferrals(),
-            snapshot.autoResumeEnabled(),
-            snapshot.pathTraceEnabled(),
-            snapshot.pathTraceParticles()
-        );
-    }
-
-    private static List<BlockState> defaultStates(List<Block> blocks) {
-        List<BlockState> out = new ArrayList<>(blocks.size());
-        for (Block block : blocks) {
-            out.add(block.getDefaultState());
-        }
-        return out;
-    }
-
-    private static MaterialStateResolution autoResolveMaterialStates(ServerPlayerEntity player, List<BlockState> requested) {
-        if (requested == null || requested.isEmpty()) {
-            return new MaterialStateResolution(List.of(), 0, 0, 0, 0, 100.0, "");
-        }
-        if (player.getAbilities().creativeMode) {
-            int required = 0;
-            for (BlockState state : requested) {
-                Block block = state == null ? Blocks.AIR : state.getBlock();
-                if (block != null && block.asItem() != Items.AIR) {
-                    required++;
-                }
-            }
-            return new MaterialStateResolution(requested, 0, 0, required, required, 100.0, "");
-        }
-
-        Map<Block, Integer> stock = inventoryBlockStock(player);
-        if (stock.isEmpty()) {
-            int missing = 0;
-            for (BlockState state : requested) {
-                Block block = state == null ? Blocks.AIR : state.getBlock();
-                if (block != null && block.asItem() != Items.AIR) {
-                    missing++;
-                }
-            }
-            String summary = missing > 0
-                ? "material auto-map missing=" + missing + " (no placeable block items found in inventory)"
-                : "";
-            double feasibility = missing <= 0 ? 100.0 : 0.0;
-            return new MaterialStateResolution(requested, 0, missing, missing, 0, feasibility, summary);
-        }
-
-        Set<Block> preferredPalette = new LinkedHashSet<>();
-        for (BlockState state : requested) {
-            if (state != null) {
-                preferredPalette.add(state.getBlock());
-            }
-        }
-        List<BlockState> resolved = new ArrayList<>(requested.size());
-        Map<String, Integer> substitutions = new LinkedHashMap<>();
-        int substituted = 0;
-        int unresolved = 0;
-        int required = 0;
-
-        for (BlockState desiredState : requested) {
-            Block desired = desiredState == null ? Blocks.AIR : desiredState.getBlock();
-            if (desired != null && desired.asItem() != Items.AIR) {
-                required++;
-            }
-            if (hasStock(stock, desired)) {
-                consumeStock(stock, desired);
-                resolved.add(desiredState);
-                continue;
-            }
-
-            Block fallback = chooseFallbackBlock(desired, stock, preferredPalette);
-            if (fallback != null) {
-                consumeStock(stock, fallback);
-                resolved.add(fallback == desired ? desiredState : fallback.getDefaultState());
-                substituted++;
-                String key = shortBlockId(desired) + "->" + shortBlockId(fallback);
-                substitutions.merge(key, 1, Integer::sum);
-                continue;
-            }
-
-            resolved.add(desiredState);
-            if (desired != null && desired.asItem() != Items.AIR) {
-                unresolved++;
-            }
-        }
-
-        if (substituted == 0 && unresolved == 0) {
-            return new MaterialStateResolution(resolved, 0, 0, required, required, 100.0, "");
-        }
-
-        StringBuilder summary = new StringBuilder("material auto-map");
-        if (substituted > 0) {
-            summary.append(" substitutions=").append(substituted);
-        }
-        if (unresolved > 0) {
-            summary.append(" missing=").append(unresolved);
-        }
-        if (!substitutions.isEmpty()) {
-            summary.append(" map=");
-            int shown = 0;
-            for (Map.Entry<String, Integer> entry : substitutions.entrySet()) {
-                if (shown > 0) {
-                    summary.append(", ");
-                }
-                summary.append(entry.getKey()).append("(").append(entry.getValue()).append(")");
-                shown++;
-                if (shown >= 4) {
-                    break;
-                }
-            }
-            if (substitutions.size() > 4) {
-                summary.append(", +").append(substitutions.size() - 4).append(" more");
-            }
-        }
-        int covered = Math.max(0, required - unresolved);
-        double feasibility = required <= 0 ? 100.0 : (covered * 100.0) / required;
-        summary.append(" feasible=").append(String.format(Locale.ROOT, "%.1f%%", feasibility));
-        return new MaterialStateResolution(resolved, substituted, unresolved, required, covered, feasibility, summary.toString());
-    }
-
-    private static ExecutionStatePlan dependencyAwarePlan(
-        ServerPlayerEntity player,
-        List<BlockState> blockStates,
-        List<BlockPos> targets,
-        String tag
-    ) {
-        if (blockStates == null || targets == null || blockStates.size() != targets.size() || targets.isEmpty()) {
-            return new ExecutionStatePlan(blockStates == null ? List.of() : blockStates, targets == null ? List.of() : targets, 0, false);
-        }
-        if (targets.size() == 1 || "bladeplace".equals(tag)) {
-            return new ExecutionStatePlan(blockStates, targets, 0, false);
-        }
-
-        Map<BlockPos, Integer> indexByPos = new HashMap<>(targets.size() * 2);
-        for (int i = 0; i < targets.size(); i++) {
-            indexByPos.putIfAbsent(targets.get(i), i);
-        }
-
-        int dependencyEdges = 0;
-        for (BlockPos pos : targets) {
-            if (indexByPos.containsKey(pos.down())) {
-                dependencyEdges++;
-            }
-        }
-        if (dependencyEdges <= 0) {
-            return new ExecutionStatePlan(blockStates, targets, 0, false);
-        }
-
-        List<Integer> order = new ArrayList<>(targets.size());
-        for (int i = 0; i < targets.size(); i++) {
-            order.add(i);
-        }
-        double px = player.getX();
-        double py = player.getY();
-        double pz = player.getZ();
-        Collections.sort(order, Comparator
-            .comparingInt((Integer i) -> targets.get(i).getY())
-            .thenComparingDouble(i -> targets.get(i).getSquaredDistance(px, py, pz))
-            .thenComparingInt(i -> targets.get(i).getX())
-            .thenComparingInt(i -> targets.get(i).getZ()));
-
-        List<BlockState> orderedStates = new ArrayList<>(blockStates.size());
-        List<BlockPos> orderedTargets = new ArrayList<>(targets.size());
-        for (Integer idx : order) {
-            orderedStates.add(blockStates.get(idx));
-            orderedTargets.add(targets.get(idx));
-        }
-        return new ExecutionStatePlan(orderedStates, orderedTargets, dependencyEdges, true);
-    }
-
-    private static Map<Block, Integer> inventoryBlockStock(ServerPlayerEntity player) {
-        Map<Block, Integer> stock = new HashMap<>();
-        var inventory = player.getInventory();
-        for (int i = 0; i < inventory.size(); i++) {
-            ItemStack stack = inventory.getStack(i);
-            if (stack == null || stack.isEmpty()) {
-                continue;
-            }
-            Item item = stack.getItem();
-            if (!(item instanceof BlockItem blockItem)) {
-                continue;
-            }
-            Block block = blockItem.getBlock();
-            if (block == null || block.asItem() == Items.AIR) {
-                continue;
-            }
-            stock.merge(block, stack.getCount(), Integer::sum);
-        }
-        return stock;
-    }
-
-    private static Block chooseFallbackBlock(Block desired, Map<Block, Integer> stock, Set<Block> preferredPalette) {
-        if (stock == null || stock.isEmpty()) {
-            return null;
-        }
-
-        String desiredGroup = materialGroup(desired);
-        Block bestSameGroup = bestStockedBlock(stock, candidate -> candidate != desired && materialGroup(candidate).equals(desiredGroup));
-        if (bestSameGroup != null) {
-            return bestSameGroup;
-        }
-
-        Block bestPreferred = bestStockedBlock(stock, candidate -> candidate != desired && preferredPalette.contains(candidate));
-        if (bestPreferred != null) {
-            return bestPreferred;
-        }
-
-        return bestStockedBlock(stock, candidate -> candidate != desired);
-    }
-
-    private static Block bestStockedBlock(Map<Block, Integer> stock, java.util.function.Predicate<Block> predicate) {
-        Block best = null;
-        int bestCount = 0;
-        String bestId = "";
-        for (Map.Entry<Block, Integer> entry : stock.entrySet()) {
-            Block candidate = entry.getKey();
-            int count = entry.getValue() == null ? 0 : entry.getValue();
-            if (candidate == null || count <= 0 || !predicate.test(candidate)) {
-                continue;
-            }
-            String id = blockId(candidate);
-            if (best == null || count > bestCount || (count == bestCount && id.compareTo(bestId) < 0)) {
-                best = candidate;
-                bestCount = count;
-                bestId = id;
-            }
-        }
-        return best;
-    }
-
-    private static boolean hasStock(Map<Block, Integer> stock, Block block) {
-        if (block == null || block.asItem() == Items.AIR) {
-            return false;
-        }
-        return stock.getOrDefault(block, 0) > 0;
-    }
-
-    private static void consumeStock(Map<Block, Integer> stock, Block block) {
-        if (stock == null || block == null) {
-            return;
-        }
-        Integer count = stock.get(block);
-        if (count == null || count <= 1) {
-            stock.remove(block);
-            return;
-        }
-        stock.put(block, count - 1);
-    }
-
-    private static String materialGroup(Block block) {
-        if (block == null) {
-            return "unknown";
-        }
-        String path = Registries.BLOCK.getId(block).getPath().toLowerCase();
-        if (path.contains("planks")) return "planks";
-        if (path.contains("log") || path.contains("wood")) return "wood";
-        if (path.contains("stone") || path.contains("cobble") || path.contains("deepslate")) return "stone";
-        if (path.contains("brick")) return "brick";
-        if (path.contains("glass")) return "glass";
-        if (path.contains("concrete")) return "concrete";
-        if (path.contains("terracotta")) return "terracotta";
-        if (path.contains("slab")) return "slab";
-        if (path.contains("stairs")) return "stairs";
-        int split = path.indexOf('_');
-        return split > 0 ? path.substring(0, split) : path;
-    }
-
-    private static String shortBlockId(Block block) {
-        String id = blockId(block);
-        if (id.startsWith("minecraft:")) {
-            return id.substring("minecraft:".length());
-        }
-        return id;
-    }
-
-    private static String blockId(Block block) {
-        if (block == null) {
-            return "minecraft:air";
-        }
-        Identifier id = Registries.BLOCK.getId(block);
-        return id == null ? "minecraft:air" : id.toString();
-    }
-
-    private static List<Block> parseBlockSpec(String blockSpec, ServerCommandSource source) {
-        String[] tokens = blockSpec.split(",");
-        if (tokens.length < 1 || tokens.length > 3) {
-            source.sendError(blueText("Block list must have 1 to 3 ids (comma-separated)."));
-            return List.of();
-        }
-
-        List<Block> blocks = new ArrayList<>();
-        for (String token : tokens) {
-            String blockIdText = token.trim();
-            Identifier id = Identifier.tryParse(blockIdText);
-            if (id == null || !Registries.BLOCK.containsId(id)) {
-                source.sendError(blueText("Invalid block id: " + blockIdText));
-                return List.of();
-            }
-            blocks.add(Registries.BLOCK.get(id));
-        }
-        return blocks;
-    }
-
-    private static void registerBladeCancel(CommandDispatcher<ServerCommandSource> dispatcher) {
-        dispatcher.register(literal("bladecancel")
-            .executes(ctx -> {
-                ServerPlayerEntity player = ctx.getSource().getPlayer();
-                if (player == null) {
-                    ctx.getSource().sendError(blueText("Player context required."));
-                    return 0;
-                }
-                boolean canceled = PlacementJobRunner.cancel(ctx.getSource().getServer(), player.getUuid());
-                if (canceled) {
-                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] active build canceled."), false);
-                } else {
-                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] no active build to cancel."), false);
-                }
-                return 1;
-            })
-        );
-    }
-
-    private static void registerBladePause(CommandDispatcher<ServerCommandSource> dispatcher) {
-        dispatcher.register(literal("bladepause")
-            .executes(ctx -> {
-                ServerPlayerEntity player = ctx.getSource().getPlayer();
-                if (player == null) {
-                    ctx.getSource().sendError(blueText("Player context required."));
-                    return 0;
-                }
-                boolean paused = PlacementJobRunner.pause(ctx.getSource().getServer(), player.getUuid());
-                if (paused) {
-                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] build paused. Use #bladecontinue to resume."), false);
-                    return 1;
-                }
-                if (PlacementJobRunner.hasPending(player.getUuid())) {
-                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] build is already paused/pending."), false);
-                    return 1;
-                }
-                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] no active build to pause."), false);
-                return 0;
-            })
-        );
-    }
-
-    private static void registerBladeContinue(CommandDispatcher<ServerCommandSource> dispatcher) {
-        dispatcher.register(literal("bladecontinue")
-            .executes(ctx -> {
-                ServerPlayerEntity player = ctx.getSource().getPlayer();
-                if (player == null) {
-                    ctx.getSource().sendError(blueText("Player context required."));
-                    return 0;
-                }
-                if (PlacementJobRunner.hasActive(player.getUuid())) {
-                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] build is already running."), false);
-                    return 1;
-                }
-                boolean resumed = PlacementJobRunner.resume(ctx.getSource().getServer(), player.getUuid());
-                if (!resumed) {
-                    ctx.getSource().sendError(blueText("[Bladelow] no paused/pending build to continue."));
-                    return 0;
-                }
-                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] build continued."), false);
-                return 1;
-            })
-        );
-    }
-
-    private static void registerBladeConfirm(CommandDispatcher<ServerCommandSource> dispatcher) {
-        dispatcher.register(literal("bladeconfirm")
-            .executes(ctx -> {
-                ServerPlayerEntity player = ctx.getSource().getPlayer();
-                if (player == null) {
-                    ctx.getSource().sendError(blueText("Player context required."));
-                    return 0;
-                }
-                if (PlacementJobRunner.hasActive(player.getUuid())) {
-                    ctx.getSource().sendError(blueText("[Bladelow] active build is running; cancel it before confirm"));
-                    return 0;
-                }
-                boolean ok = PlacementJobRunner.confirm(ctx.getSource().getServer(), player.getUuid());
-                if (!ok) {
-                    ctx.getSource().sendError(blueText("[Bladelow] no pending preview to confirm"));
-                    return 0;
-                }
-                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] preview confirmed; build started"), false);
-                return 1;
-            })
-        );
-    }
-
-    private static void registerBladePreview(CommandDispatcher<ServerCommandSource> dispatcher) {
-        dispatcher.register(literal("bladepreview")
-            .then(literal("show")
-                .executes(ctx -> {
-                    ServerPlayerEntity player = ctx.getSource().getPlayer();
-                    if (player == null) {
-                        ctx.getSource().sendError(blueText("Player context required."));
-                        return 0;
-                    }
-                    boolean shown = PlacementJobRunner.previewPending(player.getUuid(), ctx.getSource().getServer());
-                    if (!shown) {
-                        ctx.getSource().sendError(blueText("[Bladelow] no pending preview"));
-                        return 0;
-                    }
-                    return 1;
-                })
-            )
-        );
-    }
-
-    private static void registerBladeStatus(CommandDispatcher<ServerCommandSource> dispatcher) {
-        dispatcher.register(literal("bladestatus")
-            .executes(ctx -> {
-                ServerPlayerEntity player = ctx.getSource().getPlayer();
-                if (player == null) {
-                    ctx.getSource().sendError(blueText("Player context required."));
-                    return 0;
-                }
-                String message = PlacementJobRunner.status(player.getUuid());
-                ctx.getSource().sendFeedback(() -> blueText(message), false);
-                return 1;
-            })
-            .then(literal("detail")
-                .executes(ctx -> {
-                    ServerPlayerEntity player = ctx.getSource().getPlayer();
-                    if (player == null) {
-                        ctx.getSource().sendError(blueText("Player context required."));
-                        return 0;
-                    }
-                    String message = PlacementJobRunner.statusDetail(player.getUuid());
-                    ctx.getSource().sendFeedback(() -> blueText(message), false);
-                    return 1;
-                })
-            )
-        );
-    }
-
-    private static void registerBladeDiag(CommandDispatcher<ServerCommandSource> dispatcher) {
-        dispatcher.register(literal("bladediag")
-            .executes(ctx -> {
-                ServerPlayerEntity player = ctx.getSource().getPlayer();
-                if (player == null) {
-                    ctx.getSource().sendError(blueText("Player context required."));
-                    return 0;
-                }
-                String message = PlacementJobRunner.diagnostic(player.getUuid());
-                ctx.getSource().sendFeedback(() -> blueText(message), false);
-                return 1;
-            })
-            .then(literal("show")
-                .executes(ctx -> {
-                    ServerPlayerEntity player = ctx.getSource().getPlayer();
-                    if (player == null) {
-                        ctx.getSource().sendError(blueText("Player context required."));
-                        return 0;
-                    }
-                    String message = PlacementJobRunner.diagnostic(player.getUuid());
-                    ctx.getSource().sendFeedback(() -> blueText(message), false);
-                    return 1;
-                })
-            )
-            .then(literal("export")
-                .executes(ctx -> runBladeDiagExport(ctx, ""))
-                .then(argument("name", StringArgumentType.word())
-                    .executes(ctx -> runBladeDiagExport(ctx, StringArgumentType.getString(ctx, "name")))
-                )
-            )
-        );
-    }
-
-    private static int runBladeDiagExport(com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx, String name) {
-        ServerPlayerEntity player = ctx.getSource().getPlayer();
-        if (player == null) {
-            ctx.getSource().sendError(blueText("Player context required."));
-            return 0;
-        }
-        PlacementJobRunner.DiagExportResult result = PlacementJobRunner.exportDiagnostic(
-            ctx.getSource().getServer(),
-            player.getUuid(),
-            name
-        );
-        if (!result.ok()) {
-            ctx.getSource().sendError(blueText("[Bladelow] " + result.message()));
-            return 0;
-        }
-        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] diag " + result.message()), false);
-        return 1;
-    }
-
-    private static void registerBladeMove(CommandDispatcher<ServerCommandSource> dispatcher) {
-        dispatcher.register(literal("blademove")
-            .then(literal("show")
-                .executes(ctx -> {
-                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] " + BuildRuntimeSettings.summary()), false);
-                    return 1;
-                })
-            )
-            .then(literal("on")
-                .executes(ctx -> {
-                    BuildRuntimeSettings.setSmartMoveEnabled(true);
-                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] smart move enabled"), false);
-                    return 1;
-                })
-            )
-            .then(literal("off")
-                .executes(ctx -> {
-                    BuildRuntimeSettings.setSmartMoveEnabled(false);
-                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] smart move disabled"), false);
-                    return 1;
-                })
-            )
-            .then(literal("mode")
-                .then(argument("type", StringArgumentType.word())
-                    .executes(ctx -> {
-                        String mode = StringArgumentType.getString(ctx, "type");
-                        if (!BuildRuntimeSettings.setMoveMode(mode)) {
-                            ctx.getSource().sendError(blueText("[Bladelow] mode must be walk, auto, or teleport"));
-                            return 0;
-                        }
-                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] mode set to " + mode), false);
-                        return 1;
-                    })
-                )
-            )
-            .then(literal("reach")
-                .then(argument("distance", DoubleArgumentType.doubleArg(2.0, 8.0))
-                    .executes(ctx -> {
-                        BuildRuntimeSettings.setReachDistance(DoubleArgumentType.getDouble(ctx, "distance"));
-                        ctx.getSource().sendFeedback(() -> blueText(
-                            "[Bladelow] reach distance set to " + String.format("%.2f", BuildRuntimeSettings.reachDistance())
-                        ), false);
-                        return 1;
-                    })
-                )
-            )
-            .then(literal("scheduler")
-                .then(argument("enabled", StringArgumentType.word())
-                    .executes(ctx -> {
-                        String enabled = StringArgumentType.getString(ctx, "enabled");
-                        if (!enabled.equalsIgnoreCase("on") && !enabled.equalsIgnoreCase("off")) {
-                            ctx.getSource().sendError(blueText("[Bladelow] use on|off"));
-                            return 0;
-                        }
-                        BuildRuntimeSettings.setTargetSchedulerEnabled(enabled.equalsIgnoreCase("on"));
-                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] scheduler set to " + enabled), false);
-                        return 1;
-                    })
-                )
-            )
-            .then(literal("lookahead")
-                .then(argument("size", IntegerArgumentType.integer(1, 96))
-                    .executes(ctx -> {
-                        int size = IntegerArgumentType.getInteger(ctx, "size");
-                        BuildRuntimeSettings.setSchedulerLookahead(size);
-                        ctx.getSource().sendFeedback(() -> blueText(
-                            "[Bladelow] scheduler lookahead set to " + BuildRuntimeSettings.schedulerLookahead()
-                        ), false);
-                        return 1;
-                    })
-                )
-            )
-            .then(literal("defer")
-                .then(argument("enabled", StringArgumentType.word())
-                    .executes(ctx -> {
-                        String enabled = StringArgumentType.getString(ctx, "enabled");
-                        if (!enabled.equalsIgnoreCase("on") && !enabled.equalsIgnoreCase("off")) {
-                            ctx.getSource().sendError(blueText("[Bladelow] use on|off"));
-                            return 0;
-                        }
-                        BuildRuntimeSettings.setDeferUnreachableTargets(enabled.equalsIgnoreCase("on"));
-                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] defer-unreachable set to " + enabled), false);
-                        return 1;
-                    })
-                )
-            )
-            .then(literal("maxdefer")
-                .then(argument("count", IntegerArgumentType.integer(0, 8))
-                    .executes(ctx -> {
-                        int count = IntegerArgumentType.getInteger(ctx, "count");
-                        BuildRuntimeSettings.setMaxTargetDeferrals(count);
-                        ctx.getSource().sendFeedback(() -> blueText(
-                            "[Bladelow] max deferrals per target set to " + BuildRuntimeSettings.maxTargetDeferrals()
-                        ), false);
-                        return 1;
-                    })
-                )
-            )
-            .then(literal("autoresume")
-                .then(argument("enabled", StringArgumentType.word())
-                    .executes(ctx -> {
-                        String enabled = StringArgumentType.getString(ctx, "enabled");
-                        if (!enabled.equalsIgnoreCase("on") && !enabled.equalsIgnoreCase("off")) {
-                            ctx.getSource().sendError(blueText("[Bladelow] use on|off"));
-                            return 0;
-                        }
-                        BuildRuntimeSettings.setAutoResumeEnabled(enabled.equalsIgnoreCase("on"));
-                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] auto-resume set to " + enabled), false);
-                        return 1;
-                    })
-                )
-            )
-            .then(literal("trace")
-                .then(argument("enabled", StringArgumentType.word())
-                    .executes(ctx -> {
-                        String enabled = StringArgumentType.getString(ctx, "enabled");
-                        if (!enabled.equalsIgnoreCase("on") && !enabled.equalsIgnoreCase("off")) {
-                            ctx.getSource().sendError(blueText("[Bladelow] use on|off"));
-                            return 0;
-                        }
-                        BuildRuntimeSettings.setPathTraceEnabled(enabled.equalsIgnoreCase("on"));
-                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] path trace set to " + enabled), false);
-                        return 1;
-                    })
-                )
-            )
-            .then(literal("traceparticles")
-                .then(argument("enabled", StringArgumentType.word())
-                    .executes(ctx -> {
-                        String enabled = StringArgumentType.getString(ctx, "enabled");
-                        if (!enabled.equalsIgnoreCase("on") && !enabled.equalsIgnoreCase("off")) {
-                            ctx.getSource().sendError(blueText("[Bladelow] use on|off"));
-                            return 0;
-                        }
-                        BuildRuntimeSettings.setPathTraceParticles(enabled.equalsIgnoreCase("on"));
-                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] path trace particles set to " + enabled), false);
-                        return 1;
-                    })
-                )
-            )
-        );
-    }
-
-    private static void registerBladeSafety(CommandDispatcher<ServerCommandSource> dispatcher) {
-        dispatcher.register(literal("bladesafety")
-            .then(literal("show")
-                .executes(ctx -> {
-                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] " + BuildRuntimeSettings.summary()), false);
-                    return 1;
-                })
-            )
-            .then(literal("strict")
-                .then(argument("enabled", StringArgumentType.word())
-                    .executes(ctx -> {
-                        String enabled = StringArgumentType.getString(ctx, "enabled");
-                        if (!enabled.equalsIgnoreCase("on") && !enabled.equalsIgnoreCase("off")) {
-                            ctx.getSource().sendError(blueText("[Bladelow] use on|off"));
-                            return 0;
-                        }
-                        BuildRuntimeSettings.setStrictAirOnly(enabled.equalsIgnoreCase("on"));
-                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] strictAir set to " + enabled), false);
-                        return 1;
-                    })
-                )
-            )
-            .then(literal("preview")
-                .then(argument("enabled", StringArgumentType.word())
-                    .executes(ctx -> {
-                        String enabled = StringArgumentType.getString(ctx, "enabled");
-                        if (!enabled.equalsIgnoreCase("on") && !enabled.equalsIgnoreCase("off")) {
-                            ctx.getSource().sendError(blueText("[Bladelow] use on|off"));
-                            return 0;
-                        }
-                        BuildRuntimeSettings.setPreviewBeforeBuild(enabled.equalsIgnoreCase("on"));
-                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] preview-before-build set to " + enabled), false);
-                        return 1;
-                    })
-                )
-            )
-        );
-    }
-
-    private static void registerBladeProfile(CommandDispatcher<ServerCommandSource> dispatcher) {
-        dispatcher.register(literal("bladeprofile")
-            .then(literal("list")
-                .executes(ctx -> {
-                    List<String> names = BuildProfileStore.list(ctx.getSource().getServer());
-                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] profiles: " + String.join(", ", names)), false);
-                    return 1;
-                })
-            )
-            .then(literal("save")
-                .then(argument("name", StringArgumentType.word())
-                    .executes(ctx -> {
-                        String name = StringArgumentType.getString(ctx, "name");
-                        String status = BuildProfileStore.save(ctx.getSource().getServer(), name);
-                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] " + status), false);
-                        return 1;
-                    })
-                )
-            )
-            .then(literal("load")
-                .then(argument("name", StringArgumentType.word())
-                    .executes(ctx -> {
-                        String name = StringArgumentType.getString(ctx, "name");
-                        String status = BuildProfileStore.load(ctx.getSource().getServer(), name);
-                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] " + status + " => " + BuildRuntimeSettings.summary()), false);
-                        return 1;
-                    })
-                )
-            )
-        );
-    }
-
-    private static void registerBladeWeb(CommandDispatcher<ServerCommandSource> dispatcher) {
-        dispatcher.register(literal("bladeweb")
-            .then(literal("catalog")
-                .executes(ctx -> runBladeWebCatalog(ctx, 12))
-                .then(argument("limit", IntegerArgumentType.integer(1, 50))
-                    .executes(ctx -> runBladeWebCatalog(ctx, IntegerArgumentType.getInteger(ctx, "limit")))
-                )
-            )
-            .then(literal("import")
-                .then(argument("index", IntegerArgumentType.integer(1, 100))
-                    .executes(ctx -> {
-                        ServerPlayerEntity player = ctx.getSource().getPlayer();
-                        if (player == null) {
-                            ctx.getSource().sendError(blueText("Player context required."));
-                            return 0;
-                        }
-                        int index = IntegerArgumentType.getInteger(ctx, "index");
-                        var res = BuildItWebService.importPicked(ctx.getSource().getServer(), player.getUuid(), index, "");
-                        if (!res.ok()) {
-                            ctx.getSource().sendError(blueText("[Bladelow] " + res.message()));
-                            return 0;
-                        }
-                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] " + res.message()), false);
-                        return 1;
-                    })
-                    .then(argument("name", StringArgumentType.word())
-                        .executes(ctx -> {
-                            ServerPlayerEntity player = ctx.getSource().getPlayer();
-                            if (player == null) {
-                                ctx.getSource().sendError(blueText("Player context required."));
-                                return 0;
-                            }
-                            int index = IntegerArgumentType.getInteger(ctx, "index");
-                            String name = StringArgumentType.getString(ctx, "name");
-                            var res = BuildItWebService.importPicked(ctx.getSource().getServer(), player.getUuid(), index, name);
-                            if (!res.ok()) {
-                                ctx.getSource().sendError(blueText("[Bladelow] " + res.message()));
-                                return 0;
-                            }
-                            ctx.getSource().sendFeedback(() -> blueText("[Bladelow] " + res.message()), false);
-                            return 1;
-                        })
-                    )
-                )
-                .then(argument("url", StringArgumentType.greedyString())
-                    .executes(ctx -> {
-                        String url = StringArgumentType.getString(ctx, "url");
-                        var res = BuildItWebService.importFromUrl(ctx.getSource().getServer(), url, "");
-                        if (!res.ok()) {
-                            ctx.getSource().sendError(blueText("[Bladelow] " + res.message()));
-                            return 0;
-                        }
-                        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] " + res.message()), false);
-                        return 1;
-                    })
-                )
-            )
-            .then(literal("importnamed")
-                .then(argument("name", StringArgumentType.word())
-                    .then(argument("url", StringArgumentType.greedyString())
-                        .executes(ctx -> {
-                            String name = StringArgumentType.getString(ctx, "name");
-                            String url = StringArgumentType.getString(ctx, "url");
-                            var res = BuildItWebService.importFromUrl(ctx.getSource().getServer(), url, name);
-                            if (!res.ok()) {
-                                ctx.getSource().sendError(blueText("[Bladelow] " + res.message()));
-                                return 0;
-                            }
-                            ctx.getSource().sendFeedback(() -> blueText("[Bladelow] " + res.message()), false);
-                            return 1;
-                        })
-                    )
-                )
-            )
-            .then(literal("importload")
-                .then(argument("index", IntegerArgumentType.integer(1, 100))
-                    .executes(ctx -> runBladeWebImportLoadByIndex(
-                        ctx,
-                        IntegerArgumentType.getInteger(ctx, "index"),
-                        ""
-                    ))
-                    .then(argument("name", StringArgumentType.word())
-                        .executes(ctx -> runBladeWebImportLoadByIndex(
-                            ctx,
-                            IntegerArgumentType.getInteger(ctx, "index"),
-                            StringArgumentType.getString(ctx, "name")
-                        ))
-                    )
-                )
-            )
-            .then(literal("importloadurl")
-                .then(argument("name", StringArgumentType.word())
-                    .then(argument("url", StringArgumentType.greedyString())
-                        .executes(ctx -> runBladeWebImportLoadFromUrl(
-                            ctx,
-                            StringArgumentType.getString(ctx, "url"),
-                            StringArgumentType.getString(ctx, "name")
-                        ))
-                    )
-                )
-            )
-        );
-    }
-
-    private static int runBladeWebCatalog(com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx, int limit) {
-        ServerPlayerEntity player = ctx.getSource().getPlayer();
-        if (player == null) {
-            ctx.getSource().sendError(blueText("Player context required."));
-            return 0;
-        }
-
-        var res = BuildItWebService.syncCatalog(player.getUuid(), limit);
-        if (!res.ok()) {
-            ctx.getSource().sendError(blueText("[Bladelow] " + res.message()));
-            return 0;
-        }
-
-        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] " + res.message()), false);
-        List<BuildItWebService.CatalogItem> list = BuildItWebService.catalog(player.getUuid());
-        for (BuildItWebService.CatalogItem item : list) {
-            ctx.getSource().sendFeedback(() -> blueText("[" + item.index() + "] " + item.title()), false);
-        }
-        return 1;
-    }
-
-    private static int runBladeWebImportLoadByIndex(
-        com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx,
-        int index,
-        String requestedName
-    ) {
-        ServerPlayerEntity player = ctx.getSource().getPlayer();
-        if (player == null) {
-            ctx.getSource().sendError(blueText("Player context required."));
-            return 0;
-        }
-
-        String finalName = requestedName == null || requestedName.isBlank()
-            ? defaultWebImportNameForIndex(index)
-            : requestedName;
-
-        var res = BuildItWebService.importPicked(ctx.getSource().getServer(), player.getUuid(), index, finalName);
-        if (!res.ok()) {
-            ctx.getSource().sendError(blueText("[Bladelow] " + res.message()));
-            return 0;
-        }
-
-        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] " + res.message()), false);
-        boolean selected = BlueprintLibrary.select(player.getUuid(), finalName);
-        if (selected) {
-            ctx.getSource().sendFeedback(() -> blueText("[Bladelow] selected blueprint " + finalName), false);
-        } else {
-            ctx.getSource().sendError(blueText("[Bladelow] imported but failed to load blueprint " + finalName));
-            return 0;
-        }
-        return 1;
-    }
-
-    private static int runBladeWebImportLoadFromUrl(
-        com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx,
-        String url,
-        String name
-    ) {
-        ServerPlayerEntity player = ctx.getSource().getPlayer();
-        if (player == null) {
-            ctx.getSource().sendError(blueText("Player context required."));
-            return 0;
-        }
-
-        var res = BuildItWebService.importFromUrl(ctx.getSource().getServer(), url, name);
-        if (!res.ok()) {
-            ctx.getSource().sendError(blueText("[Bladelow] " + res.message()));
-            return 0;
-        }
-
-        ctx.getSource().sendFeedback(() -> blueText("[Bladelow] " + res.message()), false);
-        boolean selected = BlueprintLibrary.select(player.getUuid(), name);
-        if (selected) {
-            ctx.getSource().sendFeedback(() -> blueText("[Bladelow] selected blueprint " + name), false);
-        } else {
-            ctx.getSource().sendError(blueText("[Bladelow] imported but failed to load blueprint " + name));
-            return 0;
-        }
-        return 1;
-    }
-
-    private static String defaultWebImportNameForIndex(int index) {
-        return "web_idx_" + index;
-    }
-
-    private static void registerBladeZone(CommandDispatcher<ServerCommandSource> dispatcher) {
-        dispatcher.register(literal("bladezone")
-            .then(literal("set")
-                .then(argument("type", StringArgumentType.word())
-                    .executes(ctx -> runBladeZoneSetSelection(ctx.getSource(), StringArgumentType.getString(ctx, "type")))
-                )
-            )
-            .then(literal("box")
-                .then(argument("type", StringArgumentType.word())
-                    .then(argument("from", BlockPosArgumentType.blockPos())
-                        .then(argument("to", BlockPosArgumentType.blockPos())
-                            .executes(ctx -> runBladeZoneBox(
-                                ctx.getSource(),
-                                StringArgumentType.getString(ctx, "type"),
-                                BlockPosArgumentType.getLoadedBlockPos(ctx, "from"),
-                                BlockPosArgumentType.getLoadedBlockPos(ctx, "to")
-                            ))
-                        )
-                    )
-                )
-            )
-            .then(literal("list")
-                .executes(ctx -> runBladeZoneList(ctx.getSource()))
-            )
-            .then(literal("clear")
-                .executes(ctx -> runBladeZoneClear(ctx.getSource(), null))
-                .then(argument("type", StringArgumentType.word())
-                    .executes(ctx -> runBladeZoneClear(ctx.getSource(), StringArgumentType.getString(ctx, "type")))
-                )
-            )
-        );
-    }
-
-    private static int runBladeZoneSetSelection(ServerCommandSource source, String type) throws CommandSyntaxException {
-        ServerPlayerEntity player = source.getPlayer();
-        if (player == null) {
-            source.sendError(blueText("Player context required."));
-            return 0;
-        }
-        var worldKey = source.getWorld().getRegistryKey();
-        List<BlockPos> points = SelectionState.snapshot(player.getUuid(), worldKey);
-        TownZoneStore.ZoneResult result = TownZoneStore.setSelection(player.getUuid(), worldKey, type, points);
-        if (!result.ok()) {
-            source.sendError(blueText("[Bladelow] " + result.message()));
-            return 0;
-        }
-        source.sendFeedback(() -> blueText("[Bladelow] " + result.message()), false);
-        return 1;
-    }
-
-    private static int runBladeZoneBox(ServerCommandSource source, String type, BlockPos from, BlockPos to) throws CommandSyntaxException {
-        ServerPlayerEntity player = source.getPlayer();
-        if (player == null) {
-            source.sendError(blueText("Player context required."));
-            return 0;
-        }
-        TownZoneStore.ZoneResult result = TownZoneStore.setBox(player.getUuid(), source.getWorld().getRegistryKey(), type, from, to);
-        if (!result.ok()) {
-            source.sendError(blueText("[Bladelow] " + result.message()));
-            return 0;
-        }
-        source.sendFeedback(() -> blueText("[Bladelow] " + result.message()), false);
-        return 1;
-    }
-
-    private static int runBladeZoneList(ServerCommandSource source) throws CommandSyntaxException {
-        ServerPlayerEntity player = source.getPlayer();
-        if (player == null) {
-            source.sendError(blueText("Player context required."));
-            return 0;
-        }
-        List<TownZoneStore.Zone> zones = TownZoneStore.snapshot(player.getUuid(), source.getWorld().getRegistryKey());
-        if (zones.isEmpty()) {
-            source.sendFeedback(() -> blueText("[Bladelow] no saved zones"), false);
-            return 1;
-        }
-        Map<String, Integer> counts = TownZoneStore.summarizeByType(zones);
-        List<String> summary = counts.entrySet().stream()
-            .map(entry -> entry.getKey() + "=" + entry.getValue())
-            .toList();
-        source.sendFeedback(() -> blueText("[Bladelow] zones " + String.join(", ", summary)), false);
-        int shown = Math.min(6, zones.size());
-        for (int i = 0; i < shown; i++) {
-            TownZoneStore.Zone zone = zones.get(i);
-            int index = i + 1;
-            source.sendFeedback(() -> blueText("[Bladelow] zone#" + index + " " + zone.summary()), false);
-        }
-        if (zones.size() > shown) {
-            source.sendFeedback(() -> blueText("[Bladelow] +" + (zones.size() - shown) + " more zones"), false);
-        }
-        return 1;
-    }
-
-    private static int runBladeZoneClear(ServerCommandSource source, String type) throws CommandSyntaxException {
-        ServerPlayerEntity player = source.getPlayer();
-        if (player == null) {
-            source.sendError(blueText("Player context required."));
-            return 0;
-        }
-        String normalizedType = type == null ? null : TownZoneStore.normalizeType(type);
-        if (type != null && normalizedType.isBlank()) {
-            source.sendError(blueText("[Bladelow] district type must be " + TownDistrictType.idsCsv()));
-            return 0;
-        }
-        int removed = type == null
-            ? TownZoneStore.clear(player.getUuid(), source.getWorld().getRegistryKey())
-            : TownZoneStore.clear(player.getUuid(), source.getWorld().getRegistryKey(), normalizedType);
-        source.sendFeedback(() -> blueText(
-            type == null
-                ? "[Bladelow] cleared zones=" + removed
-                : "[Bladelow] cleared " + normalizedType + " zones=" + removed
-        ), false);
-        return 1;
+        return PlacementPipeline.queue(source, player, requestedStates, targets, tag, forcePreviewMode);
     }
 
     private static void registerBladeBlueprint(CommandDispatcher<ServerCommandSource> dispatcher) {
@@ -1940,6 +887,51 @@ public final class BladePlaceCommand {
             .then(literal("townpreviewsel")
                 .executes(ctx -> runTownPreviewSelection(ctx.getSource()))
             )
+            .then(literal("townfillzone")
+                .then(argument("type", StringArgumentType.word())
+                    .then(argument("from", BlockPosArgumentType.blockPos())
+                        .then(argument("to", BlockPosArgumentType.blockPos())
+                            .executes(ctx -> runTownFillZone(
+                                ctx.getSource(),
+                                StringArgumentType.getString(ctx, "type"),
+                                BlockPosArgumentType.getLoadedBlockPos(ctx, "from"),
+                                BlockPosArgumentType.getLoadedBlockPos(ctx, "to")
+                            ))
+                        )
+                    )
+                    .executes(ctx -> runTownFillZoneSelection(ctx.getSource(), StringArgumentType.getString(ctx, "type")))
+                )
+            )
+            .then(literal("townpreviewzone")
+                .then(argument("type", StringArgumentType.word())
+                    .then(argument("from", BlockPosArgumentType.blockPos())
+                        .then(argument("to", BlockPosArgumentType.blockPos())
+                            .executes(ctx -> runTownPreviewZone(
+                                ctx.getSource(),
+                                StringArgumentType.getString(ctx, "type"),
+                                BlockPosArgumentType.getLoadedBlockPos(ctx, "from"),
+                                BlockPosArgumentType.getLoadedBlockPos(ctx, "to")
+                            ))
+                        )
+                    )
+                    .executes(ctx -> runTownPreviewZoneSelection(ctx.getSource(), StringArgumentType.getString(ctx, "type")))
+                )
+            )
+            .then(literal("townclearlocks")
+                .executes(ctx -> runTownClearLocks(ctx.getSource()))
+            )
+            .then(literal("townruncity")
+                .executes(ctx -> runTownRunCitySelection(ctx.getSource()))
+                .then(argument("from", BlockPosArgumentType.blockPos())
+                    .then(argument("to", BlockPosArgumentType.blockPos())
+                        .executes(ctx -> runTownRunCity(
+                            ctx.getSource(),
+                            BlockPosArgumentType.getLoadedBlockPos(ctx, "from"),
+                            BlockPosArgumentType.getLoadedBlockPos(ctx, "to")
+                        ))
+                    )
+                )
+            )
             .then(literal("build")
                 .then(argument("start", BlockPosArgumentType.blockPos())
                     .executes(ctx -> {
@@ -1972,12 +964,12 @@ public final class BladePlaceCommand {
                                 return 0;
                             }
 
-                            List<Block> override = parseBlockSpec(StringArgumentType.getString(ctx, "block"), ctx.getSource());
+                            List<Block> override = MaterialResolver.parseBlockSpec(StringArgumentType.getString(ctx, "block"), ctx.getSource());
                             if (override.isEmpty()) {
                                 return 0;
                             }
-                            List<Block> blocks = applyPaletteOverride(plan.blocks(), plan.targets(), override);
-                            return queueStatePlacement(ctx.getSource(), player, defaultStates(blocks), plan.targets(), "blueprint:" + plan.message());
+                            List<Block> blocks = PaletteAssigner.applyOverride(plan.blocks(), plan.targets(), override);
+                            return queueStatePlacement(ctx.getSource(), player, PaletteAssigner.defaultStates(blocks), plan.targets(), "blueprint:" + plan.message());
                         })
                     )
                 )
@@ -2016,13 +1008,13 @@ public final class BladePlaceCommand {
                                     return 0;
                                 }
 
-                                List<Block> override = parseBlockSpec(StringArgumentType.getString(ctx, "block"), ctx.getSource());
+                                List<Block> override = MaterialResolver.parseBlockSpec(StringArgumentType.getString(ctx, "block"), ctx.getSource());
                                 if (override.isEmpty()) {
                                     return 0;
                                 }
-                                List<Block> blocks = applyPaletteOverride(plan.blocks(), plan.targets(), override);
+                                List<Block> blocks = PaletteAssigner.applyOverride(plan.blocks(), plan.targets(), override);
                                 BlueprintLibrary.select(player.getUuid(), name);
-                                return queueStatePlacement(ctx.getSource(), player, defaultStates(blocks), plan.targets(), "blueprint:" + plan.message());
+                                return queueStatePlacement(ctx.getSource(), player, PaletteAssigner.defaultStates(blocks), plan.targets(), "blueprint:" + plan.message());
                             })
                         )
                     )
@@ -2044,6 +1036,23 @@ public final class BladePlaceCommand {
         return runTownFill(source, bounds[0], bounds[1]);
     }
 
+    private static int runTownFillZoneSelection(ServerCommandSource source, String rawZoneType) throws CommandSyntaxException {
+        ServerPlayerEntity player = source.getPlayer();
+        if (player == null) {
+            source.sendError(blueText("Player context required."));
+            return 0;
+        }
+        String zoneType = normalizeTownZoneType(rawZoneType, source);
+        if (zoneType.isBlank()) {
+            return 0;
+        }
+        BlockPos[] bounds = selectionBoundsFromMarkers(source, player);
+        if (bounds == null) {
+            return 0;
+        }
+        return runTownFillZone(source, zoneType, bounds[0], bounds[1]);
+    }
+
     private static int runTownPreviewSelection(ServerCommandSource source) throws CommandSyntaxException {
         ServerPlayerEntity player = source.getPlayer();
         if (player == null) {
@@ -2055,6 +1064,32 @@ public final class BladePlaceCommand {
             return 0;
         }
         return runTownPreview(source, bounds[0], bounds[1]);
+    }
+
+    private static int runTownPreviewZoneSelection(ServerCommandSource source, String rawZoneType) throws CommandSyntaxException {
+        ServerPlayerEntity player = source.getPlayer();
+        if (player == null) {
+            source.sendError(blueText("Player context required."));
+            return 0;
+        }
+        String zoneType = normalizeTownZoneType(rawZoneType, source);
+        if (zoneType.isBlank()) {
+            return 0;
+        }
+        BlockPos[] bounds = selectionBoundsFromMarkers(source, player);
+        if (bounds == null) {
+            return 0;
+        }
+        return runTownPreviewZone(source, zoneType, bounds[0], bounds[1]);
+    }
+
+    private static String normalizeTownZoneType(String rawZoneType, ServerCommandSource source) {
+        String zoneType = TownDistrictType.normalize(rawZoneType);
+        if (!zoneType.isBlank()) {
+            return zoneType;
+        }
+        source.sendError(blueText("[Bladelow] district type must be " + TownDistrictType.idsCsv()));
+        return "";
     }
 
     private static BlockPos[] selectionBoundsFromMarkers(ServerCommandSource source, ServerPlayerEntity player) {
@@ -2096,13 +1131,32 @@ public final class BladePlaceCommand {
         return queueStatePlacement(source, player, plan.blockStates(), plan.targets(), "blueprint:" + plan.message());
     }
 
+    private static int runTownFillZone(ServerCommandSource source, String rawZoneType, BlockPos from, BlockPos to) throws CommandSyntaxException {
+        ServerPlayerEntity player = source.getPlayer();
+        if (player == null) {
+            source.sendError(blueText("Player context required."));
+            return 0;
+        }
+        String zoneType = normalizeTownZoneType(rawZoneType, source);
+        if (zoneType.isBlank()) {
+            return 0;
+        }
+        BlueprintLibrary.BuildPlan plan = BlueprintLibrary.resolveTownFill(source.getWorld(), player.getUuid(), from, to, zoneType, true);
+        if (!plan.ok()) {
+            source.sendError(blueText("[Bladelow] " + plan.message()));
+            return 0;
+        }
+        source.sendFeedback(() -> blueText("[Bladelow] townfillzone " + zoneType + " from=" + from.toShortString() + " to=" + to.toShortString()), false);
+        return queueStatePlacement(source, player, plan.blockStates(), plan.targets(), "blueprint:" + plan.message());
+    }
+
     private static int runTownPreview(ServerCommandSource source, BlockPos from, BlockPos to) throws CommandSyntaxException {
         ServerPlayerEntity player = source.getPlayer();
         if (player == null) {
             source.sendError(blueText("Player context required."));
             return 0;
         }
-        BlueprintLibrary.BuildPlan plan = BlueprintLibrary.resolveTownFill(source.getWorld(), player.getUuid(), from, to);
+        BlueprintLibrary.BuildPlan plan = BlueprintLibrary.resolveTownFill(source.getWorld(), player.getUuid(), from, to, "", false);
         if (!plan.ok()) {
             source.sendError(blueText("[Bladelow] " + plan.message()));
             return 0;
@@ -2111,201 +1165,112 @@ public final class BladePlaceCommand {
         return queueStatePlacement(source, player, plan.blockStates(), plan.targets(), "blueprint:" + plan.message(), true);
     }
 
-    private static List<Block> applyPaletteOverride(List<Block> targets, List<BlockPos> positions, List<Block> palette) {
-        if (palette.isEmpty()) {
-            return targets;
+    private static int runTownPreviewZone(ServerCommandSource source, String rawZoneType, BlockPos from, BlockPos to) throws CommandSyntaxException {
+        ServerPlayerEntity player = source.getPlayer();
+        if (player == null) {
+            source.sendError(blueText("Player context required."));
+            return 0;
         }
-        if (targets.size() != positions.size()) {
-            return targets;
+        String zoneType = normalizeTownZoneType(rawZoneType, source);
+        if (zoneType.isBlank()) {
+            return 0;
         }
-        if (palette.size() == 1) {
-            return assignPaletteLineCycle(palette, targets.size());
+        BlueprintLibrary.BuildPlan plan = BlueprintLibrary.resolveTownFill(source.getWorld(), player.getUuid(), from, to, zoneType, false);
+        if (!plan.ok()) {
+            source.sendError(blueText("[Bladelow] " + plan.message()));
+            return 0;
         }
-        return assignPaletteByRoles(palette, positions, "blueprint");
+        source.sendFeedback(() -> blueText("[Bladelow] townpreviewzone " + zoneType + " from=" + from.toShortString() + " to=" + to.toShortString()), false);
+        return queueStatePlacement(source, player, plan.blockStates(), plan.targets(), "blueprint:" + plan.message(), true);
     }
 
-    private static List<Block> assignPaletteForTargets(List<Block> palette, List<BlockPos> targets, String tag) {
-        if (palette.isEmpty() || targets.isEmpty()) {
-            return List.of();
+    private static int runTownClearLocks(ServerCommandSource source) throws CommandSyntaxException {
+        ServerPlayerEntity player = source.getPlayer();
+        if (player == null) {
+            source.sendError(blueText("Player context required."));
+            return 0;
         }
-        if (palette.size() == 1) {
-            List<Block> out = new ArrayList<>(targets.size());
-            for (int i = 0; i < targets.size(); i++) {
-                out.add(palette.get(0));
-            }
-            return out;
-        }
-
-        if ("bladeplace".equals(tag)) {
-            return assignPaletteLineCycle(palette, targets.size());
-        }
-        if (tag.startsWith("selection") || tag.startsWith("blueprint:")) {
-            return assignPaletteByRoles(palette, targets, tag);
-        }
-        return assignPaletteLineCycle(palette, targets.size());
+        int removed = BlueprintLibrary.clearTownLotLocks(source.getWorld(), player.getUuid());
+        source.sendFeedback(() -> blueText("[Bladelow] cleared town lot locks: " + removed), false);
+        return 1;
     }
 
-    private static List<Block> assignPaletteLineCycle(List<Block> palette, int count) {
-        List<Block> out = new ArrayList<>(count);
-        for (int i = 0; i < count; i++) {
-            out.add(palette.get(i % palette.size()));
+    private static int runTownRunCitySelection(ServerCommandSource source) throws CommandSyntaxException {
+        ServerPlayerEntity player = source.getPlayer();
+        if (player == null) {
+            source.sendError(blueText("Player context required."));
+            return 0;
         }
-        return out;
+        BlockPos[] bounds = selectionBoundsFromMarkers(source, player);
+        if (bounds == null) {
+            return 0;
+        }
+        return runTownRunCity(source, bounds[0], bounds[1]);
     }
 
-    private static List<Block> assignPaletteByRoles(List<Block> palette, List<BlockPos> targets, String tag) {
-        int minX = Integer.MAX_VALUE;
-        int maxX = Integer.MIN_VALUE;
-        int minY = Integer.MAX_VALUE;
-        int maxY = Integer.MIN_VALUE;
-        int minZ = Integer.MAX_VALUE;
-        int maxZ = Integer.MIN_VALUE;
-        for (BlockPos pos : targets) {
-            minX = Math.min(minX, pos.getX());
-            maxX = Math.max(maxX, pos.getX());
-            minY = Math.min(minY, pos.getY());
-            maxY = Math.max(maxY, pos.getY());
-            minZ = Math.min(minZ, pos.getZ());
-            maxZ = Math.max(maxZ, pos.getZ());
+    private static int runTownRunCity(ServerCommandSource source, BlockPos from, BlockPos to) throws CommandSyntaxException {
+        ServerPlayerEntity player = source.getPlayer();
+        if (player == null) {
+            source.sendError(blueText("Player context required."));
+            return 0;
         }
 
-        boolean hasInterior2d = (maxX - minX) >= 2 && (maxZ - minZ) >= 2;
-        boolean hasHeight = (maxY - minY) >= 1;
-
-        List<Block> out = new ArrayList<>(targets.size());
-        for (BlockPos pos : targets) {
-            boolean edge2d = pos.getX() == minX || pos.getX() == maxX || pos.getZ() == minZ || pos.getZ() == maxZ;
-            Role role = classifyRole(pos, minY, maxY, edge2d, hasInterior2d, hasHeight, tag);
-            int slot = resolvePaletteSlot(role, palette.size());
-            out.add(palette.get(slot));
-        }
-        return out;
-    }
-
-    private static Role classifyRole(
-        BlockPos pos,
-        int minY,
-        int maxY,
-        boolean edge2d,
-        boolean hasInterior2d,
-        boolean hasHeight,
-        String tag
-    ) {
-        if (!hasHeight) {
-            if (!edge2d && hasInterior2d) {
-                return Role.FLOOR;
-            }
-            return Role.WALL;
-        }
-
-        boolean floor = pos.getY() == minY;
-        boolean top = pos.getY() == maxY;
-        if (floor && !edge2d && hasInterior2d) {
-            return Role.FLOOR;
-        }
-        if (top && (!edge2d || !tag.startsWith("selection"))) {
-            return Role.DETAIL;
-        }
-        if (edge2d) {
-            return Role.WALL;
-        }
-        if (floor) {
-            return Role.FLOOR;
-        }
-        if (top) {
-            return Role.DETAIL;
-        }
-        return Role.WALL;
-    }
-
-    private static int resolvePaletteSlot(Role role, int paletteSize) {
-        int[] order = switch (role) {
-            case WALL -> new int[]{0, 1, 2};
-            case FLOOR -> new int[]{1, 0, 2};
-            case DETAIL -> new int[]{2, 1, 0};
-        };
-        for (int idx : order) {
-            if (idx < paletteSize) {
-                return idx;
-            }
-        }
-        return 0;
-    }
-
-    private enum Role {
-        WALL,
-        FLOOR,
-        DETAIL
-    }
-
-    private record MaterialStateResolution(
-        List<BlockState> blockStates,
-        int substitutions,
-        int unresolved,
-        int required,
-        int covered,
-        double feasibilityPercent,
-        String summary
-    ) {
-    }
-
-    private record ExecutionStatePlan(
-        List<BlockState> blockStates,
-        List<BlockPos> targets,
-        int dependencyEdges,
-        boolean dependencyOrdered
-    ) {
-    }
-
-    private static void registerBladeModel(CommandDispatcher<ServerCommandSource> dispatcher) {
-        dispatcher.register(literal("blademodel")
-            .then(literal("show")
-                .executes(ctx -> {
-                    String message = "[Bladelow] " + BladelowLearning.model().summary() + " " + BuildRuntimeSettings.summary();
-                    ctx.getSource().sendFeedback(() -> blueText(message), false);
-                    return 1;
-                })
-            )
-            .then(literal("reset")
-                .executes(ctx -> {
-                    BladelowLearning.model().reset();
-                    String saveStatus = BladelowLearning.save();
-                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] model reset; " + saveStatus), false);
-                    return 1;
-                })
-            )
-            .then(literal("save")
-                .executes(ctx -> {
-                    String saveStatus = BladelowLearning.save();
-                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] model " + saveStatus), false);
-                    return 1;
-                })
-            )
-            .then(literal("load")
-                .executes(ctx -> {
-                    String loadStatus = BladelowLearning.load();
-                    ctx.getSource().sendFeedback(() -> blueText("[Bladelow] model " + loadStatus), false);
-                    return 1;
-                })
-            )
-            .then(literal("configure")
-                .then(argument("threshold", DoubleArgumentType.doubleArg(-2.0, 2.0))
-                    .then(argument("learning_rate", DoubleArgumentType.doubleArg(0.001, 1.0))
-                        .executes(ctx -> {
-                            double threshold = DoubleArgumentType.getDouble(ctx, "threshold");
-                            double learningRate = DoubleArgumentType.getDouble(ctx, "learning_rate");
-                            BladelowLearning.model().configure(threshold, learningRate);
-                            String saveStatus = BladelowLearning.save();
-                            ctx.getSource().sendFeedback(() -> blueText(
-                                "[Bladelow] model configured: threshold=" + threshold + " lr=" + learningRate + "; " + saveStatus
-                            ), false);
-                            return 1;
-                        })
-                    )
-                )
-            )
+        List<BlockState> mergedStates = new ArrayList<>();
+        List<BlockPos> mergedTargets = new ArrayList<>();
+        List<String> phaseSummary = new ArrayList<>();
+        List<String> phases = List.of(
+            TownDistrictType.CIVIC.id(),
+            TownDistrictType.MARKET.id(),
+            TownDistrictType.WORKSHOP.id(),
+            TownDistrictType.RESIDENTIAL.id(),
+            TownDistrictType.MIXED.id()
         );
+
+        boolean roadsIncluded = false;
+        for (String phase : phases) {
+            BlueprintLibrary.BuildPlan phasePlan = BlueprintLibrary.resolveTownFill(
+                source.getWorld(),
+                player.getUuid(),
+                from,
+                to,
+                phase,
+                true,
+                !roadsIncluded
+            );
+            if (!phasePlan.ok()) {
+                String msg = phasePlan.message() == null ? "" : phasePlan.message();
+                if (msg.startsWith("no " + phase + " zones in selected area")
+                    || msg.startsWith("no clear lots fit town blueprints in selected area")) {
+                    phaseSummary.add(phase + "=0");
+                    continue;
+                }
+                source.sendError(blueText("[Bladelow] townruncity " + phase + " failed: " + msg));
+                return 0;
+            }
+            if (!phasePlan.targets().isEmpty()) {
+                mergedStates.addAll(phasePlan.blockStates());
+                mergedTargets.addAll(phasePlan.targets());
+                phaseSummary.add(phase + "=" + phasePlan.targets().size());
+                roadsIncluded = true;
+            } else {
+                phaseSummary.add(phase + "=0");
+            }
+        }
+
+        if (mergedTargets.isEmpty()) {
+            source.sendError(blueText("[Bladelow] townruncity queued nothing (all phases empty or locked). Use #bladeblueprint townclearlocks if needed."));
+            return 0;
+        }
+
+        source.sendFeedback(() -> blueText(
+            "[Bladelow] townruncity phases "
+                + String.join(" ", phaseSummary)
+                + " from=" + from.toShortString()
+                + " to=" + to.toShortString()
+        ), false);
+        return queueStatePlacement(source, player, mergedStates, mergedTargets, "blueprint:townruncity");
     }
+
 
     private static Text blueText(String message) {
         return Text.literal(message).formatted(Formatting.AQUA);

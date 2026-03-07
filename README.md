@@ -243,8 +243,9 @@ Pathing/scheduler tuning:
 ## BuildIt Website Integration
 
 - `bladeweb catalog` syncs a list from BuildIt WordPress API endpoints.
+- Web sync/import now runs asynchronously, so catalog/import calls no longer block gameplay ticks.
 - If remote catalog fails but local cache exists, cached entries are reused.
-- Catalog is persisted locally at `~/.bladelow/catalog-cache/<player-uuid>.json` for offline reuse.
+- Catalog is persisted locally at `config/bladelow/cache/catalog/<player-uuid>.json` for offline reuse.
 - `bladeweb import` accepts catalog index or URL.
 - `bladeweb importload` imports and selects blueprint for immediate `BP` run.
 - `bladeweb importloadurl` does the same for URL-based imports with explicit name.
@@ -253,6 +254,17 @@ Pathing/scheduler tuning:
   - JSON links in pages (absolute/relative)
   - script/code-block embedded JSON with `placements`
 - Allowed sources include BuildIt + GitHub/Gist raw hosts.
+
+## Command Architecture
+
+- The command surface is being split into focused modules under `src/main/java/com/bladelow/command/`:
+  - `WebCommands`
+  - `RuntimeCommands`
+  - `ZoneCommands`
+  - `MaterialResolver`
+  - `PaletteAssigner`
+  - `PlacementPipeline`
+- `BladePlaceCommand` remains the root entry and delegates to focused helpers/modules.
 
 ## Blueprint Format
 

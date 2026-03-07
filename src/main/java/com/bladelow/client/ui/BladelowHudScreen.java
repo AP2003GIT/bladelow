@@ -1850,6 +1850,10 @@ public class BladelowHudScreen extends Screen {
         if (command.startsWith("bladeblueprint build")) {
             return "Queueing blueprint...";
         }
+        if (command.startsWith("bladeblueprint townruncity")) {
+            citySummary = "city pipeline queued";
+            return "Queueing city pipeline...";
+        }
         if (command.startsWith("bladeblueprint townpreview")) {
             citySummary = "preview requested";
             return "Planning city preview...";

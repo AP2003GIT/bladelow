@@ -5,15 +5,18 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.World;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 public final class SelectionState {
-    private static final Map<SelectionKey, PlayerSelection> SELECTIONS = new ConcurrentHashMap<>();
+    // Plain HashMap is correct here: all public methods are synchronized on the class
+    // monitor, so no concurrent access can occur. ConcurrentHashMap was redundant
+    // and created a misleading mixed-locking model.
+    private static final Map<SelectionKey, PlayerSelection> SELECTIONS = new HashMap<>();
 
     private SelectionState() {
     }
