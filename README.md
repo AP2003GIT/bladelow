@@ -1,17 +1,17 @@
 # Bladelow Builder (Fabric Mod)
 
-Bladelow is a Minecraft Fabric mod (`1.21.11`, Java `21`) for assisted block placement, blueprint building, web blueprint import, and district-based town filling.
+Bladelow is a Fabric mod for Minecraft `1.21.11` (Java `21`) focused on assisted building, blueprint workflows, web import, and district-based town filling.
 
-## Current Feature Set
+## What Exists Right Now
 
-- Marker-based area selection and vertical build tools.
-- 1-3 block palette placement with inventory-aware fallback.
-- Blueprint load/build with optional palette override.
-- BuildIt website import pipeline (catalog + URL import).
-- District zoning (`residential`, `market`, `workshop`, `civic`, `mixed`).
-- City/town planner commands (`townfill*`, `townpreview*`, `townruncity`).
-- Runtime controls (pause/continue/cancel, movement tuning, diagnostics, profiles, model).
-- HUD with 4-step flow: `AREA -> BLOCKS -> SOURCE -> RUN`.
+- Selection/marker area tools (`markerbox`, `box`, `build`, `buildh`).
+- 1-3 block palette placement (slot fallback supported).
+- Blueprint build/load/list/info + town template workflows.
+- BuildIt web import (`catalog`, `import`, `importload`, URL variants).
+- District zoning with five types: `residential`, `market`, `workshop`, `civic`, `mixed`.
+- Runtime controls: pause/continue/cancel, preview/confirm, move tuning, diagnostics, profiles, model config.
+- HUD with explicit flow tabs: `AREA -> BLOCKS -> SOURCE -> RUN`.
+- HUD mode buttons: `SEL`, `BP`, `CITY`.
 
 ## Requirements
 
@@ -21,13 +21,13 @@ Bladelow is a Minecraft Fabric mod (`1.21.11`, Java `21`) for assisted block pla
 
 ## Install (Users)
 
-1. Download latest `minecraft-bladelow-*.jar` from Releases:
+1. Download the latest mod jar from releases:
    - `https://github.com/AP2003GIT/bladelow/releases`
-2. Place the jar in your Fabric mods folder.
+2. Put the jar in your Fabric mods folder.
    - Lunar example:
-     - `C:\Users\<YourUser>\.lunarclient\profiles\vanilla\1.21\mods\fabric-1.21.11\`
+   - `C:\Users\<YourUser>\.lunarclient\profiles\vanilla\1.21\mods\fabric-1.21.11\`
 3. Restart client.
-4. In game, press `P` to open the Bladelow HUD.
+4. Open world and press `P` to open Bladelow HUD.
 
 ## Build (Developers)
 
@@ -39,7 +39,8 @@ cd "/home/p90lo/project bladelow/minecraft-bladelow"
 Jar output:
 - `build/libs/minecraft-bladelow-0.1.0.jar`
 
-WSL copy to Lunar (example):
+WSL -> Lunar copy example:
+
 ```bash
 cp "build/libs/minecraft-bladelow-0.1.0.jar" "/mnt/c/Users/<YourUser>/.lunarclient/profiles/vanilla/1.21/mods/fabric-1.21.11/"
 ```
@@ -49,57 +50,81 @@ Helper scripts:
 - `scripts/deploy-lunar-wsl.sh`
 - `scripts/install-lunar-windows.ps1`
 
-## HUD Guide
+## HUD Guide (Current)
 
-### Modes
-- `MARKER`: marker selection + selection build.
-- `BLUEPRINT`: selected/typed blueprint build.
-- `CITY`: district zoning + town fill / preview.
+### Mode Buttons
+
+- `SEL`: selection/marker-based builds.
+- `BP`: blueprint-driven builds/import.
+- `CITY`: district/town tools.
 
 ### Flow Tabs
-- `1 AREA`: set coords, marker A/B, apply marker box.
-- `2 BLOCKS`: pick block slots (`S1`, `S2`, `S3`).
-- `3 SOURCE`: blueprint/web/city controls.
-- `4 RUN`: execute run controls.
 
-### Main Buttons
-- `Start Build` / `Run Town Fill`: runs active mode.
-- `Stop`: sends `bladepause`.
-- `Continue Build`: sends `bladecontinue`.
-- `Cancel`: sends `bladecancel`.
+- `AREA`: coordinates, markers, axis/height inputs.
+- `BLOCKS`: choose S1/S2/S3 palette blocks.
+- `SOURCE`: blueprint/web/city source controls.
+- `RUN`: execution controls.
 
-### Hotkeys (HUD open)
+### Main Run Controls
+
+- `Start Build` (or `Run Town Fill` when in `CITY` mode)
+- `Stop` -> `bladepause`
+- `Continue Build` -> `bladecontinue`
+- `Cancel` -> `bladecancel`
+
+### HUD Hotkeys (while HUD open)
+
 - `P`: close HUD
 - `R`: run active mode
-- `M`: mark selection point
+- `M`: mark point
 - `C`: pause
 - `V`: continue
 
-### HUD State
-HUD UI state persists to:
+### HUD State File
+
 - `config/bladelow/hud-state.properties`
 
-## Chat Command Prefix Rules
+## Chat Prefix Rules
 
-Bladelow supports direct slash commands (`/blade...`) and partial `#` shortcuts.
+Bladelow supports normal slash commands (`/blade...`) and selective `#` shortcuts.
 
-- `#` auto-conversion is enabled for these roots:
-  - `bladehelp`, `bladeplace`, `bladeselect`, `bladecancel`, `bladepause`, `bladecontinue`, `bladeconfirm`, `bladepreview`, `bladestatus`, `blademove`, `bladesafety`, `bladeprofile`, `bladeblueprint`, `bladeweb`, `blademodel`
-- Alias:
-  - `#bladelow` -> `#bladehelp`
-- Not auto-converted by `#`:
-  - `bladezone`, `bladediag`
-  - Use slash form: `/bladezone ...`, `/bladediag ...`
+`#` auto-converts for:
+- `bladehelp`
+- `bladeplace`
+- `bladeselect`
+- `bladecancel`
+- `bladepause`
+- `bladecontinue`
+- `bladeconfirm`
+- `bladepreview`
+- `bladestatus`
+- `blademove`
+- `bladesafety`
+- `bladeprofile`
+- `bladeblueprint`
+- `bladeweb`
+- `blademodel`
+
+Alias:
+- `#bladelow` -> `#bladehelp`
+
+Not auto-converted by `#`:
+- `bladezone`
+- `bladediag`
+
+Use slash form for those:
+- `/bladezone ...`
+- `/bladediag ...`
 
 ## Command Reference
 
-### Help
-- `/bladehelp`
+### Core
 
-### Placement
+- `/bladehelp`
 - `/bladeplace <x> <y> <z> <count> [axis] <blocks_csv>`
 
 ### Selection
+
 - `/bladeselect add <pos>`
 - `/bladeselect addhere`
 - `/bladeselect markerbox <from> <to> <height> [solid|hollow]`
@@ -115,7 +140,8 @@ Bladelow supports direct slash commands (`/blade...`) and partial `#` shortcuts.
 - `/bladeselect exportscan <name>`
 - `/bladeselect copybox <name> <from> <to>`
 
-### Blueprints
+### Blueprint + Town
+
 - `/bladeblueprint reload`
 - `/bladeblueprint list`
 - `/bladeblueprint townlist`
@@ -133,15 +159,21 @@ Bladelow supports direct slash commands (`/blade...`) and partial `#` shortcuts.
 - `/bladeblueprint townruncity [from to]`
 
 ### District Zones
+
 - `/bladezone set <type>`
 - `/bladezone box <type> <from> <to>`
 - `/bladezone list`
 - `/bladezone clear [type]`
 
 District types:
-- `residential`, `market`, `workshop`, `civic`, `mixed`
+- `residential`
+- `market`
+- `workshop`
+- `civic`
+- `mixed`
 
 ### Web Import
+
 - `/bladeweb catalog [limit]`
 - `/bladeweb import <index> [name]`
 - `/bladeweb import <url>`
@@ -150,6 +182,7 @@ District types:
 - `/bladeweb importloadurl <name> <url>`
 
 ### Runtime / Diagnostics
+
 - `/bladecancel`
 - `/bladepause`
 - `/bladecontinue`
@@ -160,6 +193,7 @@ District types:
 - `/bladediag export [name]`
 
 ### Movement
+
 - `/blademove show`
 - `/blademove on|off`
 - `/blademove mode walk|auto|teleport`
@@ -172,36 +206,34 @@ District types:
 - `/blademove trace on|off`
 - `/blademove traceparticles on|off`
 
-### Safety
+### Safety / Profiles / Model
+
 - `/bladesafety show`
 - `/bladesafety strict on|off`
 - `/bladesafety preview on|off`
-
-### Profiles
 - `/bladeprofile list`
 - `/bladeprofile save <name>`
 - `/bladeprofile load <name>`
-
-### Model
 - `/blademodel show`
 - `/blademodel reset`
 - `/blademodel save`
 - `/blademodel load`
 - `/blademodel configure <threshold> <learning_rate>`
 
-## BuildIt Integration Notes
+## BuildIt Notes
 
-- Web operations are asynchronous (non-blocking for game ticks).
-- Catalog cache path is inside game dir:
+- Web calls are async (no server tick blocking).
+- Per-player catalog cache:
   - `config/bladelow/cache/<player-uuid>.json`
-- Imports normalize external JSON to internal blueprint format before saving.
+- Imported data is normalized before blueprint save.
 
-## Blueprints
+## Blueprint Files
 
-Blueprint files are loaded from:
+Path:
 - `config/bladelow/blueprints/*.json`
 
 Example:
+
 ```json
 {
   "name": "town_house_small",
@@ -220,40 +252,40 @@ Example:
 }
 ```
 
-## Town/City Workflow (Recommended)
+## Recommended Town Workflow
 
-1. Mark build bounds (`A`, `B`, `Height`) in HUD or with `/bladeselect markerbox`.
-2. Save districts with `/bladezone set <type>` or `/bladezone box ...`.
-3. Inspect templates with `/bladeblueprint townlist`.
-4. Preview with `/bladeblueprint townpreviewsel`.
-5. Run fill with `/bladeblueprint townfillsel`.
-6. Optional phased run with `/bladeblueprint townruncity`.
+1. Mark build bounds in HUD (`AREA`) or use `/bladeselect markerbox`.
+2. Save district zones (`/bladezone set` or `/bladezone box`).
+3. Check available town templates (`/bladeblueprint townlist`).
+4. Preview (`/bladeblueprint townpreviewsel`).
+5. Run fill (`/bladeblueprint townfillsel`).
+6. Optional multi-step city run (`/bladeblueprint townruncity`).
 
 ## Troubleshooting
 
-1. Command not running with `#`
-- Use `/` for roots not in hash conversion (`bladezone`, `bladediag`).
+1. `#` command does nothing
+- Use `/` for `bladezone` and `bladediag`.
 
-2. Import issues
+2. Import fails
 - Run `/bladeweb catalog` first.
-- For URL import, ensure URL is valid and host is supported.
+- Verify URL format/host.
 
-3. Build paused/stuck
+3. Build seems stuck
 - Check `/bladestatus detail`.
-- Use `/bladecontinue`, `/bladepause`, `/bladecancel` as needed.
+- Resume/pause/cancel with runtime commands.
 - Try `/blademove mode auto` or `/blademove mode teleport`.
 
-4. No placement material
-- Fill at least one slot block (`S1..S3`) in HUD.
-- In survival, ensure inventory contains required/fallback blocks.
+4. No blocks placed
+- Select at least one palette slot (`S1/S2/S3`).
+- In survival, ensure required blocks are in inventory.
 
 ## Internal Command Modules
 
-Current command split in `src/main/java/com/bladelow/command/`:
+`src/main/java/com/bladelow/command/`:
 - `RuntimeCommands`
 - `WebCommands`
 - `ZoneCommands`
 - `MaterialResolver`
 - `PaletteAssigner`
 - `PlacementPipeline`
-- `BladePlaceCommand` (entry + remaining selection/blueprint commands)
+- `BladePlaceCommand` (entry + selection/blueprint registration)
