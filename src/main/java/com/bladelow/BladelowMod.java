@@ -3,6 +3,7 @@ package com.bladelow;
 import com.bladelow.builder.PlacementJobRunner;
 import com.bladelow.builder.BlueprintLibrary;
 import com.bladelow.command.BladePlaceCommand;
+import com.bladelow.command.BladeAutoCommand;
 import com.bladelow.ml.BladelowLearning;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
@@ -17,9 +18,10 @@ public class BladelowMod implements ModInitializer {
 
     @Override
     public void onInitialize() {
-        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
-            BladePlaceCommand.register(dispatcher)
-        );
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
+            BladePlaceCommand.register(dispatcher);
+            BladeAutoCommand.register(dispatcher);
+        });
         ServerTickEvents.END_SERVER_TICK.register(PlacementJobRunner::tick);
         ServerLifecycleEvents.SERVER_STARTED.register(server -> {
             LOGGER.info("Bladelow blueprint {}", BlueprintLibrary.reload(server));
