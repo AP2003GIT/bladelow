@@ -10,7 +10,7 @@ Bladelow is a Fabric mod for Minecraft `1.21.11` (Java `21`) focused on assisted
 - BuildIt web import (`catalog`, `import`, `importload`, URL variants).
 - District zoning with five types: `residential`, `market`, `workshop`, `civic`, `mixed`.
 - Runtime controls: pause/continue/cancel, preview/confirm, move tuning, diagnostics, profiles, model config.
-- Semi-autonomous planner (`/bladeauto`) with queue -> plan -> confirm/skip flow.
+- Semi-autonomous planner (`/bladeauto`) with queue -> plan -> phased confirm/skip flow.
 - HUD with explicit flow tabs: `AREA -> BLOCKS -> SOURCE -> RUN`.
 - HUD mode buttons: `SEL`, `BP`, `CITY`.
 
@@ -205,6 +205,9 @@ District types:
 - `/bladeauto cancel`
 - `/bladeauto clear`
 - `/bladeauto remove <index>`
+
+`/bladeauto confirm` now starts phased execution:
+- `FOUNDATION -> WALLS -> ROOF -> DETAILS`
 
 ### Movement
 

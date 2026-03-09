@@ -1384,6 +1384,13 @@ public final class PlacementJobRunner {
         rememberSnapshot(job.playerId(), "completed", job, detailSummary("completed", job));
         String saveStatus = BladelowLearning.save();
         player.sendMessage(blueText("[Bladelow] model " + saveStatus), false);
+
+        // If this was a phased auto build, trigger the next phase
+        if (job.tag() != null && job.tag().startsWith("auto:")) {
+            if (player.getEntityWorld() instanceof net.minecraft.server.world.ServerWorld serverWorld) {
+                com.bladelow.auto.PhasedBuildPlan.onPhaseComplete(serverWorld.getServer(), job.playerId());
+            }
+        }
     }
 
     private static String renderDiagnosticText(UUID playerId, DiagSnapshot snapshot) {

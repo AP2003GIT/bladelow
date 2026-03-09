@@ -4,8 +4,9 @@ import com.bladelow.builder.BlueprintLibrary;
 import com.bladelow.builder.PlacementJobRunner;
 import com.bladelow.ml.BladelowLearning;
 import com.bladelow.ml.PlacementFeatures;
-import net.minecraft.block.BlockItem;
+import com.bladelow.auto.PhasedBuildPlan;
 import net.minecraft.block.BlockState;
+import net.minecraft.item.BlockItem;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
@@ -181,7 +182,7 @@ public final class AutoPlanner {
     // -------------------------------------------------------------------------
 
     /**
-     * Confirm: consume the goal, clear the proposal, hand to PlacementJobRunner.
+     * Confirm: consume the goal, clear the proposal, start phased build.
      */
     public static String confirm(ServerPlayerEntity player) {
         UUID playerId = player.getUuid();
@@ -196,22 +197,11 @@ public final class AutoPlanner {
         // Train model positively — player approved this placement
         trainModel(proposal, true);
 
-        // Queue the actual job via PlacementPipeline equivalent
-        com.bladelow.builder.PlacementJob job = new com.bladelow.builder.PlacementJob(
-            playerId,
-            player.getServerWorld().getRegistryKey(),
+        // Start phased build — foundation → walls → roof → details
+        return PhasedBuildPlan.start(player,
+            proposal.blueprintName(),
             proposal.blockStates(),
-            proposal.targets(),
-            "auto:" + proposal.blueprintName(),
-            com.bladelow.builder.BuildRuntimeSettings.snapshot()
-        );
-        PlacementJobRunner.queueOrPreview(player.getServer(), job);
-
-        return "[Bladelow] Build confirmed — " + proposal.blueprintName()
-            + " at (" + proposal.site().getX() + ", " + proposal.groundY() + ", " + proposal.site().getZ() + ")"
-            + " targets=" + proposal.targets().size()
-            + " materials=" + String.format(Locale.ROOT, "%.0f%%", proposal.materialCoverage() * 100.0)
-            + " — hands off!";
+            proposal.targets());
     }
 
     /**

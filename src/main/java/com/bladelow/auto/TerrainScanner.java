@@ -44,7 +44,9 @@ public final class TerrainScanner {
      * near the player. Returns sites sorted best-first.
      */
     public static List<Site> findSites(ServerPlayerEntity player, int footprintWidth, int footprintDepth) {
-        ServerWorld world = player.getServerWorld();
+        if (!(player.getEntityWorld() instanceof ServerWorld world)) {
+            return List.of();
+        }
         BlockPos origin = player.getBlockPos();
 
         List<Site> candidates = new ArrayList<>();

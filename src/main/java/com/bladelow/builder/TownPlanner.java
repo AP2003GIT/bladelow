@@ -226,13 +226,19 @@ public final class TownPlanner {
             unique.putAll(fallback);
         }
         List<LotCandidate> lots = new ArrayList<>(unique.values());
+        // Sort: centre-most lots first so civic/plaza buildings get first pick,
+        // then by primary road, then by base score, then by insertion order.
         lots.sort(
-            Comparator.comparingDouble(LotCandidate::baseScore).reversed()
+            Comparator.comparingDouble((LotCandidate lot) -> area.centerScore(lot.entryX(), lot.entryZ())).reversed()
                 .thenComparingInt(lot -> lot.primaryRoad() ? 0 : 1)
+                .thenComparingDouble(LotCandidate::baseScore).reversed()
                 .thenComparingInt(LotCandidate::order)
         );
         return lots;
     }
+
+    /** Maximum fraction of buildings allowed in any single district type (40%). */
+    private static final double MAX_DISTRICT_FRACTION = 0.40;
 
     private static PlotPlacement chooseLotPlacement(
         TownArea area,
@@ -244,8 +250,21 @@ public final class TownPlanner {
         String zoneFilter,
         Set<String> lockedLots
     ) {
+        int totalPlaced = districtUsage.values().stream().mapToInt(Integer::intValue).sum();
+
         PlotPlacement best = null;
         for (TownBlueprint blueprint : blueprints) {
+            // --- District variety cap: no more than MAX_DISTRICT_FRACTION of any type ---
+            String districtType = districtTypeOf(blueprint);
+            if (totalPlaced >= 3) {
+                int districtCount = districtUsage.getOrDefault(districtType, 0);
+                if (districtCount > 0 && (double) districtCount / totalPlaced > MAX_DISTRICT_FRACTION) {
+                    // Allow civic/plaza buildings to bypass the cap — towns need a centre
+                    boolean isCivic = blueprint.hasAnyTag("civic", "hall", "keep", "plaza", "church", "tower");
+                    if (!isCivic) continue;
+                }
+            }
+
             TownBlueprint oriented = blueprint.orientedForRoadSide(lot.side());
             int originX = originXForLot(lot, oriented);
             int originZ = originZForLot(lot, oriented);
@@ -272,13 +291,8 @@ public final class TownPlanner {
             if (!isPlotClear(area.world(), originX, area.baseY(), originZ, oriented)) {
                 continue;
             }
-            String districtType = districtTypeOf(oriented);
             double score = scoreBlueprint(
-                area,
-                originX,
-                originZ,
-                lot,
-                oriented,
+                area, originX, originZ, lot, oriented,
                 usageCounts.getOrDefault(blueprint.name(), 0),
                 districtUsage.getOrDefault(districtType, 0)
             );
@@ -311,59 +325,81 @@ public final class TownPlanner {
         int entranceX = originX + blueprint.entranceOffsetX();
         int entranceZ = originZ + blueprint.entranceOffsetZ();
 
-        double centerScore = area.centerScore(plotCenterX, plotCenterZ);
-        double wallScore = area.wallScore(plotCenterX, plotCenterZ);
-        double gateScore = area.gateScore(entranceX, entranceZ);
-        double roadScore = area.roadScore(entranceX, entranceZ);
-        double roadSideScore = roadSideScore(area, originX, originZ, blueprint);
-        double zoneScore = area.zoneScore(blueprint, plotCenterX, plotCenterZ, entranceX, entranceZ);
-        double styleScore = area.styleScore(blueprint);
+        double centerScore    = area.centerScore(plotCenterX, plotCenterZ);
+        double wallScore      = area.wallScore(plotCenterX, plotCenterZ);
+        double gateScore      = area.gateScore(entranceX, entranceZ);
+        double roadScore      = area.roadScore(entranceX, entranceZ);
+        double roadSideScore  = roadSideScore(area, originX, originZ, blueprint);
+        double zoneScore      = area.zoneScore(blueprint, plotCenterX, plotCenterZ, entranceX, entranceZ);
+        double styleScore     = area.styleScore(blueprint);
+
+        // Road network coherence: prefer buildings whose entrance is directly
+        // adjacent to a road cell (not just near one). Rewards tight street fronts.
+        double networkScore = isEntranceOnRoad(area, entranceX, entranceZ) ? 1.0 : 0.0;
 
         double score = lot.baseScore();
         score += blueprint.priority() * 24.0;
-        score += roadScore * 12.0;
-        score += roadSideScore * 10.0;
+        score += roadScore       * 12.0;
+        score += roadSideScore   * 10.0;
+        score += networkScore    * 14.0;   // coherence bonus
         score += zoneScore;
         score += styleScore;
-        if (lot.primaryRoad()) {
-            score += 5.0;
-        }
+        if (lot.primaryRoad()) score += 5.0;
 
+        // --- Building-type placement rules ---
         if (blueprint.hasAnyTag("house", "residential")) {
             score += centerScore * 18.0;
-            score += roadScore * 8.0;
+            score += roadScore   *  8.0;
             score += (1.0 - wallScore) * 8.0;
-            score -= gateScore * 2.0;
+            score -= gateScore   *  2.0;
         }
         if (blueprint.hasAnyTag("market", "stall", "shop")) {
-            score += gateScore * 20.0;
-            score += roadScore * 18.0;
-            score += roadSideScore * 16.0;
+            score += gateScore      * 20.0;
+            score += roadScore      * 18.0;
+            score += roadSideScore  * 16.0;
+            score += networkScore   *  8.0;
         }
-        if (blueprint.hasAnyTag("smithy", "workshop", "utility")) {
-            score += wallScore * 16.0;
-            score += roadScore * 12.0;
-            score += gateScore * 8.0;
+        if (blueprint.hasAnyTag("smithy", "workshop", "utility", "farm")) {
+            score += wallScore   * 16.0;
+            score += roadScore   * 12.0;
+            score += gateScore   *  8.0;
+            // Farms prefer the outskirts, not the centre
+            if (blueprint.hasAnyTag("farm")) score += (1.0 - centerScore) * 10.0;
         }
-        if (blueprint.hasAnyTag("civic", "hall", "keep", "plaza")) {
-            score += centerScore * 20.0;
-            score += roadScore * 10.0;
-            score += lot.primaryRoad() ? 6.0 : 0.0;
+        if (blueprint.hasAnyTag("civic", "hall", "keep", "plaza", "church", "tower")) {
+            // Civic buildings belong dead-centre with good road access
+            score += centerScore    * 28.0;
+            score += roadScore      * 12.0;
+            score += gateScore      * 10.0;
+            score += networkScore   * 10.0;
+            score += lot.primaryRoad() ? 8.0 : 0.0;
+            // Strong penalty for civic buildings at the edge
+            score -= wallScore      * 12.0;
         }
-        if (blueprint.hasAnyTag("decor", "detail")) {
-            score += gateScore * 8.0;
-            score += roadScore * 10.0;
+        if (blueprint.hasAnyTag("inn", "tavern")) {
+            // Inns do well near gates and main roads
+            score += gateScore      * 18.0;
+            score += roadScore      * 14.0;
+            score += centerScore    *  8.0;
         }
-        if (!blueprint.hasAnyTag("house", "residential", "market", "stall", "shop", "smithy", "workshop", "utility", "civic", "hall", "keep", "plaza", "decor", "detail")) {
-            score += centerScore * 8.0;
-            score += roadScore * 8.0;
+        if (blueprint.hasAnyTag("decor", "detail", "well", "fountain")) {
+            score += gateScore   *  8.0;
+            score += roadScore   * 10.0;
+            score += centerScore * 12.0;
+        }
+        // Default: balanced placement
+        if (!blueprint.hasAnyTag("house", "residential", "market", "stall", "shop",
+                "smithy", "workshop", "utility", "civic", "hall", "keep", "plaza",
+                "church", "tower", "decor", "detail", "well", "fountain", "inn",
+                "tavern", "farm")) {
+            score += centerScore *  8.0;
+            score += roadScore   *  8.0;
         }
 
-        if (!blueprint.roadSide().isBlank() && roadSideScore < 0.5) {
-            score -= 8.0;
-        }
-        score -= usedCount * 14.0;
-        score -= districtUsedCount * 4.0;
+        if (!blueprint.roadSide().isBlank() && roadSideScore < 0.5) score -= 8.0;
+        score -= usedCount       * 14.0;   // penalise repeated same blueprint
+        score -= districtUsedCount *  4.0;  // penalise same district type saturation
+        // Tiny deterministic jitter to break exact ties consistently
         score += Math.floorMod(originX * 17 + originZ * 13 + blueprint.name().hashCode(), 11) / 100.0;
         return score;
     }
@@ -523,6 +559,18 @@ public final class TownPlanner {
                 reserved.add(columnKey(x, z));
             }
         }
+    }
+
+    private static boolean isEntranceOnRoad(TownArea area, int entranceX, int entranceZ) {
+        // Check the entrance cell and its immediate 4 neighbours
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dz = -1; dz <= 1; dz++) {
+                if (area.roadCells().contains(columnKey(entranceX + dx, entranceZ + dz))) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static int sideEntryDx(String side) {
