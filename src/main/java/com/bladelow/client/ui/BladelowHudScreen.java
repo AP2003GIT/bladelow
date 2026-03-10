@@ -63,7 +63,12 @@ public class BladelowHudScreen extends Screen {
     private static final String FLOW_SOURCE = "source";
     private static final String FLOW_RUN = "run";
 
-    private static final String[] BLUEPRINT_PRESETS = {"line20", "wall5x5", "square9", "ring9"};
+    private static final String[] BLUEPRINT_PRESETS = {
+        "town_house_small",
+        "town_house_tall",
+        "town_market_stall",
+        "town_civic_hall"
+    };
     private static final String[] PROFILE_PRESETS = {"builder", "safe", "fast"};
     private static final String[] SCALE_LABELS = {"S", "M", "L"};
     private static final double[] SCALE_VALUES = {0.90, 1.00, 1.12};
@@ -87,7 +92,7 @@ public class BladelowHudScreen extends Screen {
         private static String count = "20";
         private static String height = "6";
 
-        private static String blueprint = "line20";
+        private static String blueprint = "town_house_small";
         private static String web = "";
         private static String limit = "12";
         private static String search = "";
@@ -1603,27 +1608,6 @@ public class BladelowHudScreen extends Screen {
         sendCommand("bladeprofile load " + profile);
     }
 
-    private void applyPreset(String preset) {
-        switch (preset) {
-            case "line20x", "line20z" -> {
-                setMode(MODE_SELECTION);
-                heightField.setText("6");
-            }
-            case "sel6" -> {
-                setMode(MODE_SELECTION);
-                heightField.setText("6");
-            }
-            case "bp20" -> {
-                setMode(MODE_BLUEPRINT);
-                blueprintField.setText("line20");
-            }
-            default -> {
-            }
-        }
-        updateRunGuard();
-        statusText = "Preset: " + preset;
-    }
-
     private void cycleScale() {
         uiScaleIndex = (uiScaleIndex + 1) % SCALE_VALUES.length;
         statusText = "Scale: " + SCALE_LABELS[uiScaleIndex];
@@ -2234,7 +2218,7 @@ public class BladelowHudScreen extends Screen {
         UiState.count = readProfileValue(profile, "count", "20");
         UiState.height = readProfileValue(profile, "height", "6");
 
-        UiState.blueprint = readProfileValue(profile, "blueprint", "line20");
+        UiState.blueprint = readProfileValue(profile, "blueprint", "town_house_small");
         UiState.web = readProfileValue(profile, "web", "");
         UiState.limit = readProfileValue(profile, "limit", "12");
         UiState.search = readProfileValue(profile, "search", "");

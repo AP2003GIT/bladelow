@@ -506,8 +506,6 @@ public final class BlueprintLibrary {
     }
 
     private static void ensureExampleFiles(Path dir) throws IOException {
-        ensureExampleIfMissing(dir.resolve("line20.json"), exampleLine20());
-        ensureExampleIfMissing(dir.resolve("wall5x5.json"), exampleWall5x5());
         ensureExampleIfMissing(dir.resolve("town_house_small.json"), exampleTownHouseSmall());
         ensureExampleIfMissing(dir.resolve("town_house_tall.json"), exampleTownHouseTall());
         ensureExampleIfMissing(dir.resolve("town_house_corner.json"), exampleTownHouseCorner());
@@ -525,28 +523,6 @@ public final class BlueprintLibrary {
         try (Writer writer = Files.newBufferedWriter(file)) {
             GSON.toJson(example, writer);
         }
-    }
-
-    private static BlueprintJson exampleLine20() {
-        BlueprintJson json = new BlueprintJson();
-        json.name = "line20";
-        json.placements = new ArrayList<>();
-        for (int x = 0; x < 20; x++) {
-            json.placements.add(new PlacementJson(x, 0, 0, "minecraft:stone"));
-        }
-        return json;
-    }
-
-    private static BlueprintJson exampleWall5x5() {
-        BlueprintJson json = new BlueprintJson();
-        json.name = "wall5x5";
-        json.placements = new ArrayList<>();
-        for (int y = 0; y < 5; y++) {
-            for (int x = 0; x < 5; x++) {
-                json.placements.add(new PlacementJson(x, y, 0, "minecraft:stone"));
-            }
-        }
-        return json;
     }
 
     private static BlueprintJson exampleTownHouseSmall() {

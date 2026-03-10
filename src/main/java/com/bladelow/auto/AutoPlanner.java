@@ -96,7 +96,7 @@ public final class AutoPlanner {
     // -------------------------------------------------------------------------
 
     public enum PlanResult {
-        OK, NO_GOALS, NO_BLUEPRINT, NO_SITE, MODEL_REJECTED, ALREADY_BUILDING
+        OK, NO_GOALS, NO_BLUEPRINT, NO_SITE, ALREADY_BUILDING
     }
 
     public record PlanOutcome(PlanResult result, String message, Proposal proposal) {
