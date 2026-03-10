@@ -64,6 +64,10 @@ public final class PhasedBuildPlan {
         return ACTIVE_PLANS.containsKey(playerId);
     }
 
+    public static boolean clearPlan(UUID playerId) {
+        return ACTIVE_PLANS.remove(playerId) != null;
+    }
+
     public static String planSummary(UUID playerId) {
         ActivePlan plan = ACTIVE_PLANS.get(playerId);
         if (plan == null) return "no active phased build";

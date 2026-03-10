@@ -224,8 +224,19 @@ public final class AutoPlanner {
      */
     public static String cancel(ServerPlayerEntity player) {
         UUID playerId = player.getUuid();
-        PENDING_PROPOSALS.remove(playerId);
-        return "[Bladelow] Proposal cancelled. Goal remains in queue.";
+        boolean canceledProposal = PENDING_PROPOSALS.remove(playerId) != null;
+        boolean canceledPlan = PhasedBuildPlan.clearPlan(playerId);
+
+        if (canceledProposal && canceledPlan) {
+            return "[Bladelow] Proposal cancelled and phased build plan cleared.";
+        }
+        if (canceledProposal) {
+            return "[Bladelow] Proposal cancelled. Goal remains in queue.";
+        }
+        if (canceledPlan) {
+            return "[Bladelow] Active phased build plan cleared.";
+        }
+        return "[Bladelow] Nothing to cancel: no proposal or phased build plan.";
     }
 
     // -------------------------------------------------------------------------

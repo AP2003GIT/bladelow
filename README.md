@@ -199,6 +199,7 @@ District types:
 
 - `/bladeauto add <blueprint> [count]`
 - `/bladeauto goals`
+- `/bladeauto status`
 - `/bladeauto plan`
 - `/bladeauto confirm`
 - `/bladeauto skip`
@@ -208,6 +209,8 @@ District types:
 
 `/bladeauto confirm` now starts phased execution:
 - `FOUNDATION -> WALLS -> ROOF -> DETAILS`
+
+`/bladeauto cancel` now clears pending proposal and/or active phased plan.
 
 ### Movement
 

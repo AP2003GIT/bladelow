@@ -2,6 +2,8 @@ package com.bladelow.command;
 
 import com.bladelow.auto.AutoPlanner;
 import com.bladelow.auto.BuildGoalQueue;
+import com.bladelow.auto.PhasedBuildPlan;
+import com.bladelow.builder.PlacementJobRunner;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
@@ -28,6 +30,7 @@ import static net.minecraft.server.command.CommandManager.literal;
  *   /bladeauto cancel                    — discard proposal, keep goal in queue
  *   /bladeauto clear                     — clear all goals
  *   /bladeauto remove <index>            — remove a goal by queue position
+ *   /bladeauto status                    — queue/proposal/phase/runtime summary
  */
 public final class BladeAutoCommand {
 
@@ -53,6 +56,11 @@ public final class BladeAutoCommand {
             // --- goals ---
             .then(literal("goals")
                 .executes(ctx -> runGoals(ctx.getSource()))
+            )
+
+            // --- status ---
+            .then(literal("status")
+                .executes(ctx -> runStatus(ctx.getSource()))
             )
 
             // --- plan ---
@@ -128,6 +136,40 @@ public final class BladeAutoCommand {
                 + p.site().getX() + ", " + p.groundY() + ", " + p.site().getZ() + ")"
                 + " — confirm or skip"), false);
         }
+        return 1;
+    }
+
+    private static int runStatus(ServerCommandSource source) {
+        ServerPlayerEntity player = source.getPlayer();
+        if (player == null) { source.sendError(blue("Player context required.")); return 0; }
+        UUID playerId = player.getUuid();
+
+        List<BuildGoalQueue.Goal> goals = BuildGoalQueue.snapshot(playerId);
+        if (goals.isEmpty()) {
+            source.sendFeedback(() -> blue("[Bladelow] goals: empty"), false);
+        } else {
+            BuildGoalQueue.Goal next = goals.get(0);
+            source.sendFeedback(() -> blue("[Bladelow] goals: " + goals.size()
+                + " next=" + next.blueprintName() + " x" + next.remaining()), false);
+        }
+
+        if (AutoPlanner.hasProposal(playerId)) {
+            AutoPlanner.Proposal p = AutoPlanner.getProposal(playerId);
+            source.sendFeedback(() -> blue("[Bladelow] proposal: " + p.blueprintName()
+                + " at (" + p.site().getX() + ", " + p.groundY() + ", " + p.site().getZ() + ")"
+                + " score=" + String.format("%.2f", p.siteScore())
+                + " model=" + String.format("%.2f", p.modelScore())), false);
+        } else {
+            source.sendFeedback(() -> blue("[Bladelow] proposal: none"), false);
+        }
+
+        if (PhasedBuildPlan.hasActivePlan(playerId)) {
+            source.sendFeedback(() -> blue("[Bladelow] phased: " + PhasedBuildPlan.planSummary(playerId)), false);
+        } else {
+            source.sendFeedback(() -> blue("[Bladelow] phased: none"), false);
+        }
+
+        source.sendFeedback(() -> blue("[Bladelow] runtime: " + PlacementJobRunner.status(playerId)), false);
         return 1;
     }
 

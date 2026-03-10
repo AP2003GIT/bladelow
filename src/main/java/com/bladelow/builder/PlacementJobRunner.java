@@ -116,6 +116,7 @@ public final class PlacementJobRunner {
     public static boolean cancel(MinecraftServer server, UUID playerId) {
         PlacementJob activeJob = JOBS.remove(playerId);
         PlacementJob pendingJob = PENDING.remove(playerId);
+        com.bladelow.auto.PhasedBuildPlan.clearPlan(playerId);
         AUTO_RESUME_READY_AT.remove(playerId);
         TARGET_PRESSURE.remove(playerId);
         STUCK.remove(playerId);
