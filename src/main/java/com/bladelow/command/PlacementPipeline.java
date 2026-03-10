@@ -108,7 +108,7 @@ public final class PlacementPipeline {
                 states == null ? List.of() : states,
                 targets == null ? List.of() : targets, 0, false);
         }
-        if (targets.size() == 1 || "bladeplace".equals(tag)) {
+        if (targets.size() == 1) {
             return new ExecutionPlan(states, targets, 0, false);
         }
 

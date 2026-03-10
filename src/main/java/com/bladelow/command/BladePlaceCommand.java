@@ -56,8 +56,8 @@ public final class BladePlaceCommand {
 
     /**
      * Main entry point — registers all Bladelow commands by delegating to
-     * focused command modules. Only #bladeplace, #bladeselect, and
-     * #bladeblueprint remain here pending their own extraction.
+     * focused command modules. Only #bladeselect and #bladeblueprint remain
+     * here pending their own extraction.
      */
     public static void register(CommandDispatcher<ServerCommandSource> dispatcher) {
         // ---- Extracted modules ----
@@ -68,7 +68,6 @@ public final class BladePlaceCommand {
 
         // ---- Still inline (next split candidates) ----
         registerBladeHelp(dispatcher);
-        registerBladePlace(dispatcher);
         registerBladeSelect(dispatcher);
         registerBladeBlueprint(dispatcher);
     }
@@ -77,9 +76,8 @@ public final class BladePlaceCommand {
         dispatcher.register(literal("bladehelp")
             .executes(ctx -> {
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] Quick commands:"), false);
-                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeplace <x> <y> <z> <count> [axis] <blocks_csv>"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeselect markerbox <from> <to> <height> | addhere | add <x> <y> <z> | buildh <height> <blocks_csv>"), false);
-                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeselect export <name> <block_id> | exportscan <name> | copybox <name> <from> <to>"), false);
+                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeselect export <name> <block_id>"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladezone set " + TownDistrictType.idsCsv() + " | box <type> <from> <to> | list | clear [type]"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #blademove mode walk|auto|teleport ; reach <2.0..8.0> ; scheduler on|off ; lookahead <1..96> ; defer on|off ; maxdefer <0..8> ; autoresume on|off ; trace on|off ; traceparticles on|off"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeblueprint list|townlist|load|build|townfill|townfillsel|townpreview|townpreviewsel|townfillzone|townpreviewzone|townruncity|townclearlocks ; #bladeweb importload <index> [name] ; #bladestatus [detail] ; #bladepause ; #bladecontinue ; #bladecancel"), false);
@@ -87,77 +85,6 @@ public final class BladePlaceCommand {
                 return 1;
             })
         );
-    }
-
-    private static void registerBladePlace(CommandDispatcher<ServerCommandSource> dispatcher) {
-        dispatcher.register(literal("bladeplace")
-            .then(argument("x", IntegerArgumentType.integer(-30000000, 30000000))
-                .then(argument("y", IntegerArgumentType.integer(-64, 320))
-                    .then(argument("z", IntegerArgumentType.integer(-30000000, 30000000))
-                        .then(argument("count", IntegerArgumentType.integer(1, 4096))
-                            .then(argument("tail", StringArgumentType.greedyString())
-                                .executes(BladePlaceCommand::runBladePlaceFromTail)
-                            )
-                        )
-                    )
-                )
-            )
-        );
-    }
-
-    private static int runBladePlaceFromTail(com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx) {
-        ServerPlayerEntity player = ctx.getSource().getPlayer();
-        if (player == null) {
-            ctx.getSource().sendError(blueText("Player context required."));
-            return 0;
-        }
-
-        String tail = StringArgumentType.getString(ctx, "tail").trim();
-        if (tail.isBlank()) {
-            ctx.getSource().sendError(blueText("[Bladelow] missing blocks spec"));
-            return 0;
-        }
-
-        String axisText = "x";
-        String blockSpec = tail;
-        String[] split = tail.split("\\s+", 2);
-        if (split.length == 2 && isAxisToken(split[0])) {
-            axisText = split[0];
-            blockSpec = split[1].trim();
-        } else if (split.length == 1 && isAxisToken(split[0])) {
-            ctx.getSource().sendError(blueText("[Bladelow] missing blocks after axis"));
-            return 0;
-        }
-
-        List<Block> blocks = MaterialResolver.parseBlockSpec(blockSpec, ctx.getSource());
-        if (blocks.isEmpty()) {
-            return 0;
-        }
-
-        int x = IntegerArgumentType.getInteger(ctx, "x");
-        int y = IntegerArgumentType.getInteger(ctx, "y");
-        int z = IntegerArgumentType.getInteger(ctx, "z");
-        BlockPos start = new BlockPos(x, y, z);
-        int count = IntegerArgumentType.getInteger(ctx, "count");
-
-        PlacementAxis axis;
-        try {
-            axis = PlacementAxis.fromInput(axisText);
-        } catch (IllegalArgumentException ex) {
-            ctx.getSource().sendError(blueText(ex.getMessage()));
-            return 0;
-        }
-
-        List<BlockPos> targets = new ArrayList<>(count);
-        for (int i = 0; i < count; i++) {
-            targets.add(start.add(axis.offset(i)));
-        }
-
-        return runPlacement(ctx.getSource(), player, blocks, targets, "bladeplace");
-    }
-
-    private static boolean isAxisToken(String text) {
-        return text.equalsIgnoreCase("x") || text.equalsIgnoreCase("y") || text.equalsIgnoreCase("z");
     }
 
     private static void registerBladeSelect(CommandDispatcher<ServerCommandSource> dispatcher) {
@@ -451,162 +378,7 @@ public final class BladePlaceCommand {
                     )
                 )
             )
-            .then(literal("exportscan")
-                .then(argument("name", StringArgumentType.word())
-                    .executes(BladePlaceCommand::runSelectExportScan)
-                )
-            )
-            .then(literal("copybox")
-                .then(argument("name", StringArgumentType.word())
-                    .then(argument("from", BlockPosArgumentType.blockPos())
-                        .then(argument("to", BlockPosArgumentType.blockPos())
-                            .executes(BladePlaceCommand::runSelectCopyBox)
-                        )
-                    )
-                )
-            )
         );
-    }
-
-    private static int runSelectExportScan(com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx) {
-        ServerPlayerEntity player = ctx.getSource().getPlayer();
-        if (player == null) {
-            ctx.getSource().sendError(blueText("Player context required."));
-            return 0;
-        }
-
-        var world = ctx.getSource().getWorld();
-        var worldKey = world.getRegistryKey();
-        List<BlockPos> points = SelectionState.snapshot(player.getUuid(), worldKey);
-        if (points.isEmpty()) {
-            ctx.getSource().sendError(blueText("[Bladelow] selection is empty; use /bladeselect addhere or markerbox"));
-            return 0;
-        }
-
-        List<BlueprintLibrary.BlueprintPlacement> placements = new ArrayList<>();
-        int skippedAir = 0;
-        int skippedUnsupported = 0;
-        for (BlockPos pos : points) {
-            var state = world.getBlockState(pos);
-            if (state.isAir()) {
-                skippedAir++;
-                continue;
-            }
-            Block block = state.getBlock();
-            if (block.asItem() == Items.AIR) {
-                skippedUnsupported++;
-                continue;
-            }
-            placements.add(new BlueprintLibrary.BlueprintPlacement(pos, BlueprintStateCodec.stringify(state)));
-        }
-        if (placements.isEmpty()) {
-            ctx.getSource().sendError(blueText(
-                "[Bladelow] selection has no exportable blocks (air=" + skippedAir + ", unsupported=" + skippedUnsupported + ")"
-            ));
-            return 0;
-        }
-
-        String name = StringArgumentType.getString(ctx, "name");
-        var result = BlueprintLibrary.savePlacementsAsBlueprint(ctx.getSource().getServer(), name, placements);
-        if (!result.ok()) {
-            ctx.getSource().sendError(blueText("[Bladelow] " + result.message()));
-            return 0;
-        }
-        BlueprintLibrary.select(player.getUuid(), name);
-        int scanned = points.size();
-        int saved = placements.size();
-        int skippedAirCount = skippedAir;
-        int skippedUnsupportedCount = skippedUnsupported;
-        ctx.getSource().sendFeedback(() -> blueText(
-            "[Bladelow] " + result.message() + " scanned=" + scanned + " saved=" + saved
-                + " skippedAir=" + skippedAirCount + " skippedUnsupported=" + skippedUnsupportedCount
-        ), false);
-        return 1;
-    }
-
-    private static int runSelectCopyBox(com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx) {
-        ServerPlayerEntity player = ctx.getSource().getPlayer();
-        if (player == null) {
-            ctx.getSource().sendError(blueText("Player context required."));
-            return 0;
-        }
-
-        BlockPos from;
-        BlockPos to;
-        try {
-            from = BlockPosArgumentType.getLoadedBlockPos(ctx, "from");
-            to = BlockPosArgumentType.getLoadedBlockPos(ctx, "to");
-        } catch (CommandSyntaxException ex) {
-            ctx.getSource().sendError(blueText("[Bladelow] invalid copy box positions"));
-            return 0;
-        }
-
-        int minX = Math.min(from.getX(), to.getX());
-        int maxX = Math.max(from.getX(), to.getX());
-        int minY = Math.min(from.getY(), to.getY());
-        int maxY = Math.max(from.getY(), to.getY());
-        int minZ = Math.min(from.getZ(), to.getZ());
-        int maxZ = Math.max(from.getZ(), to.getZ());
-
-        long sizeX = (long) maxX - minX + 1L;
-        long sizeY = (long) maxY - minY + 1L;
-        long sizeZ = (long) maxZ - minZ + 1L;
-        long volume = sizeX * sizeY * sizeZ;
-        if (volume > MAX_SELECTION_BOX_BLOCKS) {
-            ctx.getSource().sendError(blueText(
-                "[Bladelow] copy box too large (" + volume + " blocks). limit=" + MAX_SELECTION_BOX_BLOCKS
-            ));
-            return 0;
-        }
-
-        var world = ctx.getSource().getWorld();
-        List<BlueprintLibrary.BlueprintPlacement> placements = new ArrayList<>();
-        int skippedAir = 0;
-        int skippedUnsupported = 0;
-        for (int x = minX; x <= maxX; x++) {
-            for (int y = minY; y <= maxY; y++) {
-                for (int z = minZ; z <= maxZ; z++) {
-                    BlockPos pos = new BlockPos(x, y, z);
-                    var state = world.getBlockState(pos);
-                    if (state.isAir()) {
-                        skippedAir++;
-                        continue;
-                    }
-                    Block block = state.getBlock();
-                    if (block.asItem() == Items.AIR) {
-                        skippedUnsupported++;
-                        continue;
-                    }
-                    placements.add(new BlueprintLibrary.BlueprintPlacement(pos, BlueprintStateCodec.stringify(state)));
-                }
-            }
-        }
-
-        if (placements.isEmpty()) {
-            ctx.getSource().sendError(blueText("[Bladelow] copy box has no exportable blocks"));
-            return 0;
-        }
-
-        String name = StringArgumentType.getString(ctx, "name");
-        var result = BlueprintLibrary.savePlacementsAsBlueprint(ctx.getSource().getServer(), name, placements);
-        if (!result.ok()) {
-            ctx.getSource().sendError(blueText("[Bladelow] " + result.message()));
-            return 0;
-        }
-        BlueprintLibrary.select(player.getUuid(), name);
-        long volumeCount = volume;
-        long sizeXCount = sizeX;
-        long sizeYCount = sizeY;
-        long sizeZCount = sizeZ;
-        int saved = placements.size();
-        int skippedAirCount = skippedAir;
-        int skippedUnsupportedCount = skippedUnsupported;
-        ctx.getSource().sendFeedback(() -> blueText(
-            "[Bladelow] " + result.message() + " box=" + sizeXCount + "x" + sizeYCount + "x" + sizeZCount
-                + " volume=" + volumeCount + " saved=" + saved
-                + " skippedAir=" + skippedAirCount + " skippedUnsupported=" + skippedUnsupportedCount
-        ), false);
-        return 1;
     }
 
     private static int runSelectBox(com.mojang.brigadier.context.CommandContext<ServerCommandSource> ctx, boolean hollow) {

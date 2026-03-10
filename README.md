@@ -91,7 +91,6 @@ Bladelow supports normal slash commands (`/blade...`) and selective `#` shortcut
 
 `#` auto-converts for:
 - `bladehelp`
-- `bladeplace`
 - `bladeselect`
 - `bladecancel`
 - `bladepause`
@@ -124,7 +123,6 @@ Use slash form for those:
 ### Core
 
 - `/bladehelp`
-- `/bladeplace <x> <y> <z> <count> [axis] <blocks_csv>`
 
 ### Selection
 
@@ -140,8 +138,6 @@ Use slash form for those:
 - `/bladeselect build <top_y> <blocks_csv>`
 - `/bladeselect buildh <height> <blocks_csv>`
 - `/bladeselect export <name> <block_id>`
-- `/bladeselect exportscan <name>`
-- `/bladeselect copybox <name> <from> <to>`
 
 ### Blueprint + Town
 

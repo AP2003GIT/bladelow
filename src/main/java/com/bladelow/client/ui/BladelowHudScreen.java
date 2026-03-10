@@ -1361,24 +1361,6 @@ public class BladelowHudScreen extends Screen {
         sendCommand("bladeblueprint townpreviewsel");
     }
 
-    private void runLineBuild() {
-        Coords c = effectiveCoords();
-        Integer count = parseInt(countField.getText());
-        if (c == null || count == null) {
-            statusText = "Invalid coords or count";
-            return;
-        }
-        String blockSpec = selectedBlockSpec();
-        if (blockSpec == null) {
-            statusText = "Select at least one block";
-            return;
-        }
-        sendCommand(String.format(Locale.ROOT,
-            "bladeplace %d %d %d %d %s %s",
-            c.x, c.y, c.z, count, axis, blockSpec
-        ));
-    }
-
     private void runSelectionBuild() {
         Integer height = parseInt(heightField.getText());
         if (height == null || height < 1 || height > 256) {

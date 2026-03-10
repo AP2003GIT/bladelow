@@ -31,7 +31,6 @@ public final class PaletteAssigner {
     public static List<Block> assign(List<Block> palette, List<BlockPos> targets, String tag) {
         if (palette.isEmpty() || targets.isEmpty()) return List.of();
         if (palette.size() == 1) return repeat(palette.get(0), targets.size());
-        if ("bladeplace".equals(tag)) return lineCycle(palette, targets.size());
         if (tag.startsWith("selection") || tag.startsWith("blueprint:")) return byRoles(palette, targets, tag);
         return lineCycle(palette, targets.size());
     }

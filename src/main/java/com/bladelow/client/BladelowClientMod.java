@@ -19,7 +19,6 @@ public class BladelowClientMod implements ClientModInitializer {
     private static final String KEY_OPEN_HUD = "key.bladelow.open_hud";
     private static final Set<String> HASH_COMMAND_ROOTS = Set.of(
         "bladehelp",
-        "bladeplace",
         "bladeselect",
         "bladecancel",
         "bladepause",
