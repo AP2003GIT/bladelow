@@ -72,10 +72,11 @@ public class BladelowHudScreen extends Screen {
     private static final String[] PROFILE_PRESETS = {"builder", "safe", "fast"};
     private static final String[] SCALE_LABELS = {"S", "M", "L"};
     private static final double[] SCALE_VALUES = {0.90, 1.00, 1.12};
-    private static final int PANEL_BASE_WIDTH = 980;
-    private static final int PANEL_BASE_HEIGHT = 560;
-    private static final int PANEL_MIN_WIDTH = 840;
-    private static final int PANEL_MIN_HEIGHT = 470;
+    private static final String[] CITY_LAYOUT_PRESETS = {"medieval", "balanced", "harbor"};
+    private static final int PANEL_BASE_WIDTH = 1120;
+    private static final int PANEL_BASE_HEIGHT = 640;
+    private static final int PANEL_MIN_WIDTH = 920;
+    private static final int PANEL_MIN_HEIGHT = 540;
 
     private static final Path HUD_STATE_PATH = Path.of("config", "bladelow", "hud-state.properties");
     private static final Properties HUD_STORE = new Properties();
@@ -116,6 +117,7 @@ public class BladelowHudScreen extends Screen {
         private static String flow = FLOW_AREA;
         private static String districtCounts = "";
         private static String citySummary = "";
+        private static String cityPreset = "medieval";
     }
 
     private final String profileKey;
@@ -201,6 +203,9 @@ public class BladelowHudScreen extends Screen {
     private ButtonWidget cityTownListButton;
     private ButtonWidget cityPreviewButton;
     private ButtonWidget cityTownFillButton;
+    private ButtonWidget cityPresetButton;
+    private ButtonWidget cityAutoZonesButton;
+    private ButtonWidget cityAutoCityButton;
     private ButtonWidget pagePrevButton;
     private ButtonWidget pageNextButton;
 
@@ -243,6 +248,7 @@ public class BladelowHudScreen extends Screen {
     private boolean previewBeforeBuild;
     private boolean slotMiniIconsEnabled;
     private String moveMode;
+    private String cityLayoutPreset;
     private double reachDistance;
     private BlockPos markerA;
     private BlockPos markerB;
@@ -288,6 +294,7 @@ public class BladelowHudScreen extends Screen {
         restoreRecent(UiState.recent);
         restoreDistrictCounts(UiState.districtCounts);
         this.citySummary = UiState.citySummary == null || UiState.citySummary.isBlank() ? "none" : UiState.citySummary;
+        this.cityLayoutPreset = normalizeCityPreset(UiState.cityPreset);
 
         rebuildFilter();
     }
@@ -394,7 +401,7 @@ public class BladelowHudScreen extends Screen {
         this.slotMiniButton.active = false;
 
         int coordW = (rightW - rowGap * 2) / 3;
-        int xyzY = searchY;
+        int xyzY = searchY + buttonH + rowGap;
         this.xField = new TextFieldWidget(this.textRenderer, rightX, xyzY, coordW, buttonH, Text.literal("X"));
         this.yField = new TextFieldWidget(this.textRenderer, rightX + coordW + rowGap, xyzY, coordW, buttonH, Text.literal("Y"));
         this.zField = new TextFieldWidget(this.textRenderer, rightX + (coordW + rowGap) * 2, xyzY, coordW, buttonH, Text.literal("Z"));
@@ -517,22 +524,33 @@ public class BladelowHudScreen extends Screen {
         this.zoneMixedButton = addDrawableChild(ButtonWidget.builder(Text.literal("Mixed"), b -> saveZoneFromMarkers("mixed"))
             .dimensions(rightX, cityY, cityHalfW, buttonH)
             .build());
+        this.cityPresetButton = addDrawableChild(ButtonWidget.builder(Text.literal("Preset"), b -> cycleCityPreset())
+            .dimensions(rightX + cityHalfW + rowGap, cityY, cityHalfW, buttonH)
+            .build());
+        cityY += buttonH + rowGap;
         this.zoneListButton = addDrawableChild(ButtonWidget.builder(Text.literal("List Districts"), b -> sendCommand("bladezone list"))
-            .dimensions(rightX + cityHalfW + rowGap, cityY, cityHalfW, buttonH)
+            .dimensions(rightX, cityY, cityHalfW, buttonH)
             .build());
-        cityY += buttonH + rowGap;
         this.zoneClearButton = addDrawableChild(ButtonWidget.builder(Text.literal("Clear Districts"), b -> sendCommand("bladezone clear"))
-            .dimensions(rightX, cityY, cityHalfW, buttonH)
-            .build());
-        this.cityTownListButton = addDrawableChild(ButtonWidget.builder(Text.literal("Town List"), b -> sendCommand("bladeblueprint townlist"))
             .dimensions(rightX + cityHalfW + rowGap, cityY, cityHalfW, buttonH)
             .build());
         cityY += buttonH + rowGap;
-        this.cityPreviewButton = addDrawableChild(ButtonWidget.builder(Text.literal("Preview Fill"), b -> runCityPreview())
+        this.cityTownListButton = addDrawableChild(ButtonWidget.builder(Text.literal("Town List"), b -> sendCommand("bladeblueprint townlist"))
             .dimensions(rightX, cityY, cityHalfW, buttonH)
             .build());
-        this.cityTownFillButton = addDrawableChild(ButtonWidget.builder(Text.literal("Town Fill"), b -> runCityBuild())
+        this.cityPreviewButton = addDrawableChild(ButtonWidget.builder(Text.literal("Preview Fill"), b -> runCityPreview())
             .dimensions(rightX + cityHalfW + rowGap, cityY, cityHalfW, buttonH)
+            .build());
+        cityY += buttonH + rowGap;
+        this.cityTownFillButton = addDrawableChild(ButtonWidget.builder(Text.literal("Town Fill"), b -> runCityBuild())
+            .dimensions(rightX, cityY, cityHalfW, buttonH)
+            .build());
+        this.cityAutoZonesButton = addDrawableChild(ButtonWidget.builder(Text.literal("Auto Zones"), b -> runCityAutoZones())
+            .dimensions(rightX + cityHalfW + rowGap, cityY, cityHalfW, buttonH)
+            .build());
+        cityY += buttonH + rowGap;
+        this.cityAutoCityButton = addDrawableChild(ButtonWidget.builder(Text.literal("Auto City"), b -> runCityAutoCity())
+            .dimensions(rightX, cityY, rightW, buttonH)
             .build());
 
         rightRowY += buttonH + rowGap;
@@ -627,9 +645,9 @@ public class BladelowHudScreen extends Screen {
         this.rowGap = sx(8);
         this.buttonH = sx(24);
 
-        int minRightW = sx(270);
-        int maxRightW = Math.max(minRightW, panelW - sx(420));
-        int targetRightW = Math.max(minRightW, sx(300));
+        int minRightW = sx(320);
+        int maxRightW = Math.max(minRightW, panelW - sx(520));
+        int targetRightW = Math.max(minRightW, sx(360));
         this.rightW = Math.min(maxRightW, targetRightW);
 
         this.leftX = panelX + sx(8);
@@ -690,10 +708,10 @@ public class BladelowHudScreen extends Screen {
 
     private String rightPanelLabel() {
         return switch (activeFlow) {
-            case FLOW_AREA -> "DISTRICT SETUP";
-            case FLOW_BLOCKS -> "BLOCK SETTINGS";
-            case FLOW_SOURCE -> MODE_CITY.equals(activeMode) ? "CITY BUILDER" : "BUILD SOURCE";
-            case FLOW_RUN -> MODE_CITY.equals(activeMode) ? "CITY RUNTIME" : "RUNTIME";
+            case FLOW_AREA -> "AREA SETUP";
+            case FLOW_BLOCKS -> "BLOCK PICKER";
+            case FLOW_SOURCE -> MODE_CITY.equals(activeMode) ? "CITY PLANNER" : "SOURCE";
+            case FLOW_RUN -> MODE_CITY.equals(activeMode) ? "CITY RUNNER" : "RUNTIME";
             default -> "SETUP";
         };
     }
@@ -811,9 +829,9 @@ public class BladelowHudScreen extends Screen {
 
     private String slotDisplayLabel(int slotIndex, String blockId) {
         if (blockId == null || blockId.isBlank()) {
-            return "S" + (slotIndex + 1) + " empty";
+            return "S" + (slotIndex + 1) + ": empty";
         }
-        return "S" + (slotIndex + 1) + " " + shortBlockName(blockId, 10);
+        return "S" + (slotIndex + 1) + ": " + shortBlockName(blockId, 8);
     }
 
     private ItemStack stackForBlock(String blockId) {
@@ -954,9 +972,9 @@ public class BladelowHudScreen extends Screen {
         setVisible(axisYButton, false);
         setVisible(axisZButton, false);
 
-        setVisible(modeSelectionButton, source);
-        setVisible(modeBlueprintButton, source);
-        setVisible(modeCityButton, source);
+        setVisible(modeSelectionButton, true);
+        setVisible(modeBlueprintButton, true);
+        setVisible(modeCityButton, true);
         setVisible(webField, source && blueprintMode);
         setVisible(bpLoadButton, source && blueprintMode);
 
@@ -972,11 +990,14 @@ public class BladelowHudScreen extends Screen {
         setVisible(zoneWorkshopButton, source && cityMode);
         setVisible(zoneCivicButton, source && cityMode);
         setVisible(zoneMixedButton, source && cityMode);
+        setVisible(cityPresetButton, source && cityMode);
         setVisible(zoneListButton, source && cityMode);
         setVisible(zoneClearButton, source && cityMode);
         setVisible(cityTownListButton, source && cityMode);
         setVisible(cityPreviewButton, source && cityMode);
         setVisible(cityTownFillButton, source && cityMode);
+        setVisible(cityAutoZonesButton, source && cityMode);
+        setVisible(cityAutoCityButton, source && cityMode);
 
         setVisible(runButton, run);
         setVisible(cancelButton, run);
@@ -1002,14 +1023,10 @@ public class BladelowHudScreen extends Screen {
         if (flowAreaButton == null) {
             return;
         }
-        String areaLabel = MODE_CITY.equals(activeMode) ? "1 DISTRICT*" : "1 AREA*";
-        String areaIdle = MODE_CITY.equals(activeMode) ? "1 DISTRICT" : "1 AREA";
-        String blocksLabel = MODE_CITY.equals(activeMode) ? "2 DISTRICTS*" : "2 BLOCKS*";
-        String blocksIdle = MODE_CITY.equals(activeMode) ? "2 DISTRICTS" : "2 BLOCKS";
-        flowAreaButton.setMessage(Text.literal(FLOW_AREA.equals(activeFlow) ? areaLabel : areaIdle));
-        flowBlocksButton.setMessage(Text.literal(FLOW_BLOCKS.equals(activeFlow) ? blocksLabel : blocksIdle));
-        flowSourceButton.setMessage(Text.literal(FLOW_SOURCE.equals(activeFlow) ? "3 SOURCE*" : "3 SOURCE"));
-        flowRunButton.setMessage(Text.literal(FLOW_RUN.equals(activeFlow) ? "4 RUN*" : "4 RUN"));
+        flowAreaButton.setMessage(Text.literal(FLOW_AREA.equals(activeFlow) ? "AREA*" : "AREA"));
+        flowBlocksButton.setMessage(Text.literal(FLOW_BLOCKS.equals(activeFlow) ? "BLOCKS*" : "BLOCKS"));
+        flowSourceButton.setMessage(Text.literal(FLOW_SOURCE.equals(activeFlow) ? "SOURCE*" : "SOURCE"));
+        flowRunButton.setMessage(Text.literal(FLOW_RUN.equals(activeFlow) ? "RUN*" : "RUN"));
     }
 
     private void setVisible(ButtonWidget widget, boolean visible) {
@@ -1040,9 +1057,9 @@ public class BladelowHudScreen extends Screen {
 
     private void updateModeUi() {
         runButton.setMessage(Text.literal("Start Build"));
-        cancelButton.setMessage(Text.literal("Stop"));
-        confirmButton.setMessage(Text.literal("Continue Build"));
-        previewModeButton.setMessage(Text.literal("Cancel"));
+        cancelButton.setMessage(Text.literal("Pause"));
+        confirmButton.setMessage(Text.literal("Resume"));
+        previewModeButton.setMessage(Text.literal("Stop Build"));
 
         updateModeButtons();
         updateMarkerButtonLabels();
@@ -1050,7 +1067,7 @@ public class BladelowHudScreen extends Screen {
     }
 
     private void updateModeButtons() {
-        modeSelectionButton.setMessage(Text.literal(MODE_SELECTION.equals(activeMode) ? "MARKER*" : "MARKER"));
+        modeSelectionButton.setMessage(Text.literal(MODE_SELECTION.equals(activeMode) ? "SELECTION*" : "SELECTION"));
         modeBlueprintButton.setMessage(Text.literal(MODE_BLUEPRINT.equals(activeMode) ? "BLUEPRINT*" : "BLUEPRINT"));
         modeCityButton.setMessage(Text.literal(MODE_CITY.equals(activeMode) ? "CITY*" : "CITY"));
     }
@@ -1361,6 +1378,50 @@ public class BladelowHudScreen extends Screen {
         sendCommand("bladeblueprint townpreviewsel");
     }
 
+    private void runCityAutoZones() {
+        if (!ensureMarkerSelection()) {
+            return;
+        }
+        citySummary = "auto zones";
+        sendCommand("bladezone autolayout " + cityLayoutPreset);
+    }
+
+    private void runCityAutoCity() {
+        if (!ensureMarkerSelection()) {
+            return;
+        }
+        citySummary = "auto city";
+        sendCommand("bladeblueprint townautocity " + cityLayoutPreset);
+    }
+
+    private void cycleCityPreset() {
+        int idx = 0;
+        for (int i = 0; i < CITY_LAYOUT_PRESETS.length; i++) {
+            if (CITY_LAYOUT_PRESETS[i].equals(cityLayoutPreset)) {
+                idx = i;
+                break;
+            }
+        }
+        cityLayoutPreset = CITY_LAYOUT_PRESETS[(idx + 1) % CITY_LAYOUT_PRESETS.length];
+        if (cityPresetButton != null) {
+            cityPresetButton.setMessage(Text.literal("Preset: " + cityLayoutPreset.toUpperCase(Locale.ROOT)));
+        }
+        citySummary = "preset=" + cityLayoutPreset;
+    }
+
+    private String normalizeCityPreset(String value) {
+        if (value == null) {
+            return CITY_LAYOUT_PRESETS[0];
+        }
+        String normalized = value.trim().toLowerCase(Locale.ROOT);
+        for (String preset : CITY_LAYOUT_PRESETS) {
+            if (preset.equals(normalized)) {
+                return preset;
+            }
+        }
+        return CITY_LAYOUT_PRESETS[0];
+    }
+
     private void runSelectionBuild() {
         Integer height = parseInt(heightField.getText());
         if (height == null || height < 1 || height > 256) {
@@ -1540,10 +1601,10 @@ public class BladelowHudScreen extends Screen {
             presetLineZButton.setMessage(Text.literal(markerB == null ? "Set B" : "Set B*"));
         }
         if (presetSelButton != null) {
-            presetSelButton.setMessage(Text.literal("Apply Box"));
+            presetSelButton.setMessage(Text.literal("Apply Area"));
         }
         if (presetBpButton != null) {
-            presetBpButton.setMessage(Text.literal("Clear Box"));
+            presetBpButton.setMessage(Text.literal("Clear Area"));
         }
     }
 
@@ -1765,20 +1826,20 @@ public class BladelowHudScreen extends Screen {
         updateModeButtons();
         updateFlowButtons();
         updateAxisButtons();
-        previewModeButton.setMessage(Text.literal("Cancel"));
-        confirmButton.setMessage(Text.literal("Continue Build"));
-        cancelButton.setMessage(Text.literal("Stop"));
-        runButton.setMessage(Text.literal(MODE_CITY.equals(activeMode) ? "Run Town Fill" : "Start Build"));
-        moveModeButton.setMessage(Text.literal("Move: " + moveMode.toUpperCase(Locale.ROOT)));
-        smartMoveButton.setMessage(Text.literal(smartMoveEnabled ? "Smart Move: ON" : "Smart Move: OFF"));
-        reachButton.setMessage(Text.literal("R:" + String.format(Locale.ROOT, "%.2f", reachDistance)));
+        previewModeButton.setMessage(Text.literal("Stop Build"));
+        confirmButton.setMessage(Text.literal("Resume"));
+        cancelButton.setMessage(Text.literal("Pause"));
+        runButton.setMessage(Text.literal(MODE_CITY.equals(activeMode) ? "Run City Build" : "Start Build"));
+        moveModeButton.setMessage(Text.literal("Move Mode: " + moveMode.toUpperCase(Locale.ROOT)));
+        smartMoveButton.setMessage(Text.literal(smartMoveEnabled ? "Smart: ON" : "Smart: OFF"));
+        reachButton.setMessage(Text.literal("Reach " + String.format(Locale.ROOT, "%.2f", reachDistance)));
         coordsModeButton.setMessage(Text.literal(manualCoords ? "Coords: MANUAL" : "Coords: AUTO"));
         if (slotMiniButton != null) {
             slotMiniButton.setMessage(Text.literal(slotMiniIconsEnabled ? "I*" : "I"));
         }
         updateMarkerButtonLabels();
 
-        profileButton.setMessage(Text.literal("Profile " + (clamp(profileIndex, 0, PROFILE_PRESETS.length - 1) + 1)));
+        profileButton.setMessage(Text.literal("Profile: " + PROFILE_PRESETS[clamp(profileIndex, 0, PROFILE_PRESETS.length - 1)]));
         scaleButton.setMessage(Text.literal("HUD Scale: " + SCALE_LABELS[clamp(uiScaleIndex, 0, SCALE_LABELS.length - 1)]));
         statusDetailButton.setMessage(Text.literal("Diagnostics"));
         if (cityTownFillButton != null) {
@@ -1786,6 +1847,15 @@ public class BladelowHudScreen extends Screen {
         }
         if (cityPreviewButton != null) {
             cityPreviewButton.setMessage(Text.literal("Preview Fill"));
+        }
+        if (cityPresetButton != null) {
+            cityPresetButton.setMessage(Text.literal("Preset: " + cityLayoutPreset.toUpperCase(Locale.ROOT)));
+        }
+        if (cityAutoZonesButton != null) {
+            cityAutoZonesButton.setMessage(Text.literal("Auto Zones"));
+        }
+        if (cityAutoCityButton != null) {
+            cityAutoCityButton.setMessage(Text.literal("Auto City"));
         }
     }
 
@@ -1816,6 +1886,10 @@ public class BladelowHudScreen extends Screen {
         if (command.startsWith("bladeblueprint build")) {
             return "Queueing blueprint...";
         }
+        if (command.startsWith("bladeblueprint townautocity")) {
+            citySummary = "auto city queued";
+            return "Auto-zoning and queueing city phases...";
+        }
         if (command.startsWith("bladeblueprint townruncity")) {
             citySummary = "city pipeline queued";
             return "Queueing city pipeline...";
@@ -1843,6 +1917,10 @@ public class BladelowHudScreen extends Screen {
         if (command.startsWith("bladezone set")) {
             citySummary = "district saved";
             return "Saving district type from current area...";
+        }
+        if (command.startsWith("bladezone autolayout")) {
+            citySummary = "districts auto-zoned";
+            return "Generating district layout...";
         }
         if (command.startsWith("bladezone list")) {
             return "Listing districts...";
@@ -2223,6 +2301,7 @@ public class BladelowHudScreen extends Screen {
         UiState.markerB = readProfileValue(profile, "markerB", "");
         UiState.districtCounts = readProfileValue(profile, "districtCounts", "");
         UiState.citySummary = readProfileValue(profile, "citySummary", "none");
+        UiState.cityPreset = readProfileValue(profile, "cityPreset", "medieval");
     }
 
     private void saveUiState() {
@@ -2278,6 +2357,7 @@ public class BladelowHudScreen extends Screen {
         UiState.recent = joinPipe(new ArrayList<>(recentBlockIds));
         UiState.districtCounts = encodeDistrictCounts();
         UiState.citySummary = citySummary == null ? "none" : citySummary;
+        UiState.cityPreset = normalizeCityPreset(cityLayoutPreset);
 
         writeProfileValue(profileKey, "mode", UiState.mode);
         writeProfileValue(profileKey, "flow", UiState.flow);
@@ -2313,6 +2393,7 @@ public class BladelowHudScreen extends Screen {
         writeProfileValue(profileKey, "markerB", UiState.markerB);
         writeProfileValue(profileKey, "districtCounts", UiState.districtCounts);
         writeProfileValue(profileKey, "citySummary", UiState.citySummary);
+        writeProfileValue(profileKey, "cityPreset", UiState.cityPreset);
 
         flushHudStore();
     }

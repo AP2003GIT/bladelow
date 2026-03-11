@@ -57,7 +57,7 @@ Helper scripts:
 
 - `SEL`: selection/marker-based builds.
 - `BP`: blueprint-driven builds/import.
-- `CITY`: district/town tools.
+- `CITY`: district/town tools with automation presets.
 
 ### Flow Tabs
 
@@ -68,10 +68,16 @@ Helper scripts:
 
 ### Main Run Controls
 
-- `Start Build` (or `Run Town Fill` when in `CITY` mode)
-- `Stop` -> `bladepause`
-- `Continue Build` -> `bladecontinue`
-- `Cancel` -> `bladecancel`
+- `Start Build` (or `Run City Build` in `CITY` mode)
+- `Pause` -> `bladepause`
+- `Resume` -> `bladecontinue`
+- `Stop Build` -> `bladecancel`
+
+### City Automation (HUD)
+
+- `Preset`: cycles district layout preset (`medieval`, `balanced`, `harbor`).
+- `Auto Zones`: runs `/bladezone autolayout <preset>`.
+- `Auto City`: runs `/bladeblueprint townautocity <preset>`.
 
 ### HUD Hotkeys (while HUD open)
 
