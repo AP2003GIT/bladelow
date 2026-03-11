@@ -161,6 +161,7 @@ Use slash form for those:
 
 - `/bladezone set <type>`
 - `/bladezone box <type> <from> <to>`
+- `/bladezone autolayout <balanced|medieval|harbor> [append]`
 - `/bladezone list`
 - `/bladezone clear [type]`
 
@@ -271,7 +272,7 @@ Example:
 ## Recommended Town Workflow
 
 1. Mark build bounds in HUD (`AREA`) or use `/bladeselect markerbox`.
-2. Save district zones (`/bladezone set` or `/bladezone box`).
+2. Save district zones (`/bladezone set` or `/bladezone box`) or auto-generate with `/bladezone autolayout medieval`.
 3. Check available town templates (`/bladeblueprint townlist`).
 4. Preview (`/bladeblueprint townpreviewsel`).
 5. Run fill (`/bladeblueprint townfillsel`).
