@@ -156,6 +156,7 @@ Use slash form for those:
 - `/bladeblueprint townpreviewzone <type> [from to]`
 - `/bladeblueprint townclearlocks`
 - `/bladeblueprint townruncity [from to]`
+- `/bladeblueprint townautocity <balanced|medieval|harbor> [append]`
 
 ### District Zones
 
@@ -276,7 +277,7 @@ Example:
 3. Check available town templates (`/bladeblueprint townlist`).
 4. Preview (`/bladeblueprint townpreviewsel`).
 5. Run fill (`/bladeblueprint townfillsel`).
-6. Optional multi-step city run (`/bladeblueprint townruncity`).
+6. Optional multi-step city run (`/bladeblueprint townruncity`) or one-shot auto city (`/bladeblueprint townautocity medieval`).
 
 ## Troubleshooting
 
