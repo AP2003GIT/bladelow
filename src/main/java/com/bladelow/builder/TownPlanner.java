@@ -27,6 +27,36 @@ public final class TownPlanner {
     private static final int SYNTHETIC_ROAD_THRESHOLD = 10;
     private static final int STYLE_SCAN_HEIGHT = 18;
     private static final int STYLE_MIN_SAMPLES = 24;
+    private static final Set<String> TERRAIN_STYLE_EXACT = Set.of(
+        "grass_block",
+        "dirt",
+        "coarse_dirt",
+        "rooted_dirt",
+        "podzol",
+        "mycelium",
+        "mud",
+        "muddy_mangrove_roots",
+        "sand",
+        "red_sand",
+        "gravel",
+        "clay",
+        "stone",
+        "granite",
+        "diorite",
+        "andesite",
+        "deepslate",
+        "tuff",
+        "calcite",
+        "netherrack",
+        "basalt",
+        "blackstone",
+        "end_stone",
+        "moss_block",
+        "snow_block",
+        "ice",
+        "packed_ice",
+        "blue_ice"
+    );
     private static final List<String> ROAD_HINTS = List.of(
         "path",
         "gravel",
@@ -642,6 +672,33 @@ public final class TownPlanner {
         return "";
     }
 
+    private static boolean isTerrainStyleNoise(String path) {
+        if (path == null || path.isBlank()) {
+            return true;
+        }
+        String normalized = path.toLowerCase(Locale.ROOT);
+        if (TERRAIN_STYLE_EXACT.contains(normalized)) {
+            return true;
+        }
+        if (normalized.endsWith("_ore")
+            || normalized.endsWith("_leaves")
+            || normalized.endsWith("_log")
+            || normalized.endsWith("_wood")
+            || normalized.startsWith("stripped_")
+            || normalized.startsWith("infested_")) {
+            return true;
+        }
+        return normalized.contains("grass")
+            || normalized.contains("fern")
+            || normalized.contains("vine")
+            || normalized.contains("mushroom")
+            || normalized.contains("dripleaf")
+            || normalized.contains("nylium")
+            || normalized.contains("coral")
+            || normalized.contains("kelp")
+            || normalized.contains("seagrass");
+    }
+
     private record PlotPlacement(TownBlueprint blueprint, LotCandidate lot, int originX, int originZ, double score) {
     }
 
@@ -760,7 +817,11 @@ public final class TownPlanner {
                         if (id == null) {
                             continue;
                         }
-                        String theme = styleThemeFromPath(id.getPath());
+                        String path = id.getPath();
+                        if (isTerrainStyleNoise(path)) {
+                            continue;
+                        }
+                        String theme = styleThemeFromPath(path);
                         if (theme.isBlank()) {
                             continue;
                         }
