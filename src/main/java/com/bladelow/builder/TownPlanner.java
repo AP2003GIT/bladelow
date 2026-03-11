@@ -40,17 +40,6 @@ public final class TownPlanner {
         "red_sand",
         "gravel",
         "clay",
-        "stone",
-        "granite",
-        "diorite",
-        "andesite",
-        "deepslate",
-        "tuff",
-        "calcite",
-        "netherrack",
-        "basalt",
-        "blackstone",
-        "end_stone",
         "moss_block",
         "snow_block",
         "ice",
@@ -682,9 +671,6 @@ public final class TownPlanner {
         }
         if (normalized.endsWith("_ore")
             || normalized.endsWith("_leaves")
-            || normalized.endsWith("_log")
-            || normalized.endsWith("_wood")
-            || normalized.startsWith("stripped_")
             || normalized.startsWith("infested_")) {
             return true;
         }
