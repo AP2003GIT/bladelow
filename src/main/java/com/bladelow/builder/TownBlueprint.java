@@ -4,6 +4,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
+/**
+ * Planner-friendly representation of a reusable town structure.
+ *
+ * This wraps raw placements with plot size, entrance, road-facing orientation,
+ * and tags so the town planner can score it directly.
+ */
 public record TownBlueprint(
     String name,
     String category,
@@ -79,6 +85,8 @@ public record TownBlueprint(
         if (normalizedTarget.isBlank()) {
             return this;
         }
+        // Rotate placements and entrance offsets together so the structure still
+        // lines up with the requested road side after orientation changes.
         String sourceSide = roadSide.isBlank() ? "north" : roadSide;
         int turns = Math.floorMod(sideIndex(normalizedTarget) - sideIndex(sourceSide), 4);
         if (turns == 0 && normalizedTarget.equals(sourceSide)) {

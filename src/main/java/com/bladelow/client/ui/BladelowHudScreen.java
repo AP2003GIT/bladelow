@@ -3,11 +3,13 @@ package com.bladelow.client.ui;
 import com.bladelow.client.BladelowHudTelemetry;
 import com.bladelow.client.BladelowSelectionOverlay;
 import net.minecraft.block.Block;
+import net.minecraft.block.BlockState;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.TextFieldWidget;
+import net.minecraft.client.world.ClientWorld;
 import net.minecraft.entity.player.PlayerInventory;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
@@ -16,6 +18,7 @@ import net.minecraft.registry.Registries;
 import net.minecraft.text.Text;
 import net.minecraft.util.Identifier;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.world.Heightmap;
 import org.lwjgl.glfw.GLFW;
 
 import java.io.IOException;
@@ -34,6 +37,13 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 
+/**
+ * Main in-game control surface for Bladelow.
+ *
+ * The HUD acts as a lightweight mission editor: it lets the player define build
+ * areas, pick materials, preview city districts, and launch planner/builder
+ * actions without falling back to chat commands for every step.
+ */
 public class BladelowHudScreen extends Screen {
     private static final List<String> DEFAULT_BLOCK_IDS = List.of(
         "minecraft:stone", "minecraft:cobblestone", "minecraft:oak_planks", "minecraft:spruce_planks",
@@ -72,16 +82,25 @@ public class BladelowHudScreen extends Screen {
     private static final String[] PROFILE_PRESETS = {"builder", "safe", "fast"};
     private static final String[] SCALE_LABELS = {"S", "M", "L"};
     private static final double[] SCALE_VALUES = {0.90, 1.00, 1.12};
-    private static final String[] CITY_LAYOUT_PRESETS = {"medieval", "balanced", "harbor"};
+    private static final String[] CITY_LAYOUT_PRESETS = {"medieval", "balanced", "harbor", "adaptive"};
     private static final int PANEL_BASE_WIDTH = 1120;
     private static final int PANEL_BASE_HEIGHT = 640;
     private static final int PANEL_MIN_WIDTH = 920;
     private static final int PANEL_MIN_HEIGHT = 540;
+    private static final int MINIMAP_BASE_RADIUS = 72;
+    private static final int MINIMAP_MAX_RADIUS = 196;
+    private static final int MAX_SUGGESTED_PLOTS = 6;
 
     private static final Path HUD_STATE_PATH = Path.of("config", "bladelow", "hud-state.properties");
     private static final Properties HUD_STORE = new Properties();
     private static boolean hudStoreLoaded;
 
+    /**
+     * Persisted UI state shared across HUD sessions.
+     *
+     * Keeping it in one place makes it easy to restore the user's last flow,
+     * selected slots, scale, and minimap markers after reopening the HUD.
+     */
     private static final class UiState {
         private static String mode = MODE_SELECTION;
         private static String axis = "x";
@@ -94,8 +113,6 @@ public class BladelowHudScreen extends Screen {
         private static String height = "6";
 
         private static String blueprint = "town_house_small";
-        private static String web = "";
-        private static String limit = "12";
         private static String search = "";
 
         private static boolean smart = true;
@@ -143,8 +160,6 @@ public class BladelowHudScreen extends Screen {
     private TextFieldWidget countField;
     private TextFieldWidget heightField;
     private TextFieldWidget blueprintField;
-    private TextFieldWidget webField;
-    private TextFieldWidget catalogLimitField;
 
     private ButtonWidget flowAreaButton;
     private ButtonWidget flowBlocksButton;
@@ -191,8 +206,6 @@ public class BladelowHudScreen extends Screen {
     private ButtonWidget bpNextButton;
     private ButtonWidget bpLoadButton;
     private ButtonWidget bpBuildButton;
-    private ButtonWidget webCatalogButton;
-    private ButtonWidget webImportButton;
     private ButtonWidget zoneResidentialButton;
     private ButtonWidget zoneMarketButton;
     private ButtonWidget zoneWorkshopButton;
@@ -229,6 +242,10 @@ public class BladelowHudScreen extends Screen {
     private int valueY;
     private int actionsY;
     private int statusY;
+    private int planningMapX;
+    private int planningMapY;
+    private int planningMapW;
+    private int planningMapH;
 
     private int tileW;
     private int tileH;
@@ -261,6 +278,11 @@ public class BladelowHudScreen extends Screen {
     private boolean suppressFieldCallbacks;
     private final LinkedHashMap<String, Integer> districtCounts = new LinkedHashMap<>();
     private String citySummary = "none";
+    private String districtBrush = "";
+    private boolean planningDragActive;
+    private BlockPos planningDragOrigin;
+    private List<SuggestedPlot> suggestedPlots = List.of();
+    private int selectedSuggestedPlot = -1;
 
     public BladelowHudScreen() {
         super(Text.literal("Bladelow Builder"));
@@ -496,32 +518,27 @@ public class BladelowHudScreen extends Screen {
             .build());
 
         int sourceFieldY = searchY + (buttonH + rowGap) * 2;
-        this.webField = new TextFieldWidget(this.textRenderer, rightX, sourceFieldY, rightW, buttonH, Text.literal("BuildIt URL"));
-        this.webField.setPlaceholder(Text.literal("builditapp url or index"));
-        this.webField.setText(UiState.web);
-        addDrawableChild(this.webField);
-
-        this.bpLoadButton = addDrawableChild(ButtonWidget.builder(Text.literal("Import URL"), b -> webImport())
+        this.bpLoadButton = addDrawableChild(ButtonWidget.builder(Text.literal("Load Blueprint"), b -> loadBlueprint())
             .dimensions(rightX, sourceFieldY + buttonH + rowGap, rightW, buttonH)
             .build());
 
         int cityHalfW = (rightW - rowGap) / 2;
         int cityY = searchY + buttonH + rowGap;
-        this.zoneResidentialButton = addDrawableChild(ButtonWidget.builder(Text.literal("Residential"), b -> saveZoneFromMarkers("residential"))
+        this.zoneResidentialButton = addDrawableChild(ButtonWidget.builder(Text.literal("Residential"), b -> setDistrictBrush("residential"))
             .dimensions(rightX, cityY, cityHalfW, buttonH)
             .build());
-        this.zoneMarketButton = addDrawableChild(ButtonWidget.builder(Text.literal("Market"), b -> saveZoneFromMarkers("market"))
+        this.zoneMarketButton = addDrawableChild(ButtonWidget.builder(Text.literal("Market"), b -> setDistrictBrush("market"))
             .dimensions(rightX + cityHalfW + rowGap, cityY, cityHalfW, buttonH)
             .build());
         cityY += buttonH + rowGap;
-        this.zoneWorkshopButton = addDrawableChild(ButtonWidget.builder(Text.literal("Workshop"), b -> saveZoneFromMarkers("workshop"))
+        this.zoneWorkshopButton = addDrawableChild(ButtonWidget.builder(Text.literal("Workshop"), b -> setDistrictBrush("workshop"))
             .dimensions(rightX, cityY, cityHalfW, buttonH)
             .build());
-        this.zoneCivicButton = addDrawableChild(ButtonWidget.builder(Text.literal("Civic"), b -> saveZoneFromMarkers("civic"))
+        this.zoneCivicButton = addDrawableChild(ButtonWidget.builder(Text.literal("Civic"), b -> setDistrictBrush("civic"))
             .dimensions(rightX + cityHalfW + rowGap, cityY, cityHalfW, buttonH)
             .build());
         cityY += buttonH + rowGap;
-        this.zoneMixedButton = addDrawableChild(ButtonWidget.builder(Text.literal("Mixed"), b -> saveZoneFromMarkers("mixed"))
+        this.zoneMixedButton = addDrawableChild(ButtonWidget.builder(Text.literal("Mixed"), b -> setDistrictBrush("mixed"))
             .dimensions(rightX, cityY, cityHalfW, buttonH)
             .build());
         this.cityPresetButton = addDrawableChild(ButtonWidget.builder(Text.literal("Preset"), b -> cycleCityPreset())
@@ -535,21 +552,21 @@ public class BladelowHudScreen extends Screen {
             .dimensions(rightX + cityHalfW + rowGap, cityY, cityHalfW, buttonH)
             .build());
         cityY += buttonH + rowGap;
-        this.cityTownListButton = addDrawableChild(ButtonWidget.builder(Text.literal("Town List"), b -> sendCommand("bladeblueprint townlist"))
+        this.cityTownListButton = addDrawableChild(ButtonWidget.builder(Text.literal("Director Status"), b -> sendCommand("bladeblueprint citystatus"))
             .dimensions(rightX, cityY, cityHalfW, buttonH)
             .build());
-        this.cityPreviewButton = addDrawableChild(ButtonWidget.builder(Text.literal("Preview Fill"), b -> runCityPreview())
+        this.cityPreviewButton = addDrawableChild(ButtonWidget.builder(Text.literal("Director Stop"), b -> sendCommand("bladeblueprint citystop"))
             .dimensions(rightX + cityHalfW + rowGap, cityY, cityHalfW, buttonH)
             .build());
         cityY += buttonH + rowGap;
-        this.cityTownFillButton = addDrawableChild(ButtonWidget.builder(Text.literal("Town Fill"), b -> runCityBuild())
+        this.cityTownFillButton = addDrawableChild(ButtonWidget.builder(Text.literal("Director Continue"), b -> sendCommand("bladeblueprint citycontinue"))
             .dimensions(rightX, cityY, cityHalfW, buttonH)
             .build());
         this.cityAutoZonesButton = addDrawableChild(ButtonWidget.builder(Text.literal("Auto Zones"), b -> runCityAutoZones())
             .dimensions(rightX + cityHalfW + rowGap, cityY, cityHalfW, buttonH)
             .build());
         cityY += buttonH + rowGap;
-        this.cityAutoCityButton = addDrawableChild(ButtonWidget.builder(Text.literal("Auto City"), b -> runCityAutoCity())
+        this.cityAutoCityButton = addDrawableChild(ButtonWidget.builder(Text.literal("Director Start"), b -> runCityAutoCity())
             .dimensions(rightX, cityY, rightW, buttonH)
             .build());
 
@@ -604,18 +621,6 @@ public class BladelowHudScreen extends Screen {
         this.bpNextButton = addDrawableChild(ButtonWidget.builder(Text.literal(">"), b -> cycleBlueprint(1))
             .dimensions(rightX, hiddenY, sx(1), buttonH)
             .build());
-
-        this.catalogLimitField = new TextFieldWidget(this.textRenderer, rightX, hiddenY, sx(24), buttonH, Text.literal("Limit"));
-        this.catalogLimitField.setText(UiState.limit);
-        addDrawableChild(this.catalogLimitField);
-
-        this.webCatalogButton = addDrawableChild(ButtonWidget.builder(Text.literal("Cat"), b -> webCatalog())
-            .dimensions(rightX, hiddenY, sx(1), buttonH)
-            .build());
-        this.webImportButton = addDrawableChild(ButtonWidget.builder(Text.literal("Imp"), b -> webImport())
-            .dimensions(rightX, hiddenY, sx(1), buttonH)
-            .build());
-
         refreshButtonLabels();
         updateModeUi();
         updateFlowUi();
@@ -624,6 +629,7 @@ public class BladelowHudScreen extends Screen {
         updateBlockButtons();
         updateAxisButtons();
         updateRunGuard();
+        refreshSuggestedPlots();
     }
 
     private void computeLayout() {
@@ -665,6 +671,10 @@ public class BladelowHudScreen extends Screen {
         this.valueY = searchY + (buttonH + rowGap) * 4;
         this.actionsY = panelY + panelH - sx(64);
         this.statusY = actionsY + buttonH + rowGap;
+        this.planningMapX = leftX;
+        this.planningMapY = searchY;
+        this.planningMapW = leftW;
+        this.planningMapH = Math.max(sx(180), actionsY - searchY - rowGap);
     }
 
     private int sx(int base) {
@@ -674,6 +684,9 @@ public class BladelowHudScreen extends Screen {
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
         drawPanelBackground(context);
+        if (showPlanningMap()) {
+            drawPlanningMap(context, mouseX, mouseY);
+        }
 
         super.render(context, mouseX, mouseY, delta);
 
@@ -689,7 +702,7 @@ public class BladelowHudScreen extends Screen {
 
     private void drawPanelBackground(DrawContext context) {
         int headerY = panelY + sx(22);
-        int leftBottom = slotsY + buttonH + rowGap;
+        int leftBottom = Math.max(slotsY + buttonH + rowGap, planningMapY + planningMapH + rowGap);
         int rightBottom = actionsY - rowGap;
 
         context.fill(panelX, panelY, panelX + panelW, panelY + panelH, 0xD0111111);
@@ -700,10 +713,384 @@ public class BladelowHudScreen extends Screen {
         context.fill(panelX + sx(6), statusY, panelX + panelW - sx(6), panelY + panelH - sx(6), 0x55303A4D);
         drawBorder(context, panelX, panelY, panelW, panelH, 0xFFFFFFFF);
         context.drawText(this.textRenderer, Text.literal("BLADELOW BUILDER"), panelX + sx(8), panelY + sx(7), 0xFFF1F5FC, false);
-        context.drawText(this.textRenderer, Text.literal("BLOCK PICKER"), leftX, headerY - sx(10), 0xFFD1DBEA, false);
+        context.drawText(this.textRenderer, Text.literal(leftPanelLabel()), leftX, headerY - sx(10), 0xFFD1DBEA, false);
         context.drawText(this.textRenderer, Text.literal(rightPanelLabel()), rightX, headerY - sx(10), 0xFFD1DBEA, false);
         context.drawText(this.textRenderer, Text.literal("BUILD CONTROLS"), panelX + sx(8), actionsY - sx(14), 0xFFD1DBEA, false);
 
+    }
+
+    private String leftPanelLabel() {
+        if (FLOW_BLOCKS.equals(activeFlow)) {
+            return "BLOCK PICKER";
+        }
+        if (MODE_CITY.equals(activeMode) && FLOW_SOURCE.equals(activeFlow)) {
+            return "CITY MAP";
+        }
+        return "PLANNING MAP";
+    }
+
+    private boolean showPlanningMap() {
+        return !FLOW_BLOCKS.equals(activeFlow);
+    }
+
+    private void drawPlanningMap(DrawContext context, int mouseX, int mouseY) {
+        MinimapView view = currentMinimapView();
+        if (view == null || this.client == null || this.client.world == null) {
+            return;
+        }
+
+        int legendY = view.screenY() + view.screenH() + sx(6);
+        context.fill(view.screenX(), view.screenY(), view.screenX() + view.screenW(), view.screenY() + view.screenH(), 0xCC18212B);
+        drawBorder(context, view.screenX(), view.screenY(), view.screenW(), view.screenH(), 0xFF8AA4C4);
+
+        // Sample the world into a coarse minimap grid. This is not a chunk map;
+        // it is a planning aid that favors clarity and speed over exact detail.
+        int samplesX = Math.max(24, Math.min(48, view.screenW() / Math.max(2, sx(6))));
+        int samplesZ = Math.max(24, Math.min(48, view.screenH() / Math.max(2, sx(6))));
+        double cellW = (double) view.screenW() / samplesX;
+        double cellH = (double) view.screenH() / samplesZ;
+        for (int sampleZ = 0; sampleZ < samplesZ; sampleZ++) {
+            for (int sampleX = 0; sampleX < samplesX; sampleX++) {
+                int worldX = view.minX() + (int) Math.round((sampleX + 0.5) * (view.maxX() - view.minX()) / Math.max(1.0, samplesX));
+                int worldZ = view.minZ() + (int) Math.round((sampleZ + 0.5) * (view.maxZ() - view.minZ()) / Math.max(1.0, samplesZ));
+                MinimapCell cell = sampleMinimapCell(this.client.world, worldX, worldZ, view.baseY());
+                int x1 = view.screenX() + (int) Math.floor(sampleX * cellW);
+                int y1 = view.screenY() + (int) Math.floor(sampleZ * cellH);
+                int x2 = view.screenX() + (int) Math.ceil((sampleX + 1) * cellW);
+                int y2 = view.screenY() + (int) Math.ceil((sampleZ + 1) * cellH);
+                context.fill(x1, y1, x2, y2, cell.color());
+            }
+        }
+
+        int gridColor = 0x334D5D73;
+        context.fill(view.screenX() + view.screenW() / 2, view.screenY(), view.screenX() + view.screenW() / 2 + 1, view.screenY() + view.screenH(), gridColor);
+        context.fill(view.screenX(), view.screenY() + view.screenH() / 2, view.screenX() + view.screenW(), view.screenY() + view.screenH() / 2 + 1, gridColor);
+
+        if (this.client.player != null) {
+            int playerX = worldToMapX(view, this.client.player.getBlockX());
+            int playerY = worldToMapZ(view, this.client.player.getBlockZ());
+            context.fill(playerX - sx(2), playerY - sx(2), playerX + sx(2), playerY + sx(2), 0xFFFFDD6A);
+        }
+
+        if (markerA != null && markerB != null) {
+            int zoneColor = districtBrushColor();
+            drawMapSelectionRect(context, view, markerA, markerB, zoneColor);
+        }
+        drawSuggestedPlots(context, view);
+        if (markerA != null) {
+            drawMapMarker(context, view, markerA, 0xFFF5F5F5);
+        }
+        if (markerB != null) {
+            drawMapMarker(context, view, markerB, 0xFF4CB8FF);
+        }
+
+        boolean hovering = isInside(mouseX, mouseY, view.screenX(), view.screenY(), view.screenW(), view.screenH());
+        if (hovering) {
+            BlockPos hovered = mapScreenToWorld(view, mouseX, mouseY);
+            if (hovered != null) {
+                MinimapCell hoveredCell = sampleMinimapCell(this.client.world, hovered.getX(), hovered.getZ(), view.baseY());
+                int hoverX = worldToMapX(view, hovered.getX());
+                int hoverY = worldToMapZ(view, hovered.getZ());
+                context.fill(hoverX - 1, hoverY - 1, hoverX + 2, hoverY + 2, 0xFFFFFFFF);
+                String hoverLabel = hoveredCell.label() + " | " + hovered.getX() + ", " + hovered.getZ();
+                context.drawText(this.textRenderer, Text.literal(hoverLabel), view.screenX() + sx(6), view.screenY() + sx(6), 0xFFF4F7FB, false);
+            }
+        }
+
+        String title = planningMapTitle();
+        String subtitle = planningMapSubtitle();
+        context.drawText(this.textRenderer, Text.literal(title), view.screenX(), legendY, 0xFFDCE7F7, false);
+        context.drawText(this.textRenderer, Text.literal(this.textRenderer.trimToWidth(subtitle, view.screenW())), view.screenX(), legendY + sx(10), 0xFFB6C5D8, false);
+        drawPlanningMapLegend(context, view, legendY + sx(20));
+    }
+
+    private String planningMapTitle() {
+        if (MODE_CITY.equals(activeMode) && FLOW_SOURCE.equals(activeFlow)) {
+            return "City layout map: drag to paint a district area";
+        }
+        return "Layout map: drag to place the build area";
+    }
+
+    private String planningMapSubtitle() {
+        String brush = districtBrush.isBlank() ? "-" : districtBrush.toUpperCase(Locale.ROOT);
+        if (markerA != null && markerB != null) {
+            int width = Math.abs(markerA.getX() - markerB.getX()) + 1;
+            int depth = Math.abs(markerA.getZ() - markerB.getZ()) + 1;
+            return "Area " + width + "x" + depth + " | Brush " + brush + " | Shift-click a suggested plot to snap selection";
+        }
+        return "Brush " + brush + " | Layout view with roads, water, builds, and terrain";
+    }
+
+    /**
+     * Sample one minimap column and classify it into a layout-friendly category
+     * so the HUD reads like a planning map instead of a raw coordinate grid.
+     */
+    private MinimapCell sampleMinimapCell(ClientWorld world, int worldX, int worldZ, int referenceY) {
+        int topY = world.getTopY(Heightmap.Type.MOTION_BLOCKING_NO_LEAVES, worldX, worldZ) - 1;
+        if (topY < world.getBottomY()) {
+            return new MinimapCell(MapCellType.TERRAIN, 0xFF101720, "void", world.getBottomY());
+        }
+        BlockPos pos = new BlockPos(worldX, topY, worldZ);
+        BlockState state = world.getBlockState(pos);
+        String path = Registries.BLOCK.getId(state.getBlock()).getPath();
+        MapCellType type = classifyMinimapCell(path, !state.getFluidState().isEmpty(), topY, referenceY);
+        int base = colorForSurface(type);
+        int shade = clamp((topY - referenceY) * 3, -22, 22);
+        return new MinimapCell(type, shadeColor(base, shade), minimapLabel(type), topY);
+    }
+
+    private MapCellType classifyMinimapCell(String path, boolean fluid, int topY, int referenceY) {
+        String lowered = path == null ? "" : path.toLowerCase(Locale.ROOT);
+        if (fluid || lowered.contains("water") || lowered.contains("kelp") || lowered.contains("seagrass")) {
+            return MapCellType.WATER;
+        }
+        if (lowered.contains("path") || lowered.contains("gravel")
+            || (Math.abs(topY - referenceY) <= 3 && (lowered.contains("road") || lowered.contains("farmland")))) {
+            return MapCellType.ROAD;
+        }
+        if (lowered.contains("leaf") || lowered.contains("vine") || lowered.contains("crop")
+            || lowered.contains("grass") || lowered.contains("moss") || lowered.contains("bush")
+            || lowered.contains("flower") || lowered.contains("sapling")) {
+            return MapCellType.VEGETATION;
+        }
+        if (looksLikeStructureSurface(lowered)) {
+            return MapCellType.BUILDING;
+        }
+        if (lowered.contains("sand") || lowered.contains("clay") || lowered.contains("dirt") || lowered.contains("mud")) {
+            return MapCellType.OPEN_GROUND;
+        }
+        return MapCellType.TERRAIN;
+    }
+
+    private boolean looksLikeStructureSurface(String path) {
+        return path.contains("planks")
+            || path.contains("brick")
+            || path.contains("stone_bricks")
+            || path.contains("cobble")
+            || path.contains("quartz")
+            || path.contains("glass")
+            || path.contains("terracotta")
+            || path.contains("concrete")
+            || path.contains("wool")
+            || path.contains("log")
+            || path.contains("wood")
+            || path.contains("fence")
+            || path.contains("wall")
+            || path.contains("door")
+            || path.contains("trapdoor")
+            || path.contains("stairs")
+            || path.contains("slab")
+            || path.contains("copper")
+            || path.contains("deepslate_tiles")
+            || path.contains("polished")
+            || path.contains("cut_");
+    }
+
+    private int colorForSurface(MapCellType type) {
+        return switch (type) {
+            case WATER -> 0xFF2E5F93;
+            case ROAD -> 0xFFB88D5E;
+            case BUILDING -> 0xFF8A6B61;
+            case VEGETATION -> 0xFF4B7C48;
+            case OPEN_GROUND -> 0xFFA18B67;
+            case TERRAIN -> 0xFF727A84;
+        };
+    }
+
+    private String minimapLabel(MapCellType type) {
+        return switch (type) {
+            case WATER -> "Water";
+            case ROAD -> "Road";
+            case BUILDING -> "Structure";
+            case VEGETATION -> "Vegetation";
+            case OPEN_GROUND -> "Open ground";
+            case TERRAIN -> "Terrain";
+        };
+    }
+
+    private void drawPlanningMapLegend(DrawContext context, MinimapView view, int y) {
+        int x = view.screenX();
+        x = drawLegendSwatch(context, x, y, colorForSurface(MapCellType.WATER), "Water");
+        x = drawLegendSwatch(context, x, y, colorForSurface(MapCellType.ROAD), "Road");
+        x = drawLegendSwatch(context, x, y, colorForSurface(MapCellType.BUILDING), "Build");
+        x = drawLegendSwatch(context, x, y, colorForSurface(MapCellType.VEGETATION), "Green");
+        drawLegendSwatch(context, x, y, colorForSurface(MapCellType.OPEN_GROUND), "Open");
+    }
+
+    private int drawLegendSwatch(DrawContext context, int x, int y, int color, String label) {
+        int size = sx(7);
+        context.fill(x, y + sx(2), x + size, y + sx(2) + size, color);
+        drawBorder(context, x, y + sx(2), size, size, 0xFFCED7E4);
+        context.drawText(this.textRenderer, Text.literal(label), x + size + sx(4), y, 0xFFB6C5D8, false);
+        return x + size + sx(4) + this.textRenderer.getWidth(label) + sx(12);
+    }
+
+    private void drawSuggestedPlots(DrawContext context, MinimapView view) {
+        if (suggestedPlots.isEmpty()) {
+            return;
+        }
+        for (int i = 0; i < suggestedPlots.size(); i++) {
+            SuggestedPlot plot = suggestedPlots.get(i);
+            int color = i == selectedSuggestedPlot ? 0xFF7DFFA0 : 0xFFC9E17A;
+            int fillColor = i == selectedSuggestedPlot ? 0x337DFFA0 : 0x22C9E17A;
+            int left = Math.min(worldToMapX(view, plot.minX()), worldToMapX(view, plot.maxX()));
+            int right = Math.max(worldToMapX(view, plot.minX()), worldToMapX(view, plot.maxX()));
+            int top = Math.min(worldToMapZ(view, plot.minZ()), worldToMapZ(view, plot.maxZ()));
+            int bottom = Math.max(worldToMapZ(view, plot.minZ()), worldToMapZ(view, plot.maxZ()));
+            context.fill(left, top, right + 1, bottom + 1, fillColor);
+            drawBorder(context, left, top, Math.max(1, right - left + 1), Math.max(1, bottom - top + 1), color);
+        }
+    }
+
+    private int shadeColor(int argb, int amount) {
+        int a = (argb >>> 24) & 0xFF;
+        int r = clamp(((argb >>> 16) & 0xFF) + amount, 0, 255);
+        int g = clamp(((argb >>> 8) & 0xFF) + amount, 0, 255);
+        int b = clamp((argb & 0xFF) + amount, 0, 255);
+        return (a << 24) | (r << 16) | (g << 8) | b;
+    }
+
+    private void drawMapSelectionRect(DrawContext context, MinimapView view, BlockPos a, BlockPos b, int color) {
+        int left = Math.min(worldToMapX(view, a.getX()), worldToMapX(view, b.getX()));
+        int right = Math.max(worldToMapX(view, a.getX()), worldToMapX(view, b.getX()));
+        int top = Math.min(worldToMapZ(view, a.getZ()), worldToMapZ(view, b.getZ()));
+        int bottom = Math.max(worldToMapZ(view, a.getZ()), worldToMapZ(view, b.getZ()));
+        context.fill(left, top, right + 1, bottom + 1, (color & 0x00FFFFFF) | 0x33000000);
+        drawBorder(context, left, top, Math.max(1, right - left + 1), Math.max(1, bottom - top + 1), color);
+    }
+
+    private void drawMapMarker(DrawContext context, MinimapView view, BlockPos pos, int color) {
+        int px = worldToMapX(view, pos.getX());
+        int py = worldToMapZ(view, pos.getZ());
+        context.fill(px - sx(2), py - sx(2), px + sx(2), py + sx(2), color);
+    }
+
+    private int worldToMapX(MinimapView view, int worldX) {
+        double t = (worldX - view.minX()) / (double) Math.max(1, view.maxX() - view.minX());
+        t = Math.max(0.0, Math.min(1.0, t));
+        return view.screenX() + (int) Math.round(t * (view.screenW() - 1));
+    }
+
+    private int worldToMapZ(MinimapView view, int worldZ) {
+        double t = (worldZ - view.minZ()) / (double) Math.max(1, view.maxZ() - view.minZ());
+        t = Math.max(0.0, Math.min(1.0, t));
+        return view.screenY() + (int) Math.round(t * (view.screenH() - 1));
+    }
+
+    private BlockPos mapScreenToWorld(MinimapView view, double mouseX, double mouseY) {
+        if (!isInside(mouseX, mouseY, view.screenX(), view.screenY(), view.screenW(), view.screenH())) {
+            return null;
+        }
+        double tx = (mouseX - view.screenX()) / Math.max(1.0, view.screenW() - 1.0);
+        double tz = (mouseY - view.screenY()) / Math.max(1.0, view.screenH() - 1.0);
+        int worldX = view.minX() + (int) Math.round(tx * (view.maxX() - view.minX()));
+        int worldZ = view.minZ() + (int) Math.round(tz * (view.maxZ() - view.minZ()));
+        return new BlockPos(worldX, selectionBaseY(), worldZ);
+    }
+
+    private int selectionBaseY() {
+        if (markerA != null) {
+            return markerA.getY();
+        }
+        Coords coords = effectiveCoords();
+        if (coords != null) {
+            return coords.y;
+        }
+        if (this.client != null && this.client.player != null) {
+            return this.client.player.getBlockY();
+        }
+        return 64;
+    }
+
+    private MinimapView currentMinimapView() {
+        if (planningMapW <= 0 || planningMapH <= 0) {
+            return null;
+        }
+
+        int centerX;
+        int centerZ;
+        if (markerA != null && markerB != null) {
+            centerX = (markerA.getX() + markerB.getX()) / 2;
+            centerZ = (markerA.getZ() + markerB.getZ()) / 2;
+        } else if (markerA != null) {
+            centerX = markerA.getX();
+            centerZ = markerA.getZ();
+        } else if (this.client != null && this.client.player != null) {
+            centerX = this.client.player.getBlockX();
+            centerZ = this.client.player.getBlockZ();
+        } else {
+            centerX = 0;
+            centerZ = 0;
+        }
+
+        int radius = MINIMAP_BASE_RADIUS;
+        if (markerA != null && markerB != null) {
+            radius = Math.max(radius, Math.max(Math.abs(markerA.getX() - markerB.getX()), Math.abs(markerA.getZ() - markerB.getZ())) / 2 + 12);
+        }
+        radius = Math.min(MINIMAP_MAX_RADIUS, radius);
+        int mapX = planningMapX + sx(8);
+        int mapY = planningMapY + sx(8);
+        int mapW = Math.max(sx(120), planningMapW - sx(16));
+        int mapH = Math.max(sx(120), planningMapH - sx(30));
+        return new MinimapView(mapX, mapY, mapW, mapH, centerX - radius, centerX + radius, centerZ - radius, centerZ + radius, selectionBaseY());
+    }
+
+    private int districtBrushColor() {
+        return switch (districtBrush) {
+            case "residential" -> 0xFFE0A15B;
+            case "market" -> 0xFF57B7FF;
+            case "workshop" -> 0xFFC377FF;
+            case "civic" -> 0xFF5DDA7A;
+            case "mixed" -> 0xFFE8DE72;
+            default -> 0xFFFF6A6A;
+        };
+    }
+
+    private boolean isInside(double mouseX, double mouseY, int x, int y, int width, int height) {
+        return mouseX >= x && mouseX <= x + width && mouseY >= y && mouseY <= y + height;
+    }
+
+    private boolean isShiftPressed() {
+        if (this.client == null || this.client.getWindow() == null) {
+            return false;
+        }
+        long handle = this.client.getWindow().getHandle();
+        return GLFW.glfwGetKey(handle, GLFW.GLFW_KEY_LEFT_SHIFT) == GLFW.GLFW_PRESS
+            || GLFW.glfwGetKey(handle, GLFW.GLFW_KEY_RIGHT_SHIFT) == GLFW.GLFW_PRESS;
+    }
+
+    private record MinimapView(int screenX, int screenY, int screenW, int screenH, int minX, int maxX, int minZ, int maxZ, int baseY) {
+    }
+
+    private enum MapCellType {
+        WATER,
+        ROAD,
+        BUILDING,
+        VEGETATION,
+        OPEN_GROUND,
+        TERRAIN
+    }
+
+    private record MinimapCell(MapCellType type, int color, String label, int topY) {
+    }
+
+    private record PlotEvaluation(boolean accepted, double score) {
+        private static PlotEvaluation reject() {
+            return new PlotEvaluation(false, Double.NEGATIVE_INFINITY);
+        }
+    }
+
+    private record SuggestedPlot(int minX, int minZ, int maxX, int maxZ, double score, String label) {
+        private boolean contains(int x, int z) {
+            return x >= minX && x <= maxX && z >= minZ && z <= maxZ;
+        }
+
+        private boolean overlaps(SuggestedPlot other, int padding) {
+            return minX - padding <= other.maxX
+                && maxX + padding >= other.minX
+                && minZ - padding <= other.maxZ
+                && maxZ + padding >= other.minZ;
+        }
     }
 
     private String rightPanelLabel() {
@@ -872,7 +1259,11 @@ public class BladelowHudScreen extends Screen {
         context.drawText(this.textRenderer, Text.literal(clippedPrimary), barX + sx(4), barY + sx(3), textColor, false);
         context.drawText(this.textRenderer, Text.literal(clippedSecondary), barX + sx(4), barY + sx(13), 0xFFB7C7DF, false);
         if (cityStatus) {
-            String cityLine = districtSummaryText() + " | " + "Plan: " + citySummary;
+            String latestIntent = BladelowHudTelemetry.latestIntent();
+            String cityLine = districtSummaryText()
+                + " | Plan: " + citySummary
+                + " | Intent: " + (latestIntent == null || latestIntent.isBlank() ? "-" : latestIntent)
+                + " | Brush: " + (districtBrush.isBlank() ? "-" : districtBrush);
             String clippedCityLine = this.textRenderer.trimToWidth(cityLine, barW - sx(10));
             context.drawText(this.textRenderer, Text.literal(clippedCityLine), barX + sx(4), barY + sx(23), 0xFFAED2B4, false);
         }
@@ -975,16 +1366,12 @@ public class BladelowHudScreen extends Screen {
         setVisible(modeSelectionButton, true);
         setVisible(modeBlueprintButton, true);
         setVisible(modeCityButton, true);
-        setVisible(webField, source && blueprintMode);
-        setVisible(bpLoadButton, source && blueprintMode);
 
         boolean blueprintSource = source && blueprintMode;
         setVisible(blueprintField, blueprintSource);
+        setVisible(bpLoadButton, blueprintSource);
         setVisible(bpPrevButton, false);
         setVisible(bpNextButton, false);
-        setVisible(webCatalogButton, false);
-        setVisible(webImportButton, false);
-        setVisible(catalogLimitField, false);
         setVisible(zoneResidentialButton, source && cityMode);
         setVisible(zoneMarketButton, source && cityMode);
         setVisible(zoneWorkshopButton, source && cityMode);
@@ -1390,8 +1777,8 @@ public class BladelowHudScreen extends Screen {
         if (!ensureMarkerSelection()) {
             return;
         }
-        citySummary = "auto city";
-        sendCommand("bladeblueprint townautocity " + cityLayoutPreset);
+        citySummary = "director start";
+        sendCommand("bladeblueprint cityautoplay " + cityLayoutPreset);
     }
 
     private void cycleCityPreset() {
@@ -1507,6 +1894,11 @@ public class BladelowHudScreen extends Screen {
             markerB.getX(), markerB.getY(), markerB.getZ(),
             height
         ));
+        refreshSuggestedPlots();
+        if (MODE_CITY.equals(activeMode)) {
+            citySummary = "intent scan";
+            sendCommand("blademodel intent");
+        }
         BladelowSelectionOverlay.setMarkers(markerA, markerB, height);
     }
 
@@ -1533,9 +1925,24 @@ public class BladelowHudScreen extends Screen {
         sendCommand("bladezone set " + type);
     }
 
+    private void setDistrictBrush(String type) {
+        String normalized = normalizeDistrictType(type);
+        if (normalized.isBlank()) {
+            return;
+        }
+        districtBrush = normalized.equals(districtBrush) ? "" : normalized;
+        updateDistrictBrushButtons();
+        citySummary = districtBrush.isBlank() ? "brush cleared" : "brush=" + districtBrush;
+        statusText = districtBrush.isBlank()
+            ? "District brush cleared"
+            : "District brush: " + districtBrush.toUpperCase(Locale.ROOT) + " | drag on the city map";
+    }
+
     private void clearMarkers() {
         markerA = null;
         markerB = null;
+        suggestedPlots = List.of();
+        selectedSuggestedPlot = -1;
         updateMarkerButtonLabels();
         BladelowSelectionOverlay.clear();
         sendCommand("bladeselect clear");
@@ -1582,6 +1989,208 @@ public class BladelowHudScreen extends Screen {
         BladelowSelectionOverlay.setDraftMarkers(markerA, markerB, height == null ? 1 : height);
     }
 
+    /**
+     * Refresh the locally inferred plot list inside the selected area.
+     *
+     * This runs entirely on the client HUD using the visible world state so the
+     * player gets immediate build suggestions before handing off to the server
+     * planner.
+     */
+    private void refreshSuggestedPlots() {
+        if (this.client == null || this.client.world == null || markerA == null || markerB == null) {
+            suggestedPlots = List.of();
+            selectedSuggestedPlot = -1;
+            return;
+        }
+
+        int minX = Math.min(markerA.getX(), markerB.getX());
+        int maxX = Math.max(markerA.getX(), markerB.getX());
+        int minZ = Math.min(markerA.getZ(), markerB.getZ());
+        int maxZ = Math.max(markerA.getZ(), markerB.getZ());
+        if (maxX - minX + 1 < 7 || maxZ - minZ + 1 < 7) {
+            suggestedPlots = List.of();
+            selectedSuggestedPlot = -1;
+            return;
+        }
+
+        ClientWorld world = this.client.world;
+        int[][] sizePresets = {
+            {7, 7},
+            {9, 7},
+            {9, 9},
+            {11, 9},
+            {11, 11},
+            {13, 11}
+        };
+        List<SuggestedPlot> candidates = new ArrayList<>();
+        for (int[] size : sizePresets) {
+            int plotW = size[0];
+            int plotD = size[1];
+            if (plotW > maxX - minX + 1 || plotD > maxZ - minZ + 1) {
+                continue;
+            }
+            for (int startX = minX; startX + plotW - 1 <= maxX; startX += 2) {
+                for (int startZ = minZ; startZ + plotD - 1 <= maxZ; startZ += 2) {
+                    PlotEvaluation evaluation = evaluateSuggestedPlot(world, startX, startZ, plotW, plotD, selectionBaseY(), minX, maxX, minZ, maxZ);
+                    if (!evaluation.accepted()) {
+                        continue;
+                    }
+                    candidates.add(new SuggestedPlot(
+                        startX,
+                        startZ,
+                        startX + plotW - 1,
+                        startZ + plotD - 1,
+                        evaluation.score(),
+                        plotW + "x" + plotD
+                    ));
+                }
+            }
+        }
+
+        candidates.sort(Comparator.comparingDouble(SuggestedPlot::score).reversed());
+        List<SuggestedPlot> chosen = new ArrayList<>();
+        for (SuggestedPlot candidate : candidates) {
+            boolean overlaps = chosen.stream().anyMatch(existing -> existing.overlaps(candidate, 1));
+            if (overlaps) {
+                continue;
+            }
+            chosen.add(candidate);
+            if (chosen.size() >= MAX_SUGGESTED_PLOTS) {
+                break;
+            }
+        }
+        suggestedPlots = List.copyOf(chosen);
+        if (suggestedPlots.isEmpty()) {
+            selectedSuggestedPlot = -1;
+        } else {
+            selectedSuggestedPlot = clamp(selectedSuggestedPlot, 0, suggestedPlots.size() - 1);
+        }
+    }
+
+    private PlotEvaluation evaluateSuggestedPlot(
+        ClientWorld world,
+        int startX,
+        int startZ,
+        int plotW,
+        int plotD,
+        int referenceY,
+        int areaMinX,
+        int areaMaxX,
+        int areaMinZ,
+        int areaMaxZ
+    ) {
+        int blocked = 0;
+        int roadInside = 0;
+        int open = 0;
+        int vegetation = 0;
+        int terrain = 0;
+        int minY = Integer.MAX_VALUE;
+        int maxY = Integer.MIN_VALUE;
+        int area = plotW * plotD;
+
+        for (int x = startX; x < startX + plotW; x++) {
+            for (int z = startZ; z < startZ + plotD; z++) {
+                MinimapCell cell = sampleMinimapCell(world, x, z, referenceY);
+                minY = Math.min(minY, cell.topY());
+                maxY = Math.max(maxY, cell.topY());
+                switch (cell.type()) {
+                    case WATER, BUILDING -> blocked++;
+                    case ROAD -> roadInside++;
+                    case VEGETATION -> vegetation++;
+                    case OPEN_GROUND -> open++;
+                    case TERRAIN -> terrain++;
+                }
+            }
+        }
+
+        if (blocked > 0) {
+            return PlotEvaluation.reject();
+        }
+        if (maxY - minY > 4) {
+            return PlotEvaluation.reject();
+        }
+        if (roadInside > Math.max(1, area / 10)) {
+            return PlotEvaluation.reject();
+        }
+
+        int roadAdjacent = 0;
+        int roadChecks = 0;
+        for (int x = startX - 1; x <= startX + plotW; x++) {
+            if (x >= areaMinX && x <= areaMaxX) {
+                if (startZ - 1 >= areaMinZ) {
+                    roadChecks++;
+                    if (sampleMinimapCell(world, x, startZ - 1, referenceY).type() == MapCellType.ROAD) {
+                        roadAdjacent++;
+                    }
+                }
+                if (startZ + plotD <= areaMaxZ) {
+                    roadChecks++;
+                    if (sampleMinimapCell(world, x, startZ + plotD, referenceY).type() == MapCellType.ROAD) {
+                        roadAdjacent++;
+                    }
+                }
+            }
+        }
+        for (int z = startZ; z < startZ + plotD; z++) {
+            if (startX - 1 >= areaMinX) {
+                roadChecks++;
+                if (sampleMinimapCell(world, startX - 1, z, referenceY).type() == MapCellType.ROAD) {
+                    roadAdjacent++;
+                }
+            }
+            if (startX + plotW <= areaMaxX) {
+                roadChecks++;
+                if (sampleMinimapCell(world, startX + plotW, z, referenceY).type() == MapCellType.ROAD) {
+                    roadAdjacent++;
+                }
+            }
+        }
+
+        double openness = (open + terrain * 0.85 + vegetation * 0.55) / Math.max(1.0, area);
+        if (openness < 0.72) {
+            return PlotEvaluation.reject();
+        }
+        double roadScore = roadChecks <= 0 ? 0.0 : roadAdjacent / (double) roadChecks;
+        double centerX = (markerA.getX() + markerB.getX()) / 2.0;
+        double centerZ = (markerA.getZ() + markerB.getZ()) / 2.0;
+        double plotCenterX = startX + plotW / 2.0;
+        double plotCenterZ = startZ + plotD / 2.0;
+        double maxDistance = Math.max(1.0, Math.hypot((areaMaxX - areaMinX) / 2.0, (areaMaxZ - areaMinZ) / 2.0));
+        double centerScore = 1.0 - Math.min(1.0, Math.hypot(plotCenterX - centerX, plotCenterZ - centerZ) / maxDistance);
+        double score = openness * 5.0
+            + roadScore * 4.5
+            + centerScore * 1.5
+            - (maxY - minY) * 0.6
+            - roadInside * 0.15;
+        return new PlotEvaluation(true, score);
+    }
+
+    private SuggestedPlot suggestedPlotAt(BlockPos pos) {
+        if (pos == null) {
+            return null;
+        }
+        for (SuggestedPlot plot : suggestedPlots) {
+            if (plot.contains(pos.getX(), pos.getZ())) {
+                return plot;
+            }
+        }
+        return null;
+    }
+
+    private void snapToSuggestedPlot(SuggestedPlot plot) {
+        if (plot == null) {
+            return;
+        }
+        markerA = new BlockPos(plot.minX(), selectionBaseY(), plot.minZ());
+        markerB = new BlockPos(plot.maxX(), selectionBaseY(), plot.maxZ());
+        selectedSuggestedPlot = suggestedPlots.indexOf(plot);
+        updateMarkerButtonLabels();
+        syncOverlayDraft();
+        updateRunGuard();
+        applyMarkerBox();
+        statusText = "Snapped to suggested plot " + plot.label();
+    }
+
     private String shortTarget(BlockPos pos) {
         if (pos == null) {
             return "-";
@@ -1605,6 +2214,24 @@ public class BladelowHudScreen extends Screen {
         }
         if (presetBpButton != null) {
             presetBpButton.setMessage(Text.literal("Clear Area"));
+        }
+    }
+
+    private void updateDistrictBrushButtons() {
+        if (zoneResidentialButton != null) {
+            zoneResidentialButton.setMessage(Text.literal("residential".equals(districtBrush) ? "Residential*" : "Residential"));
+        }
+        if (zoneMarketButton != null) {
+            zoneMarketButton.setMessage(Text.literal("market".equals(districtBrush) ? "Market*" : "Market"));
+        }
+        if (zoneWorkshopButton != null) {
+            zoneWorkshopButton.setMessage(Text.literal("workshop".equals(districtBrush) ? "Workshop*" : "Workshop"));
+        }
+        if (zoneCivicButton != null) {
+            zoneCivicButton.setMessage(Text.literal("civic".equals(districtBrush) ? "Civic*" : "Civic"));
+        }
+        if (zoneMixedButton != null) {
+            zoneMixedButton.setMessage(Text.literal("mixed".equals(districtBrush) ? "Mixed*" : "Mixed"));
         }
     }
 
@@ -1711,104 +2338,6 @@ public class BladelowHudScreen extends Screen {
             : "bladeblueprint build " + name + " " + c.x + " " + c.y + " " + c.z + " " + blockSpec);
     }
 
-    private void webCatalog() {
-        Integer limit = parseInt(catalogLimitField.getText().trim());
-        if (limit == null || limit < 1 || limit > 50) {
-            statusText = "Limit must be 1..50";
-            return;
-        }
-        sendCommand("bladeweb catalog " + limit);
-    }
-
-    private void webImport() {
-        String value = webField.getText().trim();
-        if (value.isEmpty()) {
-            statusText = "Type catalog index or URL";
-            return;
-        }
-
-        Integer index = parseInt(value);
-        if (index != null) {
-            if (index < 1 || index > 100) {
-                statusText = "Index must be 1..100";
-                return;
-            }
-            String importName = resolveImportName("web_idx_" + index);
-            if (importName == null) {
-                statusText = "Invalid import name";
-                return;
-            }
-            blueprintField.setText(importName);
-            sendCommand("bladeweb importload " + index + " " + importName);
-            return;
-        }
-
-        String normalizedUrl = normalizeUrlInput(value);
-        if (normalizedUrl == null) {
-            statusText = "Invalid URL";
-            return;
-        }
-
-        String importName = resolveImportName(suggestWebNameFromUrl(normalizedUrl));
-        if (importName == null) {
-            statusText = "Invalid import name";
-            return;
-        }
-
-        blueprintField.setText(importName);
-        sendCommand("bladeweb importloadurl " + importName + " " + normalizedUrl);
-    }
-
-    private String resolveImportName(String fallback) {
-        String fromField = normalizeCommandName(blueprintField.getText());
-        if (fromField != null) {
-            return fromField;
-        }
-        return normalizeCommandName(fallback);
-    }
-
-    private String normalizeUrlInput(String raw) {
-        String value = raw == null ? "" : raw.trim();
-        if (value.isEmpty() || value.contains(" ")) {
-            return null;
-        }
-        if (value.startsWith("https://") || value.startsWith("http://")) {
-            return value;
-        }
-        return "https://" + value;
-    }
-
-    private String suggestWebNameFromUrl(String normalizedUrl) {
-        if (normalizedUrl == null) {
-            return null;
-        }
-        String cleaned = normalizedUrl.toLowerCase(Locale.ROOT)
-            .replace("https://", "")
-            .replace("http://", "")
-            .replaceAll("[^a-z0-9]+", "_");
-        if (cleaned.length() > 28) {
-            cleaned = cleaned.substring(0, 28);
-        }
-        if (cleaned.isBlank()) {
-            return null;
-        }
-        return "web_" + cleaned;
-    }
-
-    private String normalizeCommandName(String raw) {
-        if (raw == null) {
-            return null;
-        }
-        String cleaned = raw.trim().toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_-]+", "_");
-        if (cleaned.isBlank()) {
-            return null;
-        }
-        if (cleaned.length() > 32) {
-            cleaned = cleaned.substring(0, 32);
-        }
-        return cleaned;
-    }
-
     private String selectedBlockSpec() {
         List<String> blocks = new ArrayList<>();
         for (String slot : selectedSlots) {
@@ -1843,10 +2372,10 @@ public class BladelowHudScreen extends Screen {
         scaleButton.setMessage(Text.literal("HUD Scale: " + SCALE_LABELS[clamp(uiScaleIndex, 0, SCALE_LABELS.length - 1)]));
         statusDetailButton.setMessage(Text.literal("Diagnostics"));
         if (cityTownFillButton != null) {
-            cityTownFillButton.setMessage(Text.literal("Town Fill"));
+            cityTownFillButton.setMessage(Text.literal("Director Continue"));
         }
         if (cityPreviewButton != null) {
-            cityPreviewButton.setMessage(Text.literal("Preview Fill"));
+            cityPreviewButton.setMessage(Text.literal("Director Stop"));
         }
         if (cityPresetButton != null) {
             cityPresetButton.setMessage(Text.literal("Preset: " + cityLayoutPreset.toUpperCase(Locale.ROOT)));
@@ -1855,8 +2384,12 @@ public class BladelowHudScreen extends Screen {
             cityAutoZonesButton.setMessage(Text.literal("Auto Zones"));
         }
         if (cityAutoCityButton != null) {
-            cityAutoCityButton.setMessage(Text.literal("Auto City"));
+            cityAutoCityButton.setMessage(Text.literal("Director Start"));
         }
+        if (cityTownListButton != null) {
+            cityTownListButton.setMessage(Text.literal("Director Status"));
+        }
+        updateDistrictBrushButtons();
     }
 
     private void sendCommand(String command) {
@@ -1871,20 +2404,30 @@ public class BladelowHudScreen extends Screen {
     }
 
     private String commandStatus(String command) {
-        if (command.startsWith("bladeweb catalog")) {
-            return "Syncing web catalog...";
-        }
-        if (command.startsWith("bladeweb importloadurl")) {
-            return "Importing URL and loading...";
-        }
-        if (command.startsWith("bladeweb importload")) {
-            return "Importing item and loading...";
-        }
         if (command.startsWith("bladeblueprint load")) {
             return "Loading blueprint...";
         }
         if (command.startsWith("bladeblueprint build")) {
             return "Queueing blueprint...";
+        }
+        if (command.startsWith("bladeblueprint cityautoplay")) {
+            citySummary = "director queued";
+            return "Starting city director autoplay...";
+        }
+        if (command.startsWith("bladeblueprint citystatus")) {
+            return "Checking city director status...";
+        }
+        if (command.startsWith("bladeblueprint citystop")) {
+            citySummary = "director paused";
+            return "Pausing city director...";
+        }
+        if (command.startsWith("bladeblueprint citycontinue")) {
+            citySummary = "director resumed";
+            return "Resuming city director...";
+        }
+        if (command.startsWith("bladeblueprint citycancel")) {
+            citySummary = "director canceled";
+            return "Canceling city director...";
         }
         if (command.startsWith("bladeblueprint townautocity")) {
             citySummary = "auto city queued";
@@ -1921,6 +2464,10 @@ public class BladelowHudScreen extends Screen {
         if (command.startsWith("bladezone autolayout")) {
             citySummary = "districts auto-zoned";
             return "Generating district layout...";
+        }
+        if (command.startsWith("blademodel intent")) {
+            citySummary = "intent scan";
+            return "Analyzing selected build intent...";
         }
         if (command.startsWith("bladezone list")) {
             return "Listing districts...";
@@ -2003,8 +2550,7 @@ public class BladelowHudScreen extends Screen {
         boolean blocksReady = MODE_CITY.equals(activeMode) || selectedBlockSpec() != null;
         String blocks = blocksReady ? "B:OK" : "B:--";
         boolean sourceReady = !MODE_BLUEPRINT.equals(activeMode)
-            || (blueprintField != null && !blueprintField.getText().trim().isEmpty())
-            || (webField != null && !webField.getText().trim().isEmpty());
+            || (blueprintField != null && !blueprintField.getText().trim().isEmpty());
         String source = sourceReady ? "S:OK" : "S:--";
         String run = validationText.isEmpty() ? "R:OK" : "R:--";
         return area + " " + blocks + " " + source + " " + run;
@@ -2279,8 +2825,6 @@ public class BladelowHudScreen extends Screen {
         UiState.height = readProfileValue(profile, "height", "6");
 
         UiState.blueprint = readProfileValue(profile, "blueprint", "town_house_small");
-        UiState.web = readProfileValue(profile, "web", "");
-        UiState.limit = readProfileValue(profile, "limit", "12");
         UiState.search = readProfileValue(profile, "search", "");
 
         UiState.smart = readProfileBoolean(profile, "smart", true);
@@ -2346,13 +2890,6 @@ public class BladelowHudScreen extends Screen {
         if (blueprintField != null) {
             UiState.blueprint = blueprintField.getText();
         }
-        if (webField != null) {
-            UiState.web = webField.getText();
-        }
-        if (catalogLimitField != null) {
-            UiState.limit = catalogLimitField.getText();
-        }
-
         UiState.favorites = joinPipe(favoriteBlockIds);
         UiState.recent = joinPipe(new ArrayList<>(recentBlockIds));
         UiState.districtCounts = encodeDistrictCounts();
@@ -2370,10 +2907,7 @@ public class BladelowHudScreen extends Screen {
         writeProfileValue(profileKey, "count", UiState.count);
         writeProfileValue(profileKey, "height", UiState.height);
 
-        writeProfileValue(profileKey, "blueprint", UiState.blueprint);
-        writeProfileValue(profileKey, "web", UiState.web);
-        writeProfileValue(profileKey, "limit", UiState.limit);
-        writeProfileValue(profileKey, "search", UiState.search);
+        writeProfileValue(profileKey, "blueprint", UiState.blueprint);        writeProfileValue(profileKey, "search", UiState.search);
 
         writeProfileValue(profileKey, "smart", Boolean.toString(UiState.smart));
         writeProfileValue(profileKey, "preview", Boolean.toString(UiState.preview));
@@ -2396,6 +2930,110 @@ public class BladelowHudScreen extends Screen {
         writeProfileValue(profileKey, "cityPreset", UiState.cityPreset);
 
         flushHudStore();
+    }
+
+    @Override
+    public boolean mouseClicked(net.minecraft.client.gui.Click click, boolean doubleClick) {
+        // The planning map gets first chance at mouse input so dragging/selecting
+        // does not get swallowed by the normal widget tree.
+        if (handlePlanningMapClick(click.x(), click.y(), click.button())) {
+            return true;
+        }
+        return super.mouseClicked(click, doubleClick);
+    }
+
+    @Override
+    public boolean mouseDragged(net.minecraft.client.gui.Click click, double deltaX, double deltaY) {
+        if (planningDragActive && click.button() == GLFW.GLFW_MOUSE_BUTTON_LEFT) {
+            MinimapView view = currentMinimapView();
+            BlockPos dragPos = view == null ? null : mapScreenToWorld(view, click.x(), click.y());
+            if (dragPos != null) {
+                // Keep the live draft in sync with the overlay so the player can
+                // see the exact footprint before committing the selection.
+                markerA = planningDragOrigin;
+                markerB = dragPos;
+                syncOverlayDraft();
+                updateMarkerButtonLabels();
+                updateRunGuard();
+                statusText = "Area draft: " + shortTarget(markerA) + " -> " + shortTarget(markerB);
+            }
+            return true;
+        }
+        return super.mouseDragged(click, deltaX, deltaY);
+    }
+
+    @Override
+    public boolean mouseReleased(net.minecraft.client.gui.Click click) {
+        if (planningDragActive && click.button() == GLFW.GLFW_MOUSE_BUTTON_LEFT) {
+            planningDragActive = false;
+            MinimapView view = currentMinimapView();
+            BlockPos endPos = view == null ? null : mapScreenToWorld(view, click.x(), click.y());
+            if (endPos != null) {
+                markerA = planningDragOrigin;
+                markerB = endPos;
+            }
+            finalizePlanningMapSelection();
+            return true;
+        }
+        return super.mouseReleased(click);
+    }
+
+    private boolean handlePlanningMapClick(double mouseX, double mouseY, int button) {
+        if (!showPlanningMap()) {
+            return false;
+        }
+        MinimapView view = currentMinimapView();
+        if (view == null || !isInside(mouseX, mouseY, view.screenX(), view.screenY(), view.screenW(), view.screenH())) {
+            return false;
+        }
+
+        if (button == GLFW.GLFW_MOUSE_BUTTON_RIGHT) {
+            clearMarkers();
+            return true;
+        }
+        if (button != GLFW.GLFW_MOUSE_BUTTON_LEFT) {
+            return false;
+        }
+
+        BlockPos clicked = mapScreenToWorld(view, mouseX, mouseY);
+        if (clicked == null) {
+            return false;
+        }
+        if (isShiftPressed() && districtBrush.isBlank()) {
+            SuggestedPlot snappedPlot = suggestedPlotAt(clicked);
+            if (snappedPlot != null) {
+                snapToSuggestedPlot(snappedPlot);
+                return true;
+            }
+        }
+        planningDragActive = true;
+        planningDragOrigin = clicked;
+        markerA = clicked;
+        markerB = clicked;
+        syncOverlayDraft();
+        updateMarkerButtonLabels();
+        updateRunGuard();
+        statusText = MODE_CITY.equals(activeMode) && FLOW_SOURCE.equals(activeFlow)
+            ? "City map drag started"
+            : "Map selection started";
+        return true;
+    }
+
+    private void finalizePlanningMapSelection() {
+        planningDragOrigin = null;
+        updateMarkerButtonLabels();
+        syncOverlayDraft();
+        updateRunGuard();
+        if (markerA == null || markerB == null) {
+            return;
+        }
+        applyMarkerBox();
+        if (MODE_CITY.equals(activeMode) && FLOW_SOURCE.equals(activeFlow) && !districtBrush.isBlank()) {
+            saveZoneFromMarkers(districtBrush);
+            statusText = "Saved " + districtBrush + " district from map selection";
+            return;
+        }
+        statusText = "Selected area on planning map";
     }
 
     @Override

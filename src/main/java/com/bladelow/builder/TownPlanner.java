@@ -1,5 +1,9 @@
 package com.bladelow.builder;
 
+import com.bladelow.ml.BladelowLearning;
+import com.bladelow.ml.BuildIntent;
+import com.bladelow.ml.BuildIntentContext;
+import com.bladelow.ml.LearnedStyleHint;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.Blocks;
 import net.minecraft.util.math.BlockPos;
@@ -20,32 +24,18 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * High-level town generator for marked city areas.
+ *
+ * The planner combines roads, zones, live world scans, learned style hints, and
+ * blueprint metadata to choose a set of non-overlapping structures and turn
+ * them into one placement plan.
+ */
 public final class TownPlanner {
     private static final int SCAN_INSET = 1;
     private static final int PLOT_SPACING = 1;
     private static final int ROAD_ADJACENT_RADIUS = 3;
     private static final int SYNTHETIC_ROAD_THRESHOLD = 10;
-    private static final int STYLE_SCAN_HEIGHT = 18;
-    private static final int STYLE_MIN_SAMPLES = 24;
-    private static final Set<String> TERRAIN_STYLE_EXACT = Set.of(
-        "grass_block",
-        "dirt",
-        "coarse_dirt",
-        "rooted_dirt",
-        "podzol",
-        "mycelium",
-        "mud",
-        "muddy_mangrove_roots",
-        "sand",
-        "red_sand",
-        "gravel",
-        "clay",
-        "moss_block",
-        "snow_block",
-        "ice",
-        "packed_ice",
-        "blue_ice"
-    );
     private static final List<String> ROAD_HINTS = List.of(
         "path",
         "gravel",
@@ -73,6 +63,32 @@ public final class TownPlanner {
 
     public static TownPlan plan(ServerWorld world, BlockPos from, BlockPos to, List<TownBlueprint> blueprints, List<TownZoneStore.Zone> zones) {
         return plan(world, null, from, to, blueprints, zones, "", false, true);
+    }
+
+    public static IntentSuggestion suggestBuildIntent(
+        ServerWorld world,
+        BlockPos from,
+        BlockPos to,
+        List<TownZoneStore.Zone> zones
+    ) {
+        if (world == null || from == null || to == null) {
+            return IntentSuggestion.error("invalid intent bounds");
+        }
+
+        TownArea area = TownArea.analyze(world, from, to, zones);
+        if (area.width() < 5 || area.depth() < 5) {
+            return IntentSuggestion.error("area too small for intent scan");
+        }
+
+        List<LotCandidate> lots = buildLots(area);
+        LotCandidate focusLot = lots.isEmpty() ? fallbackLot(area) : lots.get(0);
+        BuildIntentContext context = area.intentContext(focusLot);
+        BuildIntent intent = area.intentFor(focusLot);
+        String message = "intent "
+            + intent.summary()
+            + " | "
+            + context.summary();
+        return IntentSuggestion.ok(message, intent, context);
     }
 
     public static TownPlan plan(
@@ -110,6 +126,7 @@ public final class TownPlanner {
         Map<String, Integer> usageCounts = new HashMap<>();
         LinkedHashMap<String, Integer> districtUsage = initDistrictCounters();
         LinkedHashMap<String, Integer> zoneUsage = initDistrictCounters();
+        LinkedHashMap<String, Integer> intentUsage = initDistrictCounters();
         List<BlockState> blockStates = new ArrayList<>();
         List<BlockPos> targets = new ArrayList<>();
         LinkedHashSet<String> used = new LinkedHashSet<>();
@@ -142,6 +159,15 @@ public final class TownPlanner {
             if (!zone.isBlank()) {
                 zoneUsage.merge(zone, 1, Integer::sum);
             }
+            if (placement.intent() != null && !placement.intent().primaryArchetype().isBlank()) {
+                intentUsage.merge(placement.intent().primaryArchetype(), 1, Integer::sum);
+            }
+            BladelowLearning.buildIntentLogger().recordTownPlacement(
+                "town_planner",
+                world,
+                area.intentContext(placement.lot()),
+                placement.blueprint()
+            );
             if (used.size() < 8) {
                 used.add(
                     placement.blueprint().name()
@@ -149,6 +175,8 @@ public final class TownPlanner {
                         + placement.lot().order()
                         + ":"
                         + String.format(Locale.ROOT, "%.1f", placement.score())
+                        + "/"
+                        + (placement.intent() == null ? "-" : placement.intent().primaryArchetype())
                 );
             }
             buildings++;
@@ -176,6 +204,9 @@ public final class TownPlanner {
         message.append(" districts=").append(formatDistrictCounters(districtUsage));
         if (zoneUsage.values().stream().anyMatch(v -> v > 0)) {
             message.append(" zoneHits=").append(formatDistrictCounters(zoneUsage));
+        }
+        if (intentUsage.values().stream().anyMatch(v -> v > 0)) {
+            message.append(" intents=").append(formatDistrictCounters(intentUsage));
         }
         if (!zoneFilter.isBlank()) {
             message.append(" zoneFilter=").append(zoneFilter);
@@ -270,6 +301,7 @@ public final class TownPlanner {
         Set<String> lockedLots
     ) {
         int totalPlaced = districtUsage.values().stream().mapToInt(Integer::intValue).sum();
+        BuildIntent lotIntent = area.intentFor(lot);
 
         PlotPlacement best = null;
         for (TownBlueprint blueprint : blueprints) {
@@ -311,12 +343,12 @@ public final class TownPlanner {
                 continue;
             }
             double score = scoreBlueprint(
-                area, originX, originZ, lot, oriented,
+                area, originX, originZ, lot, oriented, lotIntent,
                 usageCounts.getOrDefault(blueprint.name(), 0),
                 districtUsage.getOrDefault(districtType, 0)
             );
             if (best == null || score > best.score()) {
-                best = new PlotPlacement(oriented, lot, originX, originZ, score);
+                best = new PlotPlacement(oriented, lot, originX, originZ, score, lotIntent);
             }
         }
         return best;
@@ -338,7 +370,7 @@ public final class TownPlanner {
         return true;
     }
 
-    private static double scoreBlueprint(TownArea area, int originX, int originZ, LotCandidate lot, TownBlueprint blueprint, int usedCount, int districtUsedCount) {
+    private static double scoreBlueprint(TownArea area, int originX, int originZ, LotCandidate lot, TownBlueprint blueprint, BuildIntent intent, int usedCount, int districtUsedCount) {
         int plotCenterX = originX + Math.max(0, blueprint.plotWidth() / 2);
         int plotCenterZ = originZ + Math.max(0, blueprint.plotDepth() / 2);
         int entranceX = originX + blueprint.entranceOffsetX();
@@ -351,6 +383,7 @@ public final class TownPlanner {
         double roadSideScore  = roadSideScore(area, originX, originZ, blueprint);
         double zoneScore      = area.zoneScore(blueprint, plotCenterX, plotCenterZ, entranceX, entranceZ);
         double styleScore     = area.styleScore(blueprint);
+        double intentScore    = intent == null ? 0.0 : intent.score(blueprint);
 
         // Road network coherence: prefer buildings whose entrance is directly
         // adjacent to a road cell (not just near one). Rewards tight street fronts.
@@ -363,6 +396,7 @@ public final class TownPlanner {
         score += networkScore    * 14.0;   // coherence bonus
         score += zoneScore;
         score += styleScore;
+        score += intentScore;
         if (lot.primaryRoad()) score += 5.0;
 
         // --- Building-type placement rules ---
@@ -459,6 +493,12 @@ public final class TownPlanner {
             return TownDistrictType.RESIDENTIAL.id();
         }
         return TownDistrictType.MIXED.id();
+    }
+
+    private static LotCandidate fallbackLot(TownArea area) {
+        int centerX = area.minX() + Math.max(0, area.width() / 2);
+        int centerZ = area.minZ() + Math.max(0, area.depth() / 2);
+        return new LotCandidate(centerX, centerZ, centerX, centerZ, "north", true, 0, 0.0);
     }
 
     private static String lotLockId(int originX, int originZ, int width, int depth) {
@@ -629,63 +669,7 @@ public final class TownPlanner {
         return false;
     }
 
-    private static String styleThemeFromPath(String path) {
-        if (path == null || path.isBlank()) {
-            return "";
-        }
-        String normalized = path.toLowerCase(Locale.ROOT);
-        if (normalized.contains("wool") || normalized.contains("terracotta") || normalized.contains("banner")) {
-            return "market";
-        }
-        if (normalized.contains("stone")
-            || normalized.contains("cobbl")
-            || normalized.contains("brick")
-            || normalized.contains("andesite")
-            || normalized.contains("deepslate")
-            || normalized.contains("tuff")) {
-            return "stone";
-        }
-        if (normalized.contains("oak")
-            || normalized.contains("spruce")
-            || normalized.contains("birch")
-            || normalized.contains("dark_oak")
-            || normalized.contains("acacia")
-            || normalized.contains("mangrove")
-            || normalized.contains("cherry")
-            || normalized.contains("jungle")
-            || normalized.contains("bamboo")
-            || normalized.contains("warped")
-            || normalized.contains("crimson")) {
-            return "oak";
-        }
-        return "";
-    }
-
-    private static boolean isTerrainStyleNoise(String path) {
-        if (path == null || path.isBlank()) {
-            return true;
-        }
-        String normalized = path.toLowerCase(Locale.ROOT);
-        if (TERRAIN_STYLE_EXACT.contains(normalized)) {
-            return true;
-        }
-        if (normalized.endsWith("_ore")
-            || normalized.endsWith("_leaves")
-            || normalized.startsWith("infested_")) {
-            return true;
-        }
-        return normalized.contains("grass")
-            || normalized.contains("fern")
-            || normalized.contains("vine")
-            || normalized.contains("mushroom")
-            || normalized.contains("dripleaf")
-            || normalized.contains("nylium")
-            || normalized.contains("coral")
-            || normalized.contains("kelp")
-            || normalized.contains("seagrass");
-    }
-
-    private record PlotPlacement(TownBlueprint blueprint, LotCandidate lot, int originX, int originZ, double score) {
+    private record PlotPlacement(TownBlueprint blueprint, LotCandidate lot, int originX, int originZ, double score, BuildIntent intent) {
     }
 
     private record LotCandidate(
@@ -701,6 +685,16 @@ public final class TownPlanner {
     }
 
     private record RoadNode(int x, int z, boolean primary) {
+    }
+
+    public record IntentSuggestion(boolean ok, String message, BuildIntent intent, BuildIntentContext context) {
+        private static IntentSuggestion ok(String message, BuildIntent intent, BuildIntentContext context) {
+            return new IntentSuggestion(true, message, intent, context);
+        }
+
+        private static IntentSuggestion error(String message) {
+            return new IntentSuggestion(false, message, BuildIntent.NONE, null);
+        }
     }
 
     private record TownArea(
@@ -719,7 +713,9 @@ public final class TownPlanner {
         List<BlockPos> gateCells,
         List<TownZoneStore.Zone> zones,
         boolean syntheticRoads,
-        StyleProfile styleProfile
+        BuildSiteScan siteScan,
+        SiteStyleProfile styleProfile,
+        LearnedStyleHint learnedStyleHint
     ) {
         private static TownArea analyze(ServerWorld world, BlockPos from, BlockPos to, List<TownZoneStore.Zone> zones) {
             int minX = Math.min(from.getX(), to.getX());
@@ -751,7 +747,27 @@ public final class TownPlanner {
             streetCells.addAll(plazas);
             List<BlockPos> gateCells = detectGateCells(minX, maxX, minZ, maxZ, baseY, allRoads);
             List<TownZoneStore.Zone> activeZones = filterZones(zones, minX, maxX, minZ, maxZ);
-            StyleProfile style = detectStyleProfile(world, minX, maxX, minZ, maxZ, baseY, streetCells);
+
+            // One scan powers three consumers at once:
+            // 1. deterministic style scoring
+            // 2. ML memory hinting
+            // 3. environment dataset logging
+            BuildSiteScan siteScan = BuildSiteAnalyzer.scan(
+                world,
+                new BlockPos(minX, baseY, minZ),
+                new BlockPos(maxX, baseY, maxZ),
+                baseY,
+                streetCells
+            );
+            LearnedStyleHint learnedStyle = BladelowLearning.styleMemory().suggest(siteScan);
+            BladelowLearning.environmentLogger().recordScan(
+                "town_planner",
+                world,
+                new BlockPos(minX, baseY, minZ),
+                new BlockPos(maxX, baseY, maxZ),
+                siteScan
+            );
+            SiteStyleProfile style = siteScan.styleProfile();
             return new TownArea(
                 world,
                 minX,
@@ -768,63 +784,10 @@ public final class TownPlanner {
                 List.copyOf(gateCells),
                 List.copyOf(activeZones),
                 synthetic,
-                style
+                siteScan,
+                style,
+                learnedStyle
             );
-        }
-
-        private static StyleProfile detectStyleProfile(
-            ServerWorld world,
-            int minX,
-            int maxX,
-            int minZ,
-            int maxZ,
-            int baseY,
-            Set<Long> streetCells
-        ) {
-            LinkedHashMap<String, Integer> counts = new LinkedHashMap<>();
-            int samples = 0;
-            int minY = Math.max(world.getBottomY(), baseY + 1);
-            int worldTopY = world.getBottomY() + world.getHeight() - 1;
-            int maxY = Math.min(worldTopY, baseY + STYLE_SCAN_HEIGHT);
-            if (maxY < minY) {
-                return StyleProfile.NONE;
-            }
-            for (int x = minX; x <= maxX; x++) {
-                for (int z = minZ; z <= maxZ; z++) {
-                    if (streetCells.contains(columnKey(x, z))) {
-                        continue;
-                    }
-                    for (int y = minY; y <= maxY; y++) {
-                        BlockState state = world.getBlockState(new BlockPos(x, y, z));
-                        if (state.isAir() || !state.getFluidState().isEmpty()) {
-                            continue;
-                        }
-                        Identifier id = Registries.BLOCK.getId(state.getBlock());
-                        if (id == null) {
-                            continue;
-                        }
-                        String path = id.getPath();
-                        if (isTerrainStyleNoise(path)) {
-                            continue;
-                        }
-                        String theme = styleThemeFromPath(path);
-                        if (theme.isBlank()) {
-                            continue;
-                        }
-                        counts.merge(theme, 1, Integer::sum);
-                        samples++;
-                    }
-                }
-            }
-            if (samples <= 0 || counts.isEmpty()) {
-                return StyleProfile.NONE;
-            }
-            List<Map.Entry<String, Integer>> sorted = counts.entrySet().stream()
-                .sorted(Map.Entry.<String, Integer>comparingByValue().reversed())
-                .toList();
-            String primary = sorted.get(0).getKey();
-            String secondary = sorted.size() > 1 ? sorted.get(1).getKey() : "";
-            return new StyleProfile(primary, secondary, samples);
         }
 
         private static List<RoadNode> synthesizeRoadNodes(int minX, int maxX, int minZ, int maxZ, Set<Long> allRoads) {
@@ -1054,11 +1017,49 @@ public final class TownPlanner {
         }
 
         private double styleScore(TownBlueprint blueprint) {
-            return styleProfile.score(blueprint);
+            // Blend the live local scan with the memory-based learned hint so
+            // the planner keeps immediate context while still benefiting from
+            // prior observed towns.
+            return styleProfile.score(blueprint) + learnedStyleHint.score(blueprint);
+        }
+
+        private BuildIntent intentFor(LotCandidate lot) {
+            return BladelowLearning.buildIntentPredictor().predict(intentContext(lot));
+        }
+
+        private BuildIntentContext intentContext(LotCandidate lot) {
+            String zone = zoneTypeAt(lot.entryX(), lot.entryZ());
+            if (zone.isBlank()) {
+                zone = zoneTypeAt(lot.roadX(), lot.roadZ());
+            }
+            return new BuildIntentContext(
+                "town_planner",
+                zone,
+                width(),
+                depth(),
+                centerScore(lot.entryX(), lot.entryZ()),
+                wallScore(lot.entryX(), lot.entryZ()),
+                gateScore(lot.entryX(), lot.entryZ()),
+                roadScore(lot.entryX(), lot.entryZ()),
+                lot.primaryRoad(),
+                Math.max(0, siteScan.terrainMaxY() - siteScan.terrainMinY()),
+                siteScan.nearbyStructures().size(),
+                styleProfile.primaryTheme(),
+                styleProfile.secondaryTheme(),
+                styleProfile.averageWidth(),
+                styleProfile.averageDepth(),
+                styleProfile.averageHeight(),
+                learnedStyleHint.primaryTheme(),
+                learnedStyleHint.secondaryTheme(),
+                learnedStyleHint.confidence()
+            );
         }
 
         private String styleSummary() {
-            return styleProfile.summary();
+            if (learnedStyleHint == null || learnedStyleHint == LearnedStyleHint.NONE || learnedStyleHint.confidence() <= 0.0) {
+                return styleProfile.summary();
+            }
+            return styleProfile.summary() + " ml=" + learnedStyleHint.summary();
         }
 
         private boolean hasZones() {
@@ -1211,34 +1212,6 @@ public final class TownPlanner {
                 return 1.0;
             }
             return value;
-        }
-    }
-
-    private record StyleProfile(String primaryTheme, String secondaryTheme, int samples) {
-        private static final StyleProfile NONE = new StyleProfile("", "", 0);
-
-        private double score(TownBlueprint blueprint) {
-            if (blueprint == null || samples < STYLE_MIN_SAMPLES) {
-                return 0.0;
-            }
-            double score = 0.0;
-            if (!primaryTheme.isBlank() && blueprint.hasAnyTag(primaryTheme)) {
-                score += 10.0;
-            }
-            if (!secondaryTheme.isBlank() && blueprint.hasAnyTag(secondaryTheme)) {
-                score += 4.0;
-            }
-            return score;
-        }
-
-        private String summary() {
-            if (samples <= 0 || primaryTheme.isBlank()) {
-                return "none";
-            }
-            if (secondaryTheme.isBlank()) {
-                return primaryTheme + "(" + samples + ")";
-            }
-            return primaryTheme + "/" + secondaryTheme + "(" + samples + ")";
         }
     }
 

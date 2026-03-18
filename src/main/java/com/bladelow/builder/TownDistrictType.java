@@ -5,6 +5,9 @@ import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 
+/**
+ * Canonical district ids shared by zoning, HUD brushes, and planning.
+ */
 public enum TownDistrictType {
     RESIDENTIAL("residential", "Residential"),
     MARKET("market", "Market"),

@@ -8,6 +8,12 @@ import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
+/**
+ * Client-side parser for Bladelow status output.
+ *
+ * The HUD uses this as a lightweight telemetry stream so it can display build
+ * progress without needing a custom networking layer.
+ */
 public final class BladelowHudTelemetry {
     private static final int MAX_LOG_LINES = 24;
 
@@ -21,6 +27,7 @@ public final class BladelowHudTelemetry {
     private static int placed;
     private static int skipped;
     private static int failed;
+    private static String latestIntent = "";
 
     private BladelowHudTelemetry() {
     }
@@ -35,6 +42,7 @@ public final class BladelowHudTelemetry {
             return;
         }
 
+        // Ignore unrelated chat so the HUD reflects only Bladelow runtime state.
         boolean isBladelowLine = line.contains("[Bladelow]");
         if (!isBladelowLine) {
             return;
@@ -47,6 +55,7 @@ public final class BladelowHudTelemetry {
 
         appendLine(line);
         parseProgress(line);
+        parseIntent(line);
     }
 
     public static synchronized void recordLocalMessage(String localLine) {
@@ -73,6 +82,10 @@ public final class BladelowHudTelemetry {
         return new ProgressSnapshot(done, total, placed, skipped, failed);
     }
 
+    public static synchronized String latestIntent() {
+        return latestIntent;
+    }
+
     private static void appendLine(String line) {
         LINES.addLast(line);
         while (LINES.size() > MAX_LOG_LINES) {
@@ -81,6 +94,8 @@ public final class BladelowHudTelemetry {
     }
 
     private static void parseProgress(String line) {
+        // Parse the same human-readable lines shown to the player so command
+        // output and HUD status stay aligned.
         Matcher progress = PROGRESS_PATTERN.matcher(line.toLowerCase(Locale.ROOT));
         if (progress.find()) {
             done = parseInt(progress.group(1), done);
@@ -104,6 +119,14 @@ public final class BladelowHudTelemetry {
                 done = total;
             }
         }
+    }
+
+    private static void parseIntent(String line) {
+        String lower = line.toLowerCase(Locale.ROOT);
+        if (!lower.startsWith("intent ")) {
+            return;
+        }
+        latestIntent = line.substring("intent ".length()).trim();
     }
 
     private static int parseInt(String text, int fallback) {

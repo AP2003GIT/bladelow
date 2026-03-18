@@ -6,6 +6,13 @@ import net.minecraft.util.math.BlockPos;
 
 import java.util.List;
 
+/**
+ * Final output of the town planner before execution.
+ *
+ * A TownPlan is still flattened into a normal placement job, but it preserves
+ * enough metadata for callers to report how many buildings were chosen and
+ * which blueprint names were used.
+ */
 public record TownPlan(
     boolean ok,
     String message,

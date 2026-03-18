@@ -1,6 +1,7 @@
 package com.bladelow.command;
 
 import com.bladelow.builder.SelectionState;
+import com.bladelow.builder.TownAutoLayoutPlanner;
 import com.bladelow.builder.TownDistrictType;
 import com.bladelow.builder.TownZoneStore;
 import com.mojang.brigadier.CommandDispatcher;
@@ -13,7 +14,6 @@ import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.math.BlockPos;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -142,64 +142,25 @@ public final class ZoneCommands {
             return 0;
         }
 
-        String preset = presetRaw == null ? "" : presetRaw.trim().toLowerCase();
-        if (!preset.equals("balanced") && !preset.equals("medieval") && !preset.equals("harbor")) {
-            source.sendError(blue("[Bladelow] preset must be balanced|medieval|harbor"));
-            return 0;
-        }
-
         BlockPos[] bounds = selectionBoundsFromMarkers(player.getUuid(), source.getWorld().getRegistryKey());
         if (bounds == null) {
             source.sendError(blue("[Bladelow] selection is empty; use #bladeselect markerbox first"));
             return 0;
         }
-
-        int minX = Math.min(bounds[0].getX(), bounds[1].getX());
-        int maxX = Math.max(bounds[0].getX(), bounds[1].getX());
-        int minZ = Math.min(bounds[0].getZ(), bounds[1].getZ());
-        int maxZ = Math.max(bounds[0].getZ(), bounds[1].getZ());
-        if (maxX - minX < 5 || maxZ - minZ < 5) {
-            source.sendError(blue("[Bladelow] selection too small for autolayout (need at least 6x6)"));
+        TownAutoLayoutPlanner.ApplyResult result = TownAutoLayoutPlanner.apply(
+            player.getUuid(),
+            source.getWorld().getRegistryKey(),
+            bounds[0],
+            bounds[1],
+            presetRaw,
+            clearExisting,
+            source.getWorld()
+        );
+        if (!result.ok()) {
+            source.sendError(blue("[Bladelow] " + result.message()));
             return 0;
         }
-
-        if (clearExisting) {
-            TownZoneStore.clear(player.getUuid(), source.getWorld().getRegistryKey());
-        }
-
-        List<AutoZone> zones = generatePresetZones(preset, minX, maxX, minZ, maxZ);
-        int saved = 0;
-        for (AutoZone zone : zones) {
-            TownZoneStore.ZoneResult result = TownZoneStore.setBox(
-                player.getUuid(),
-                source.getWorld().getRegistryKey(),
-                zone.type(),
-                new BlockPos(zone.minX(), 0, zone.minZ()),
-                new BlockPos(zone.maxX(), 0, zone.maxZ())
-            );
-            if (result.ok()) {
-                saved++;
-            }
-        }
-
-        if (saved == 0) {
-            source.sendError(blue("[Bladelow] autolayout generated no valid zones"));
-            return 0;
-        }
-
-        List<TownZoneStore.Zone> snapshot = TownZoneStore.snapshot(player.getUuid(), source.getWorld().getRegistryKey());
-        Map<String, Integer> counts = TownZoneStore.summarizeByType(snapshot);
-        List<String> summary = counts.entrySet().stream()
-            .map(e -> e.getKey() + "=" + e.getValue())
-            .toList();
-        int savedCount = saved;
-
-        source.sendFeedback(() -> blue(
-            "[Bladelow] autolayout " + preset
-                + " " + (clearExisting ? "applied" : "appended")
-                + " zones=" + savedCount
-                + " (" + String.join(", ", summary) + ")"
-        ), false);
+        source.sendFeedback(() -> blue("[Bladelow] " + result.message()), false);
         return 1;
     }
 
@@ -219,65 +180,6 @@ public final class ZoneCommands {
             maxZ = Math.max(maxZ, point.getZ());
         }
         return new BlockPos[]{new BlockPos(minX, 0, minZ), new BlockPos(maxX, 0, maxZ)};
-    }
-
-    private static List<AutoZone> generatePresetZones(String preset, int minX, int maxX, int minZ, int maxZ) {
-        int[] xCuts = splitIntoThirds(minX, maxX);
-        int[] zCuts = splitIntoThirds(minZ, maxZ);
-        String[][] map = zoneMapForPreset(preset);
-        List<AutoZone> zones = new ArrayList<>(9);
-        for (int row = 0; row < 3; row++) {
-            for (int col = 0; col < 3; col++) {
-                String type = map[row][col];
-                int zoneMinX = xCuts[col];
-                int zoneMaxX = xCuts[col + 1];
-                int zoneMinZ = zCuts[row];
-                int zoneMaxZ = zCuts[row + 1];
-                if (zoneMinX > zoneMaxX || zoneMinZ > zoneMaxZ) {
-                    continue;
-                }
-                zones.add(new AutoZone(type, zoneMinX, zoneMaxX, zoneMinZ, zoneMaxZ));
-            }
-        }
-        return zones;
-    }
-
-    private static int[] splitIntoThirds(int min, int max) {
-        int size = (max - min) + 1;
-        int first = min + (size / 3) - 1;
-        int second = min + ((size * 2) / 3) - 1;
-        first = clamp(first, min, max);
-        second = clamp(second, first, max);
-        return new int[]{min, first, second, max};
-    }
-
-    private static int clamp(int value, int min, int max) {
-        return Math.max(min, Math.min(max, value));
-    }
-
-    private static String[][] zoneMapForPreset(String preset) {
-        if ("medieval".equals(preset)) {
-            return new String[][]{
-                {"workshop", "civic", "workshop"},
-                {"residential", "civic", "market"},
-                {"residential", "mixed", "market"}
-            };
-        }
-        if ("harbor".equals(preset)) {
-            return new String[][]{
-                {"workshop", "workshop", "market"},
-                {"mixed", "civic", "market"},
-                {"residential", "residential", "mixed"}
-            };
-        }
-        return new String[][]{
-            {"residential", "market", "workshop"},
-            {"residential", "civic", "workshop"},
-            {"mixed", "market", "mixed"}
-        };
-    }
-
-    private record AutoZone(String type, int minX, int maxX, int minZ, int maxZ) {
     }
 
     static Text blue(String msg) {

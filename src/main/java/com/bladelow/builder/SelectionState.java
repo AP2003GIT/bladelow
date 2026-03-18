@@ -12,10 +12,16 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
+/**
+ * Per-player temporary selection buffer.
+ *
+ * This is the working set of points used by commands and HUD tools before a
+ * selection is promoted into markers, zones, or exported structures.
+ */
 public final class SelectionState {
-    // Plain HashMap is correct here: all public methods are synchronized on the class
-    // monitor, so no concurrent access can occur. ConcurrentHashMap was redundant
-    // and created a misleading mixed-locking model.
+    // Plain HashMap is correct here: all public methods are synchronized on the
+    // class monitor, so no concurrent access can occur. ConcurrentHashMap was
+    // redundant and would suggest a misleading mixed-locking model.
     private static final Map<SelectionKey, PlayerSelection> SELECTIONS = new HashMap<>();
 
     private SelectionState() {

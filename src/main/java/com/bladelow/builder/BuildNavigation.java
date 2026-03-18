@@ -19,6 +19,13 @@ import java.util.PriorityQueue;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Shared movement helper for placement jobs.
+ *
+ * It solves the "get the player into legal placement range" problem by
+ * combining candidate stand positions, A* path search, cached plan reuse, and
+ * short-lived blacklists for obviously bad steps.
+ */
 public final class BuildNavigation {
     private static final int BASE_MAX_PATH_EXPANDED = 3200;
     private static final int HARD_MAX_PATH_EXPANDED = 12000;
@@ -214,6 +221,10 @@ public final class BuildNavigation {
         };
     }
 
+    /**
+     * Teleport movement is the blunt fallback: jump to the chosen stand
+     * position and verify that the target is now within placement reach.
+     */
     private static MoveResult moveTeleport(
         ServerPlayerEntity player,
         double approachX,
@@ -233,6 +244,10 @@ public final class BuildNavigation {
         return MoveResult.failed(modeTag + "_out_of_range", afterDist);
     }
 
+    /**
+     * Walk movement prefers cached paths first, then performs a fresh search,
+     * and finally tries a greedy single-step fallback before giving up.
+     */
     private static MoveResult moveWalk(
         ServerWorld world,
         ServerPlayerEntity player,
@@ -752,6 +767,9 @@ public final class BuildNavigation {
     ) {
     }
 
+    /**
+     * Build a ranked shortlist of possible stand positions around the target.
+     */
     private static List<ApproachCandidate> selectApproachCandidates(
         ServerWorld world,
         ServerPlayerEntity player,
@@ -1142,6 +1160,10 @@ public final class BuildNavigation {
         return blockedNow;
     }
 
+    /**
+     * Record a short-lived "avoid this stand block for now" hint so the runner
+     * does not hammer the same failed approach every tick.
+     */
     private static void rememberTemporarilyBlocked(UUID playerId, ApproachCandidate candidate, String reason) {
         if (playerId == null || candidate == null) {
             return;

@@ -1,14 +1,15 @@
 package com.bladelow.command;
 
+import com.bladelow.auto.CityAutoplayDirector;
 import com.bladelow.builder.BuildRuntimeSettings;
 import com.bladelow.builder.BlueprintLibrary;
 import com.bladelow.builder.BlueprintStateCodec;
-import com.bladelow.builder.BuildItWebService;
 import com.bladelow.builder.BuildProfileStore;
 import com.bladelow.builder.PlacementAxis;
 import com.bladelow.builder.PlacementJob;
 import com.bladelow.builder.PlacementJobRunner;
 import com.bladelow.builder.SelectionState;
+import com.bladelow.builder.TownAutoLayoutPlanner;
 import com.bladelow.builder.TownDistrictType;
 import com.bladelow.builder.TownZoneStore;
 import com.bladelow.ml.BladelowLearning;
@@ -48,6 +49,13 @@ import java.util.Set;
 import static net.minecraft.server.command.CommandManager.argument;
 import static net.minecraft.server.command.CommandManager.literal;
 
+/**
+ * Root command module for the original Bladelow builder workflow.
+ *
+ * This still owns the biggest slice of the command surface: selection tools,
+ * blueprint/town actions, and assorted helpers. Smaller runtime and zoning
+ * subsystems have already been extracted into dedicated command classes.
+ */
 public final class BladePlaceCommand {
     private static final int MAX_SELECTION_BOX_BLOCKS = 131072;
 
@@ -64,8 +72,6 @@ public final class BladePlaceCommand {
         RuntimeCommands.register(dispatcher);   // cancel, pause, continue, confirm, preview,
                                                 // status, diag, move, safety, profile, model
         ZoneCommands.register(dispatcher);      // bladezone
-        WebCommands.register(dispatcher);       // bladeweb
-
         // ---- Still inline (next split candidates) ----
         registerBladeHelp(dispatcher);
         registerBladeSelect(dispatcher);
@@ -78,9 +84,9 @@ public final class BladePlaceCommand {
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] Quick commands:"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeselect markerbox <from> <to> <height> | addhere | add <x> <y> <z> | buildh <height> <blocks_csv>"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeselect export <name> <block_id>"), false);
-                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladezone set " + TownDistrictType.idsCsv() + " | box <type> <from> <to> | autolayout balanced|medieval|harbor [append] | list | clear [type]"), false);
+                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladezone set " + TownDistrictType.idsCsv() + " | box <type> <from> <to> | autolayout balanced|medieval|harbor|adaptive [append] | list | clear [type]"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #blademove mode walk|auto|teleport ; reach <2.0..8.0> ; scheduler on|off ; lookahead <1..96> ; defer on|off ; maxdefer <0..8> ; autoresume on|off ; trace on|off ; traceparticles on|off"), false);
-                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeblueprint list|townlist|load|build|townfill|townfillsel|townpreview|townpreviewsel|townfillzone|townpreviewzone|townruncity|townautocity <preset> [append]|townclearlocks ; #bladeweb importload <index> [name] ; #bladestatus [detail] ; #bladepause ; #bladecontinue ; #bladecancel"), false);
+                ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladeblueprint list|townlist|load|build|townfill|townfillsel|townpreview|townpreviewsel|townfillzone|townpreviewzone|townruncity|townautocity <preset> [append]|cityautoplay <preset> [append]|citystatus|citystop|citycontinue|citycancel|townclearlocks ; #bladestatus [detail] ; #bladepause ; #bladecontinue ; #bladecancel"), false);
                 ctx.getSource().sendFeedback(() -> blueText("[Bladelow] #bladediag show | #bladediag export [name]"), false);
                 return 1;
             })
@@ -88,6 +94,8 @@ public final class BladePlaceCommand {
     }
 
     private static void registerBladeSelect(CommandDispatcher<ServerCommandSource> dispatcher) {
+        // Selection commands define the spatial input the rest of the build and
+        // town systems operate on later.
         dispatcher.register(literal("bladeselect")
             .then(literal("add")
                 .then(argument("pos", BlockPosArgumentType.blockPos())
@@ -559,6 +567,8 @@ public final class BladePlaceCommand {
     }
 
     private static void registerBladeBlueprint(CommandDispatcher<ServerCommandSource> dispatcher) {
+        // Blueprint commands turn selections/zones into actual plans, previews,
+        // fills, and autoplay sessions.
         dispatcher.register(literal("bladeblueprint")
             .then(literal("reload")
                 .executes(ctx -> {
@@ -719,6 +729,34 @@ public final class BladePlaceCommand {
                         ))
                     )
                 )
+            )
+            .then(literal("cityautoplay")
+                .then(argument("preset", StringArgumentType.word())
+                    .executes(ctx -> runCityAutoplaySelection(
+                        ctx.getSource(),
+                        StringArgumentType.getString(ctx, "preset"),
+                        true
+                    ))
+                    .then(literal("append")
+                        .executes(ctx -> runCityAutoplaySelection(
+                            ctx.getSource(),
+                            StringArgumentType.getString(ctx, "preset"),
+                            false
+                        ))
+                    )
+                )
+            )
+            .then(literal("citystatus")
+                .executes(ctx -> runCityAutoplayStatus(ctx.getSource()))
+            )
+            .then(literal("citystop")
+                .executes(ctx -> runCityAutoplayStop(ctx.getSource()))
+            )
+            .then(literal("citycontinue")
+                .executes(ctx -> runCityAutoplayContinue(ctx.getSource()))
+            )
+            .then(literal("citycancel")
+                .executes(ctx -> runCityAutoplayCancel(ctx.getSource()))
             )
             .then(literal("build")
                 .then(argument("start", BlockPosArgumentType.blockPos())
@@ -1024,12 +1062,81 @@ public final class BladePlaceCommand {
         return runTownRunCity(source, bounds[0], bounds[1]);
     }
 
+    private static int runCityAutoplaySelection(ServerCommandSource source, String rawPreset, boolean clearExistingZones) throws CommandSyntaxException {
+        ServerPlayerEntity player = source.getPlayer();
+        if (player == null) {
+            source.sendError(blueText("Player context required."));
+            return 0;
+        }
+        BlockPos[] bounds = selectionBoundsFromMarkers(source, player);
+        if (bounds == null) {
+            return 0;
+        }
+        CityAutoplayDirector.StartResult result = CityAutoplayDirector.start(
+            source,
+            player,
+            bounds[0],
+            bounds[1],
+            rawPreset,
+            clearExistingZones
+        );
+        if (!result.ok()) {
+            source.sendError(blueText("[Bladelow] " + result.message()));
+            return 0;
+        }
+        source.sendFeedback(() -> blueText("[Bladelow] " + result.message()), false);
+        return 1;
+    }
+
+    private static int runCityAutoplayStatus(ServerCommandSource source) throws CommandSyntaxException {
+        ServerPlayerEntity player = source.getPlayer();
+        if (player == null) {
+            source.sendError(blueText("Player context required."));
+            return 0;
+        }
+        source.sendFeedback(() -> blueText("[Bladelow] city " + CityAutoplayDirector.status(player.getUuid())), false);
+        return 1;
+    }
+
+    private static int runCityAutoplayStop(ServerCommandSource source) throws CommandSyntaxException {
+        ServerPlayerEntity player = source.getPlayer();
+        if (player == null) {
+            source.sendError(blueText("Player context required."));
+            return 0;
+        }
+        String result = CityAutoplayDirector.stop(source.getServer(), player.getUuid());
+        source.sendFeedback(() -> blueText("[Bladelow] " + result), false);
+        return 1;
+    }
+
+    private static int runCityAutoplayContinue(ServerCommandSource source) throws CommandSyntaxException {
+        ServerPlayerEntity player = source.getPlayer();
+        if (player == null) {
+            source.sendError(blueText("Player context required."));
+            return 0;
+        }
+        String result = CityAutoplayDirector.resume(source.getServer(), player.getUuid());
+        source.sendFeedback(() -> blueText("[Bladelow] " + result), false);
+        return 1;
+    }
+
+    private static int runCityAutoplayCancel(ServerCommandSource source) throws CommandSyntaxException {
+        ServerPlayerEntity player = source.getPlayer();
+        if (player == null) {
+            source.sendError(blueText("Player context required."));
+            return 0;
+        }
+        String result = CityAutoplayDirector.cancel(source.getServer(), player.getUuid());
+        source.sendFeedback(() -> blueText("[Bladelow] " + result), false);
+        return 1;
+    }
+
     private static String normalizeAutoLayoutPreset(String rawPreset, ServerCommandSource source) {
-        String preset = rawPreset == null ? "" : rawPreset.trim().toLowerCase(Locale.ROOT);
-        if (preset.equals("balanced") || preset.equals("medieval") || preset.equals("harbor")) {
+        String preset = TownAutoLayoutPlanner.normalizePreset(rawPreset);
+        if (!preset.isBlank()) {
             return preset;
         }
-        source.sendError(blueText("[Bladelow] preset must be balanced|medieval|harbor"));
+        source.sendError(blueText("[Bladelow] preset must be balanced|medieval|harbor|adaptive"));
         return "";
     }
 
@@ -1041,82 +1148,20 @@ public final class BladePlaceCommand {
         String preset,
         boolean clearExisting
     ) {
-        int minX = Math.min(from.getX(), to.getX());
-        int maxX = Math.max(from.getX(), to.getX());
-        int minZ = Math.min(from.getZ(), to.getZ());
-        int maxZ = Math.max(from.getZ(), to.getZ());
-        if ((maxX - minX) < 5 || (maxZ - minZ) < 5) {
-            source.sendError(blueText("[Bladelow] area too small for autocity; need at least 6x6"));
+        TownAutoLayoutPlanner.ApplyResult result = TownAutoLayoutPlanner.apply(
+            player.getUuid(),
+            source.getWorld().getRegistryKey(),
+            from,
+            to,
+            preset,
+            clearExisting,
+            source.getWorld()
+        );
+        if (!result.ok()) {
+            source.sendError(blueText("[Bladelow] " + result.message()));
             return 0;
         }
-
-        var worldKey = source.getWorld().getRegistryKey();
-        if (clearExisting) {
-            TownZoneStore.clear(player.getUuid(), worldKey);
-        }
-
-        int[] xCuts = splitIntoThirds(minX, maxX);
-        int[] zCuts = splitIntoThirds(minZ, maxZ);
-        String[][] zoneMap = zoneMapForPreset(preset);
-        int saved = 0;
-        for (int row = 0; row < 3; row++) {
-            for (int col = 0; col < 3; col++) {
-                String type = zoneMap[row][col];
-                int zoneMinX = xCuts[col];
-                int zoneMaxX = xCuts[col + 1];
-                int zoneMinZ = zCuts[row];
-                int zoneMaxZ = zCuts[row + 1];
-                if (zoneMinX > zoneMaxX || zoneMinZ > zoneMaxZ) {
-                    continue;
-                }
-                TownZoneStore.ZoneResult result = TownZoneStore.setBox(
-                    player.getUuid(),
-                    worldKey,
-                    type,
-                    new BlockPos(zoneMinX, 0, zoneMinZ),
-                    new BlockPos(zoneMaxX, 0, zoneMaxZ)
-                );
-                if (result.ok()) {
-                    saved++;
-                }
-            }
-        }
-        return saved;
-    }
-
-    private static int[] splitIntoThirds(int min, int max) {
-        int size = (max - min) + 1;
-        int first = min + (size / 3) - 1;
-        int second = min + ((size * 2) / 3) - 1;
-        first = clamp(first, min, max);
-        second = clamp(second, first, max);
-        return new int[]{min, first, second, max};
-    }
-
-    private static int clamp(int value, int min, int max) {
-        return Math.max(min, Math.min(max, value));
-    }
-
-    private static String[][] zoneMapForPreset(String preset) {
-        if ("medieval".equals(preset)) {
-            return new String[][]{
-                {"workshop", "civic", "workshop"},
-                {"residential", "civic", "market"},
-                {"residential", "mixed", "market"}
-            };
-        }
-        if ("harbor".equals(preset)) {
-            return new String[][]{
-                {"workshop", "workshop", "market"},
-                {"mixed", "civic", "market"},
-                {"residential", "residential", "mixed"}
-            };
-        }
-        return new String[][]{
-            {"residential", "market", "workshop"},
-            {"residential", "civic", "workshop"},
-            {"mixed", "market", "mixed"}
-        };
+        return result.saved();
     }
 
     private static int runTownRunCity(ServerCommandSource source, BlockPos from, BlockPos to) throws CommandSyntaxException {

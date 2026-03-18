@@ -13,6 +13,12 @@ import java.util.List;
 import java.util.Properties;
 import java.util.UUID;
 
+/**
+ * Lightweight persistence layer for active and pending placement jobs.
+ *
+ * Jobs are flattened into a properties file so restart recovery stays simple,
+ * debuggable, and resilient to minor runtime changes.
+ */
 public final class PlacementCheckpointStore {
     private static final int CHECKPOINT_VERSION = 1;
     private static final Path CHECKPOINT_PATH = Path.of("config", "bladelow", "jobs-checkpoint.properties");
@@ -20,6 +26,10 @@ public final class PlacementCheckpointStore {
     private PlacementCheckpointStore() {
     }
 
+    /**
+     * Persist the current runner state. A temporary file is used first so a
+     * crash during write does not leave a half-written checkpoint behind.
+     */
     public static void save(MinecraftServer server, List<PlacementJob> activeJobs, List<PlacementJob> pendingJobs) {
         Properties props = new Properties();
         props.setProperty("version", Integer.toString(CHECKPOINT_VERSION));
@@ -55,6 +65,10 @@ public final class PlacementCheckpointStore {
         }
     }
 
+    /**
+     * Restore jobs from disk. Bad records are dropped individually so one
+     * malformed job does not block the rest of the queue.
+     */
     public static LoadResult load(MinecraftServer server) {
         Path file = server.getRunDirectory().resolve(CHECKPOINT_PATH);
         if (!Files.exists(file)) {
@@ -90,6 +104,9 @@ public final class PlacementCheckpointStore {
         return new LoadResult(active, pending, dropped);
     }
 
+    /**
+     * Flatten one live job into namespaced properties.
+     */
     private static int writeJob(Properties props, int index, String state, PlacementJob job) {
         PlacementJob.JobSnapshot snapshot = job.snapshot();
         if (snapshot == null) {
@@ -154,6 +171,10 @@ public final class PlacementCheckpointStore {
         return index + 1;
     }
 
+    /**
+     * Inflate one checkpoint entry back into a live job. Returning null marks
+     * the entry as unusable.
+     */
     private static PlacementJob readJob(Properties props, String prefix) {
         UUID playerId;
         try {
@@ -300,6 +321,9 @@ public final class PlacementCheckpointStore {
         return fallback;
     }
 
+    /**
+     * Summary returned to the runner after checkpoint load.
+     */
     public record LoadResult(List<PlacementJob> active, List<PlacementJob> pending, int dropped) {
         public int restoredCount() {
             return active.size() + pending.size();

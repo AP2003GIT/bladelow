@@ -1,5 +1,6 @@
 package com.bladelow.builder;
 
+import com.bladelow.ml.BlueprintAutoClassifier;
 import com.google.gson.Gson;
 import com.google.gson.JsonParseException;
 import net.minecraft.block.Block;
@@ -393,10 +394,19 @@ public final class BlueprintLibrary {
                 String key = normalize(parsed.name);
                 int plotWidth = parsed.plotWidth > 0 ? parsed.plotWidth : inferredWidth(entries);
                 int plotDepth = parsed.plotDepth > 0 ? parsed.plotDepth : inferredDepth(entries);
+                int buildHeight = inferredHeight(entries);
                 int priority = parsed.priority;
                 String category = normalizeCategory(parsed.category);
                 List<String> tags = normalizeTags(parsed.tags);
                 List<String> themeTags = normalizeTags(parsed.themeTags);
+                BlueprintAutoClassifier.Classification inferred = BlueprintAutoClassifier.classify(
+                    entries.stream().map(PlacementEntry::block).toList(),
+                    plotWidth,
+                    plotDepth,
+                    buildHeight
+                );
+                themeTags = mergeTags(themeTags, inferred.themeTags());
+                tags = mergeTags(tags, inferred.tags());
                 String roadSide = normalizeSide(parsed.roadSide);
                 if (roadSide.isBlank() && "town".equals(category)) {
                     roadSide = "north";
@@ -449,6 +459,16 @@ public final class BlueprintLibrary {
         return Math.max(1, maxZ - minZ + 1);
     }
 
+    private static int inferredHeight(List<PlacementEntry> entries) {
+        int minY = Integer.MAX_VALUE;
+        int maxY = Integer.MIN_VALUE;
+        for (PlacementEntry entry : entries) {
+            minY = Math.min(minY, entry.y());
+            maxY = Math.max(maxY, entry.y());
+        }
+        return Math.max(1, maxY - minY + 1);
+    }
+
     private static int inferredEntranceX(int plotWidth, String roadSide) {
         return switch (roadSide) {
             case "west" -> 0;
@@ -495,6 +515,20 @@ public final class BlueprintLibrary {
             }
         }
         return List.copyOf(out);
+    }
+
+    private static List<String> mergeTags(List<String> explicitTags, List<String> inferredTags) {
+        if ((explicitTags == null || explicitTags.isEmpty()) && (inferredTags == null || inferredTags.isEmpty())) {
+            return List.of();
+        }
+        LinkedHashSet<String> merged = new LinkedHashSet<>();
+        if (explicitTags != null) {
+            merged.addAll(explicitTags);
+        }
+        if (inferredTags != null) {
+            merged.addAll(inferredTags);
+        }
+        return List.copyOf(merged);
     }
 
     private static boolean isTownTemplate(BlueprintTemplate template) {

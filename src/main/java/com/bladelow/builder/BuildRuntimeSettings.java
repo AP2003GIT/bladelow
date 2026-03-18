@@ -2,6 +2,12 @@ package com.bladelow.builder;
 
 import java.util.Locale;
 
+/**
+ * Global runtime knobs for placement execution.
+ *
+ * Commands and HUD actions mutate these settings live, while queued jobs receive
+ * immutable snapshots so their execution stays stable once started.
+ */
 public final class BuildRuntimeSettings {
     public enum MoveMode {
         TELEPORT,
@@ -144,6 +150,8 @@ public final class BuildRuntimeSettings {
     }
 
     public static synchronized Snapshot snapshot() {
+        // Jobs take a copy of the current settings so later UI/command changes
+        // do not mutate behavior mid-run unexpectedly.
         return new Snapshot(
             smartMoveEnabled,
             reachDistance,
@@ -174,6 +182,9 @@ public final class BuildRuntimeSettings {
         boolean pathTraceEnabled,
         boolean pathTraceParticles
     ) {
+        /**
+         * Compact one-line view used by commands, diagnostics, and HUD status.
+         */
         public String summary() {
             return "smartMove=" + smartMoveEnabled
                 + " mode=" + moveMode.name().toLowerCase(Locale.ROOT)

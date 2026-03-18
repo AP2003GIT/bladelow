@@ -14,6 +14,13 @@ import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 
+/**
+ * Mutable runtime state for one queued build job.
+ *
+ * The planner produces an ordered list of targets and desired block states.
+ * This class owns that list plus all execution-time counters the runner uses
+ * for retries, deferrals, recover decisions, diagnostics, and checkpoints.
+ */
 public class PlacementJob {
     private final UUID playerId;
     private final RegistryKey<World> worldKey;
@@ -230,6 +237,10 @@ public class PlacementJob {
         return true;
     }
 
+    /**
+     * Push the current target to the end of the queue when local conditions
+     * suggest another nearby target is a better next step.
+     */
     public boolean deferCurrentToTail() {
         if (isComplete() || cursor >= entries.size() - 1) {
             return false;
@@ -481,6 +492,9 @@ public class PlacementJob {
             + " " + runtimeSettings.summary();
     }
 
+    /**
+     * Serialize the live job into registry-safe strings for checkpointing.
+     */
     public JobSnapshot snapshot() {
         List<EntrySnapshot> entrySnapshots = new ArrayList<>(entries.size());
         for (Entry entry : entries) {
@@ -528,6 +542,11 @@ public class PlacementJob {
         );
     }
 
+    /**
+     * Rebuild a live job from its checkpoint snapshot. Invalid ids or malformed
+     * entries intentionally abort the restore instead of reviving a corrupted
+     * job.
+     */
     public static PlacementJob fromSnapshot(JobSnapshot snapshot) {
         if (snapshot == null || snapshot.entries() == null || snapshot.entries().isEmpty()) {
             return null;
@@ -592,6 +611,10 @@ public class PlacementJob {
         return job;
     }
 
+    /**
+     * Per-target checkpoint record. Attempts and deferrals are persisted so a
+     * restored job keeps the same retry pressure as the original run.
+     */
     public record EntrySnapshot(
         String blockId,
         int x,
@@ -602,6 +625,9 @@ public class PlacementJob {
     ) {
     }
 
+    /**
+     * Full checkpoint payload for a running or pending job.
+     */
     public record JobSnapshot(
         UUID playerId,
         String worldId,
@@ -633,6 +659,10 @@ public class PlacementJob {
     ) {
     }
 
+    /**
+     * The runner advances jobs through these coarse phases so each tick only
+     * performs one kind of work.
+     */
     public enum TaskNode {
         MOVE,
         ALIGN,
@@ -640,6 +670,9 @@ public class PlacementJob {
         RECOVER
     }
 
+    /**
+     * Failure categories used by the recover node and diagnostics.
+     */
     public enum RecoverReason {
         NONE,
         OUT_OF_REACH,
@@ -652,6 +685,9 @@ public class PlacementJob {
         UNKNOWN
     }
 
+    /**
+     * Live mutable entry paired with one target location inside the queue.
+     */
     private static final class Entry {
         private final BlockState blockState;
         private final BlockPos target;

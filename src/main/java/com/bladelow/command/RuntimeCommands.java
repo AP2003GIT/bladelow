@@ -3,6 +3,9 @@ package com.bladelow.command;
 import com.bladelow.builder.BuildProfileStore;
 import com.bladelow.builder.BuildRuntimeSettings;
 import com.bladelow.builder.PlacementJobRunner;
+import com.bladelow.builder.SelectionState;
+import com.bladelow.builder.TownPlanner;
+import com.bladelow.builder.TownZoneStore;
 import com.bladelow.ml.BladelowLearning;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.DoubleArgumentType;
@@ -12,6 +15,7 @@ import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
+import net.minecraft.util.math.BlockPos;
 
 import java.util.List;
 
@@ -30,6 +34,8 @@ public final class RuntimeCommands {
     }
 
     public static void register(CommandDispatcher<ServerCommandSource> dispatcher) {
+        // Group runtime controls by concern so the top-level registration stays
+        // readable even as more knobs are added.
         registerCancel(dispatcher);
         registerPause(dispatcher);
         registerContinue(dispatcher);
@@ -177,6 +183,8 @@ public final class RuntimeCommands {
     // -------------------------------------------------------------------------
 
     private static void registerMove(CommandDispatcher<ServerCommandSource> dispatcher) {
+        // Movement/runtime settings are exposed through subcommands rather than
+        // one giant setter so the HUD and chat commands can stay aligned.
         dispatcher.register(literal("blademove")
             .then(literal("show").executes(ctx -> { ctx.getSource().sendFeedback(() -> blue("[Bladelow] " + BuildRuntimeSettings.summary()), false); return 1; }))
             .then(literal("on").executes(ctx ->  { BuildRuntimeSettings.setSmartMoveEnabled(true);  ctx.getSource().sendFeedback(() -> blue("[Bladelow] smart move enabled"),  false); return 1; }))
@@ -243,7 +251,7 @@ public final class RuntimeCommands {
     private static void registerModel(CommandDispatcher<ServerCommandSource> dispatcher) {
         dispatcher.register(literal("blademodel")
             .then(literal("show").executes(ctx -> {
-                String msg = "[Bladelow] " + BladelowLearning.model().summary() + " " + BuildRuntimeSettings.summary();
+                String msg = "[Bladelow] " + BladelowLearning.summary() + " " + BuildRuntimeSettings.summary();
                 ctx.getSource().sendFeedback(() -> blue(msg), false); return 1;
             }))
             .then(literal("reset").executes(ctx -> {
@@ -254,6 +262,7 @@ public final class RuntimeCommands {
             .then(literal("save").executes(ctx -> {
                 ctx.getSource().sendFeedback(() -> blue("[Bladelow] model " + BladelowLearning.save()), false); return 1;
             }))
+            .then(literal("intent").executes(ctx -> runIntent(ctx.getSource())))
             .then(literal("load").executes(ctx -> {
                 ctx.getSource().sendFeedback(() -> blue("[Bladelow] model " + BladelowLearning.load()), false); return 1;
             }))
@@ -272,9 +281,56 @@ public final class RuntimeCommands {
         );
     }
 
+    private static int runIntent(ServerCommandSource source) {
+        ServerPlayerEntity player = source.getPlayer();
+        if (player == null) { source.sendError(blue("Player context required.")); return 0; }
+        BlockPos[] bounds = selectionBoundsFromMarkers(player);
+        if (bounds == null) {
+            source.sendError(blue("[Bladelow] selection is empty; mark an area first"));
+            return 0;
+        }
+        TownPlanner.IntentSuggestion suggestion = TownPlanner.suggestBuildIntent(
+            source.getWorld(),
+            bounds[0],
+            bounds[1],
+            TownZoneStore.snapshot(player.getUuid(), source.getWorld().getRegistryKey())
+        );
+        if (!suggestion.ok()) {
+            source.sendError(blue("[Bladelow] " + suggestion.message()));
+            return 0;
+        }
+        source.sendFeedback(() -> blue("[Bladelow] " + suggestion.message()), false);
+        return 1;
+    }
+
     // -------------------------------------------------------------------------
     // Shared helpers
     // -------------------------------------------------------------------------
+
+    private static BlockPos[] selectionBoundsFromMarkers(ServerPlayerEntity player) {
+        if (player == null) {
+            return null;
+        }
+        List<BlockPos> points = SelectionState.snapshot(player.getUuid(), player.getEntityWorld().getRegistryKey());
+        if (points.isEmpty()) {
+            return null;
+        }
+        int minX = Integer.MAX_VALUE;
+        int minY = Integer.MAX_VALUE;
+        int minZ = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE;
+        int maxY = Integer.MIN_VALUE;
+        int maxZ = Integer.MIN_VALUE;
+        for (BlockPos point : points) {
+            minX = Math.min(minX, point.getX());
+            minY = Math.min(minY, point.getY());
+            minZ = Math.min(minZ, point.getZ());
+            maxX = Math.max(maxX, point.getX());
+            maxY = Math.max(maxY, point.getY());
+            maxZ = Math.max(maxZ, point.getZ());
+        }
+        return new BlockPos[]{new BlockPos(minX, minY, minZ), new BlockPos(maxX, maxY, maxZ)};
+    }
 
     /** Build a literal(name) → argument("enabled", word) → on/off handler. */
     private static com.mojang.brigadier.builder.LiteralArgumentBuilder<ServerCommandSource> onOffArg(

@@ -7,6 +7,12 @@ import net.minecraft.util.math.BlockPos;
 
 import java.util.Locale;
 
+/**
+ * World-space particle overlay for current selection markers.
+ *
+ * This mirrors HUD/command selection state so the player can see the planned
+ * box directly in the world while moving around.
+ */
 public final class BladelowSelectionOverlay {
     private static final int DEFAULT_HEIGHT = 1;
 
@@ -71,6 +77,8 @@ public final class BladelowSelectionOverlay {
             return;
         }
         if ("markerbox".equals(action) && parts.length >= 9) {
+            // Mirror the command-driven marker format so the overlay also stays
+            // in sync when the player does not open the HUD.
             Integer x1 = parseInt(parts[2]);
             Integer y1 = parseInt(parts[3]);
             Integer z1 = parseInt(parts[4]);

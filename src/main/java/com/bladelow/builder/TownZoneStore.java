@@ -11,6 +11,12 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * In-memory district zoning store keyed by player and world.
+ *
+ * Zones are simple rectangles because they are easy to paint from the HUD and
+ * cheap to query during planning.
+ */
 public final class TownZoneStore {
     private static final Map<ZoneKey, List<Zone>> ZONES = new ConcurrentHashMap<>();
 
@@ -46,6 +52,8 @@ public final class TownZoneStore {
     }
 
     public static synchronized ZoneResult setSelection(UUID playerId, RegistryKey<World> worldKey, String type, List<BlockPos> points) {
+        // Collapse arbitrary selected points into the smallest covering box so
+        // the planner can operate on a simple district shape.
         if (points == null || points.isEmpty()) {
             return ZoneResult.error("selection is empty; use #bladeselect markerbox first");
         }

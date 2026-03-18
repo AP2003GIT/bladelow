@@ -6,6 +6,10 @@ import net.minecraft.command.argument.BlockArgumentParser;
 import net.minecraft.registry.Registries;
 import net.minecraft.util.BlockRotation;
 
+/**
+ * Shared serializer/parser for block states stored in blueprints, checkpoints,
+ * and diagnostics.
+ */
 public final class BlueprintStateCodec {
     private BlueprintStateCodec() {
     }

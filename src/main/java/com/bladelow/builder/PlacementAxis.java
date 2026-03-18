@@ -2,6 +2,9 @@ package com.bladelow.builder;
 
 import net.minecraft.util.math.BlockPos;
 
+/**
+ * Axis helper used by simple linear selection and build commands.
+ */
 public enum PlacementAxis {
     X,
     Y,

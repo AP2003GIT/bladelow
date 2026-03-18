@@ -15,6 +15,13 @@ import org.lwjgl.glfw.GLFW;
 import java.util.Locale;
 import java.util.Set;
 
+/**
+ * Client bootstrap for the Bladelow HUD, telemetry, and hash-command shortcut
+ * flow.
+ *
+ * The client side mostly translates user input into normal server commands so
+ * gameplay logic remains authoritative on the server.
+ */
 public class BladelowClientMod implements ClientModInitializer {
     private static final String KEY_OPEN_HUD = "key.bladelow.open_hud";
     private static final Set<String> HASH_COMMAND_ROOTS = Set.of(
@@ -30,7 +37,6 @@ public class BladelowClientMod implements ClientModInitializer {
         "bladesafety",
         "bladeprofile",
         "bladeblueprint",
-        "bladeweb",
         "blademodel"
     );
 
@@ -53,6 +59,8 @@ public class BladelowClientMod implements ClientModInitializer {
         );
 
         ClientSendMessageEvents.ALLOW_CHAT.register(message -> {
+            // Support "#blade..." chat shortcuts and forward them as proper
+            // commands while keeping the HUD/selection overlay in sync.
             String trimmed = message == null ? "" : message.trim();
             if (!trimmed.startsWith("#")) {
                 return true;
@@ -99,6 +107,7 @@ public class BladelowClientMod implements ClientModInitializer {
         BladelowSelectionOverlay.tick(client);
 
         while (openHudKey.wasPressed()) {
+            // The HUD is a simple toggleable planner surface, not a modal flow.
             if (client.currentScreen instanceof BladelowHudScreen) {
                 client.setScreen(null);
             } else {

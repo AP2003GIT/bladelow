@@ -4,6 +4,12 @@ import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockPos;
 
+/**
+ * Extracts the tiny feature vector used by the current placement model.
+ *
+ * The model is intentionally simple for now, so the features stay cheap to
+ * compute every tick during active building.
+ */
 public final class PlacementFeatureExtractor {
     private PlacementFeatureExtractor() {
     }

@@ -32,6 +32,14 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Central runtime executor for Bladelow placement jobs.
+ *
+ * Jobs live here from the moment they are queued until they are completed,
+ * paused, previewed, checkpointed, restored, or canceled. The runner advances
+ * each job through task nodes, applies retry/recovery heuristics, and stores
+ * the diagnostic snapshots surfaced by commands and the HUD.
+ */
 public final class PlacementJobRunner {
     private static final Map<UUID, PlacementJob> JOBS = new ConcurrentHashMap<>();
     private static final Map<UUID, PlacementJob> PENDING = new ConcurrentHashMap<>();
@@ -93,6 +101,10 @@ public final class PlacementJobRunner {
         return result.restoredCount();
     }
 
+    /**
+     * Shared queue entry point used by commands, HUD actions, and autoplay
+     * systems. Jobs either start immediately or remain pending in preview mode.
+     */
     public static void queueOrPreview(MinecraftServer server, PlacementJob job) {
         AUTO_RESUME_READY_AT.remove(job.playerId());
         TARGET_PRESSURE.remove(job.playerId());
@@ -276,6 +288,10 @@ public final class PlacementJobRunner {
         return PENDING.containsKey(playerId);
     }
 
+    /**
+     * Server-tick driver for every active job. Handles lifecycle transitions,
+     * node execution, watchdogs, timeouts, and checkpoint saves.
+     */
     public static void tick(MinecraftServer server) {
         boolean stateChanged = processPendingAutoResume(server);
         Iterator<Map.Entry<UUID, PlacementJob>> it = JOBS.entrySet().iterator();
@@ -378,6 +394,9 @@ public final class PlacementJobRunner {
         }
     }
 
+    /**
+     * Dispatch one task-node step for the current job target.
+     */
     private static void runTaskNode(net.minecraft.server.world.ServerWorld world, ServerPlayerEntity player, PlacementJob job) {
         if (job.isComplete()) {
             return;
@@ -390,6 +409,10 @@ public final class PlacementJobRunner {
         }
     }
 
+    /**
+     * Hard-stop nodes that have spun too long without progress and route them
+     * through the same recovery path used for normal placement failures.
+     */
     private static boolean enforceNodeTimeout(MinecraftServer server, ServerPlayerEntity player, PlacementJob job) {
         if (server == null || player == null || job == null || job.isComplete()) {
             return false;
@@ -578,6 +601,10 @@ public final class PlacementJobRunner {
         }
     }
 
+    /**
+     * MOVE node: choose a stand candidate and get the player into placement
+     * range for the current target.
+     */
     private static void nodeMove(net.minecraft.server.world.ServerWorld world, ServerPlayerEntity player, PlacementJob job) {
         BlockPos target = job.currentTarget();
         int pressure = targetPressure(job.playerId(), target);
@@ -650,6 +677,10 @@ public final class PlacementJobRunner {
         job.setNode(PlacementJob.TaskNode.ALIGN);
     }
 
+    /**
+     * ALIGN node: verify the target is still reachable, safe to replace, and
+     * supported by the player's current inventory state.
+     */
     private static void nodeAlign(net.minecraft.server.world.ServerWorld world, ServerPlayerEntity player, PlacementJob job) {
         BlockPos target = job.currentTarget();
         double dist = Math.sqrt(player.squaredDistanceTo(target.getX() + 0.5, target.getY() + 0.5, target.getZ() + 0.5));
@@ -691,6 +722,10 @@ public final class PlacementJobRunner {
         job.setNode(PlacementJob.TaskNode.PLACE);
     }
 
+    /**
+     * PLACE node: score the placement with the current learning model, attempt
+     * the world mutation, and feed the result back into training logs.
+     */
     private static void nodePlace(net.minecraft.server.world.ServerWorld world, ServerPlayerEntity player, PlacementJob job) {
         BlockPos target = job.currentTarget();
         var desiredState = job.currentBlockState();
@@ -712,6 +747,7 @@ public final class PlacementJobRunner {
             clearTargetPressure(job.playerId(), target);
             consumePlacementItemAfterSuccess(player, job.currentBlock());
             job.recordPlaced();
+            BladelowLearning.datasetLogger().recordPlacement(world, player, job, target, desiredState, features);
             job.noteEvent("placed block=" + blockId(job) + " target=" + shortTarget(target));
             job.advance();
             return;
@@ -721,6 +757,10 @@ public final class PlacementJobRunner {
         job.startRecover(PlacementJob.RecoverReason.PLACE_FAILED, "target=" + shortTarget(target));
     }
 
+    /**
+     * RECOVER node: translate categorized failures into retries, deferrals,
+     * skips, or fallback actions without bloating the main nodes.
+     */
     private static void nodeRecover(net.minecraft.server.world.ServerWorld world, ServerPlayerEntity player, PlacementJob job) {
         if (job.isComplete()) {
             return;
@@ -1516,6 +1556,10 @@ public final class PlacementJobRunner {
         return cleaned;
     }
 
+    /**
+     * Preview mode paints the pending job without mutating the world so the
+     * player can confirm or cancel before execution begins.
+     */
     private static void preview(PlacementJob job, MinecraftServer server, ServerPlayerEntity player) {
         var world = server.getWorld(job.worldKey());
         if (world == null) {

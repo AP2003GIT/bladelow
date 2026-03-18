@@ -12,6 +12,12 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Properties;
 
+/**
+ * Persists named runtime-setting presets.
+ *
+ * Profiles let the player switch between different movement and safety
+ * behaviors without manually re-entering every runtime setting.
+ */
 public final class BuildProfileStore {
     private BuildProfileStore() {
     }
@@ -53,6 +59,8 @@ public final class BuildProfileStore {
 
     public static String load(MinecraftServer server, String name) {
         String n = normalize(name);
+        // Built-in profiles are always available even if the config file has not
+        // been created yet.
         if ("builder".equals(n)) {
             BuildRuntimeSettings.setSmartMoveEnabled(true);
             BuildRuntimeSettings.setMoveMode("walk");

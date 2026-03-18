@@ -2,6 +2,12 @@ package com.bladelow.ml;
 
 import java.util.Properties;
 
+/**
+ * Lightweight online model for deciding whether to attempt a placement now.
+ *
+ * It behaves like a tiny perceptron so Bladelow can adapt from live build
+ * outcomes without dragging in a heavy ML runtime.
+ */
 public final class PlacementModel {
     private static final double DEFAULT_BIAS_WEIGHT = 0.20;
     private static final double DEFAULT_REPLACEABLE_WEIGHT = 0.65;
@@ -32,6 +38,8 @@ public final class PlacementModel {
     }
 
     public synchronized void train(PlacementFeatures f, boolean success) {
+        // Online update: reward successful patterns and penalize repeated
+        // failures while keeping the model simple enough for live gameplay.
         int label = success ? 1 : -1;
         int predicted = score(f) >= threshold ? 1 : -1;
         int error = label - predicted;
