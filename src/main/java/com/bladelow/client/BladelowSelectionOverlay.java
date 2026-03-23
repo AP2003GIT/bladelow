@@ -1,11 +1,11 @@
 package com.bladelow.client;
 
+import com.bladelow.network.HudAction;
+import com.bladelow.network.HudCommandPayload;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.world.ClientWorld;
 import net.minecraft.particle.DustParticleEffect;
 import net.minecraft.util.math.BlockPos;
-
-import java.util.Locale;
 
 /**
  * World-space particle overlay for current selection markers.
@@ -48,44 +48,24 @@ public final class BladelowSelectionOverlay {
         }
     }
 
-    public static void handleCommand(String command) {
-        if (command == null) {
+    public static void applyHudAction(HudCommandPayload payload) {
+        if (payload == null) {
             return;
         }
-        String trimmed = command.trim();
-        if (trimmed.isEmpty()) {
-            return;
-        }
-        if (trimmed.startsWith("/")) {
-            trimmed = trimmed.substring(1).trim();
-        }
-        if (trimmed.startsWith("#")) {
-            trimmed = trimmed.substring(1).trim();
-        }
-        if (trimmed.isEmpty()) {
-            return;
-        }
-
-        String[] parts = trimmed.split("\\s+");
-        if (parts.length < 2 || !"bladeselect".equalsIgnoreCase(parts[0])) {
-            return;
-        }
-
-        String action = parts[1].toLowerCase(Locale.ROOT);
-        if ("clear".equals(action)) {
+        if (payload.action() == HudAction.SELECTION_CLEAR) {
             clear();
             return;
         }
-        if ("markerbox".equals(action) && parts.length >= 9) {
-            // Mirror the command-driven marker format so the overlay also stays
-            // in sync when the player does not open the HUD.
-            Integer x1 = parseInt(parts[2]);
-            Integer y1 = parseInt(parts[3]);
-            Integer z1 = parseInt(parts[4]);
-            Integer x2 = parseInt(parts[5]);
-            Integer y2 = parseInt(parts[6]);
-            Integer z2 = parseInt(parts[7]);
-            Integer h = parseInt(parts[8]);
+        if (payload.action() == HudAction.SELECTION_MARKER_BOX && payload.args().size() >= 7) {
+            // Mirror the selection marker payload so the in-world overlay stays
+            // in sync with the HUD without reparsing a fake command string.
+            Integer x1 = parseInt(payload.args().get(0));
+            Integer y1 = parseInt(payload.args().get(1));
+            Integer z1 = parseInt(payload.args().get(2));
+            Integer x2 = parseInt(payload.args().get(3));
+            Integer y2 = parseInt(payload.args().get(4));
+            Integer z2 = parseInt(payload.args().get(5));
+            Integer h = parseInt(payload.args().get(6));
             if (x1 == null || y1 == null || z1 == null || x2 == null || y2 == null || z2 == null || h == null || h < 1) {
                 return;
             }

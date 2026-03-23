@@ -1,12 +1,12 @@
 package com.bladelow;
 
-import com.bladelow.builder.PlacementJobRunner;
-import com.bladelow.builder.BlueprintLibrary;
-import com.bladelow.command.BladePlaceCommand;
-import com.bladelow.command.BladeAutoCommand;
 import com.bladelow.auto.CityAutoplayDirector;
+import com.bladelow.builder.BlueprintLibrary;
+import com.bladelow.builder.PlacementJobRunner;
+import com.bladelow.command.ManualRecoveryCommands;
 import com.bladelow.ml.BladelowLearning;
 import com.bladelow.ml.ManualBuildLearningTracker;
+import com.bladelow.network.HudCommandBridge;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -17,8 +17,9 @@ import org.slf4j.LoggerFactory;
 /**
  * Server-side bootstrap for Bladelow.
  *
- * This wires command registration, background build tickers, checkpoint
- * restore/save, and local learning-state initialization into Fabric's lifecycle.
+ * Normal planning/build actions now flow through the HUD packet bridge, while a
+ * tiny chat-command recovery surface remains available for pause/continue/
+ * cancel/status when something needs manual intervention.
  */
 public class BladelowMod implements ModInitializer {
     public static final String MOD_ID = "bladelow";
@@ -26,14 +27,10 @@ public class BladelowMod implements ModInitializer {
 
     @Override
     public void onInitialize() {
-        // Register both the direct builder command set and the higher-level
-        // automation commands during the normal server command bootstrap.
-        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) -> {
-            BladePlaceCommand.register(dispatcher);
-            BladeAutoCommand.register(dispatcher);
-        });
-        // Active jobs and autoplay sessions are advanced only from the server
-        // tick thread so world changes stay serialized and deterministic.
+        CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
+            ManualRecoveryCommands.register(dispatcher)
+        );
+        HudCommandBridge.registerServer();
         ServerTickEvents.END_SERVER_TICK.register(server -> {
             PlacementJobRunner.tick(server);
             CityAutoplayDirector.tick(server);

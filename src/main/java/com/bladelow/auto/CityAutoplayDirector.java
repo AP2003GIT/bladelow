@@ -150,7 +150,7 @@ public final class CityAutoplayDirector {
             return StartResult.error("another build is active; stop/cancel it first");
         }
         if (SESSIONS.containsKey(player.getUuid())) {
-            return StartResult.error("city autoplay already active; use #bladeblueprint citystop or citycancel");
+            return StartResult.error("city autoplay already active; use the HUD controls or /bladeblueprint citystop or citycancel");
         }
         String preset = TownAutoLayoutPlanner.normalizePreset(rawPreset);
         if (preset.isBlank()) {

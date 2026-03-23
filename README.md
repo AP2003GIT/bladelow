@@ -4,19 +4,20 @@ Bladelow is a Fabric mod for Minecraft `1.21.11` (Java `21`) focused on assisted
 
 ## What Exists Right Now
 
-- Selection/marker area tools (`markerbox`, `box`, `build`, `buildh`).
+- Selection/marker area tools with visual minimap selection and in-world marker overlays.
 - 1-3 block palette placement (slot fallback supported).
-- Blueprint build/load/list/info + town template workflows.
+- Blueprint build/load workflows plus town template filling.
 - District zoning with five types: `residential`, `market`, `workshop`, `civic`, `mixed`.
-- Runtime controls: pause/continue/cancel, preview/confirm, move tuning, diagnostics, profiles, model config.
+- Runtime controls: pause/continue/cancel, move tuning, diagnostics, profiles, and local intent scans.
 - Automatic block safety: inventories, redstone, crops, doors, rails, utility blocks, and other sensitive blocks are skipped by default.
-- Semi-autonomous planner (`/bladeauto`) with queue -> plan -> phased confirm/skip flow.
-- City Director autopilot (`/bladeblueprint cityautoplay`) with ordered district queue, terrain-prep stage, material auto-resolution, and resume persistence.
+- Semi-autonomous planner services for queued building phases and recovery.
+- City Director autopilot with ordered district queue, terrain-prep stage, material auto-resolution, and resume persistence.
 - HUD with explicit flow tabs: `AREA -> BLOCKS -> SOURCE -> RUN`.
 - HUD mode buttons: `SEL`, `BP`, `CITY`.
 - Planning minimap that renders layout categories instead of only coordinates.
 - Suggested plot overlay on the minimap for open build footprints.
-- Build intent scan (`/blademodel intent`) wired into the HUD city flow.
+- Build intent scan wired into the HUD city flow.
+- Typed HUD action bridge: the active UI path is packet/action based, not chat-command based.
 - Local ML-style datasets for placements, environment scans, and build-intent examples.
 
 ## Requirements
@@ -89,18 +90,18 @@ The HUD now includes a planning map on the left side for non-block steps. Use it
 ### Main Run Controls
 
 - `Start Build` (or `Run City Build` in `CITY` mode)
-- `Pause` -> `bladepause`
-- `Resume` -> `bladecontinue`
-- `Stop Build` -> `bladecancel`
+- `Pause`
+- `Resume`
+- `Stop Build`
 
 ### City Automation (HUD)
 
 - `Preset`: cycles district layout preset (`medieval`, `balanced`, `harbor`, `adaptive`).
-- `Auto Zones`: runs `/bladezone autolayout <preset>`.
-- `Director Start`: runs `/bladeblueprint cityautoplay <preset>`.
-- `Director Status`: runs `/bladeblueprint citystatus`.
-- `Director Stop`: runs `/bladeblueprint citystop`.
-- `Director Continue`: runs `/bladeblueprint citycontinue`.
+- `Auto Zones`: applies the current district preset to the selected area.
+- `Director Start`: starts the staged city autoplay pipeline for the selected area.
+- `Director Status`: checks the active city director state.
+- `Director Stop`: pauses the city director.
+- `Director Continue`: resumes the city director.
 - `Residential`, `Market`, `Workshop`, `Civic`, `Mixed`: select the active district brush for map painting.
 
 ### HUD Hotkeys (while HUD open)
@@ -115,155 +116,47 @@ The HUD now includes a planning map on the left side for non-block steps. Use it
 
 - `config/bladelow/hud-state.properties`
 
-## Chat Prefix Rules
+## Manual Command Surface
 
-Bladelow supports normal slash commands (`/blade...`) and selective `#` shortcuts.
+Bladelow is now `HUD-first`. Planning, zoning, blueprint execution, and model scans are driven by the HUD and minimap rather than typed commands.
 
-`#` auto-converts for:
-- `bladehelp`
-- `bladeselect`
-- `bladecancel`
+The small public manual command surface is:
+- `/bladepause`
+- `/bladecontinue`
+- `/bladecancel`
+- `/bladestatus [detail]`
+
+`#` auto-converts only for:
 - `bladepause`
 - `bladecontinue`
-- `bladeconfirm`
-- `bladepreview`
+- `bladecancel`
 - `bladestatus`
-- `blademove`
-- `bladesafety`
-- `bladeprofile`
-- `bladeblueprint`
-- `blademodel`
 
-Alias:
-- `#bladelow` -> `#bladehelp`
+Everything else is now handled through the internal HUD action bridge and direct Java action services rather than a public command tree.
 
-Not auto-converted by `#`:
-- `bladezone`
-- `bladediag`
-- `bladeauto`
+## Internal HUD Action Path
 
-Use slash form for those:
-- `/bladezone ...`
-- `/bladediag ...`
-- `/bladeauto ...`
+The active planning/build flow now goes through:
 
-## Command Reference
+1. HUD widgets and minimap selection
+2. typed `HudAction` payloads
+3. packet bridge
+4. direct server-side action handlers
+5. planner/runtime/build services
 
-### Core
+Key internal files:
+- `src/main/java/com/bladelow/network/HudAction.java`
+- `src/main/java/com/bladelow/network/HudCommandPayload.java`
+- `src/main/java/com/bladelow/network/HudCommandBridge.java`
+- `src/main/java/com/bladelow/network/HudActionService.java`
+- `src/main/java/com/bladelow/client/BladelowSelectionOverlay.java`
 
-- `/bladehelp`
-
-### Selection
-
-- `/bladeselect add <pos>`
-- `/bladeselect addhere`
-- `/bladeselect markerbox <from> <to> <height> [solid|hollow]`
-- `/bladeselect box <from> <to> [solid|hollow]`
-- `/bladeselect remove <pos>`
-- `/bladeselect undo`
-- `/bladeselect clear`
-- `/bladeselect size`
-- `/bladeselect list`
-- `/bladeselect build <top_y> <blocks_csv>`
-- `/bladeselect buildh <height> <blocks_csv>`
-- `/bladeselect export <name> <block_id>`
-
-### Blueprint + Town
-
-- `/bladeblueprint reload`
-- `/bladeblueprint list`
-- `/bladeblueprint townlist`
-- `/bladeblueprint load <name>`
-- `/bladeblueprint info [name]`
-- `/bladeblueprint build <start> [blocks_csv]`
-- `/bladeblueprint build <name> <start> [blocks_csv]`
-- `/bladeblueprint townfill <from> <to>`
-- `/bladeblueprint townfillsel`
-- `/bladeblueprint townpreview <from> <to>`
-- `/bladeblueprint townpreviewsel`
-- `/bladeblueprint townfillzone <type> [from to]`
-- `/bladeblueprint townpreviewzone <type> [from to]`
-- `/bladeblueprint townclearlocks`
-- `/bladeblueprint townruncity [from to]`
-- `/bladeblueprint townautocity <balanced|medieval|harbor|adaptive> [append]`
-- `/bladeblueprint cityautoplay <balanced|medieval|harbor|adaptive> [append]`
-- `/bladeblueprint citystatus`
-- `/bladeblueprint citystop`
-- `/bladeblueprint citycontinue`
-- `/bladeblueprint citycancel`
-
-### District Zones
-
-- `/bladezone set <type>`
-- `/bladezone box <type> <from> <to>`
-- `/bladezone autolayout <balanced|medieval|harbor|adaptive> [append]`
-- `adaptive` auto-orients district layout using detected road/water-heavy edges from the selected area.
-- `/bladezone list`
-- `/bladezone clear [type]`
-
-District types:
+District types used by the planner:
 - `residential`
 - `market`
 - `workshop`
 - `civic`
 - `mixed`
-
-### Runtime / Diagnostics
-
-- `/bladecancel`
-- `/bladepause`
-- `/bladecontinue`
-- `/bladeconfirm`
-- `/bladepreview show`
-- `/bladestatus [detail]`
-- `/bladediag [show]`
-- `/bladediag export [name]`
-
-### AI Auto Planner
-
-- `/bladeauto add <blueprint> [count]`
-- `/bladeauto goals`
-- `/bladeauto status`
-- `/bladeauto plan`
-- `/bladeauto confirm`
-- `/bladeauto skip`
-- `/bladeauto cancel`
-- `/bladeauto clear`
-- `/bladeauto remove <index>`
-
-`/bladeauto confirm` now starts phased execution:
-- `FOUNDATION -> WALLS -> ROOF -> DETAILS`
-
-`/bladeauto cancel` now clears pending proposal and/or active phased plan.
-
-### Movement
-
-- `/blademove show`
-- `/blademove on|off`
-- `/blademove mode walk|auto|teleport`
-- `/blademove reach <2.0..8.0>`
-- `/blademove scheduler on|off`
-- `/blademove lookahead <1..96>`
-- `/blademove defer on|off`
-- `/blademove maxdefer <0..8>`
-- `/blademove autoresume on|off`
-- `/blademove trace on|off`
-- `/blademove traceparticles on|off`
-
-### Safety / Profiles / Model
-
-- `/bladesafety show`
-- `/bladesafety strict on|off`
-- `/bladesafety preview on|off`
-- `/bladeprofile list`
-- `/bladeprofile save <name>`
-- `/bladeprofile load <name>`
-- `/blademodel show`
-- `/blademodel reset`
-- `/blademodel save`
-- `/blademodel load`
-- `/blademodel configure <threshold> <learning_rate>`
-- `/blademodel intent`
 
 Automatic safety currently protects:
 - storage and other block-entity blocks
@@ -292,7 +185,7 @@ The current runtime uses these datasets as local memory and scoring hints. It is
 
 ## City Director Flow
 
-`/bladeblueprint cityautoplay <preset>` executes this pipeline:
+`Director Start` in the HUD executes this pipeline:
 
 1. Applies district zoning preset to selected marker area.
 2. Builds district run order from zone coverage (scheduler).
@@ -336,18 +229,19 @@ Example:
 2. If the green suggested plots look good, use `Shift + left-click` to snap to one.
 3. In `CITY` mode, paint district zones or run `Auto Zones`.
 4. Let the HUD request an intent scan for the selected area.
-5. Preview (`/bladeblueprint townpreviewsel`) if you want a safe check first.
-6. Run fill (`/bladeblueprint townfillsel`) or start the city director (`/bladeblueprint cityautoplay <preset>`).
+5. Use the city preview/fill flow from the HUD if you want a safe check first.
+6. Run `Run City Build` for a direct district fill or `Director Start` for staged city autoplay.
 
 ## Troubleshooting
 
 1. `#` command does nothing
-- Use `/` for `bladezone` and `bladediag`.
+- Only recovery shortcuts are supported through `#`: `bladepause`, `bladecontinue`, `bladecancel`, `bladestatus`.
+- For planning/building actions, open the HUD with `P`.
 
 2. Build seems stuck
 - Check `/bladestatus detail`.
-- Resume/pause/cancel with runtime commands.
-- Try `/blademove mode auto` or `/blademove mode teleport`.
+- Use the HUD `Pause`, `Resume`, or `Stop Build` controls.
+- Try changing move mode from the HUD runtime controls.
 
 3. No blocks placed
 - Select at least one palette slot (`S1/S2/S3`).
@@ -358,12 +252,16 @@ Example:
 - Flatten or clear obvious clutter/water overlap first.
 - Suggested plots only appear when the selected area contains reasonably open, buildable ground.
 
-## Internal Command Modules
+## Internal Runtime Modules
 
 `src/main/java/com/bladelow/command/`:
-- `RuntimeCommands`
-- `ZoneCommands`
+- `ManualRecoveryCommands`
 - `MaterialResolver`
 - `PaletteAssigner`
 - `PlacementPipeline`
-- `BladePlaceCommand` (entry + selection/blueprint registration)
+
+`src/main/java/com/bladelow/network/`:
+- `HudAction`
+- `HudCommandPayload`
+- `HudCommandBridge`
+- `HudActionService`

@@ -1,6 +1,9 @@
 package com.bladelow.client;
 
 import com.bladelow.client.ui.BladelowHudScreen;
+import com.bladelow.network.HudAction;
+import com.bladelow.network.HudCommandBridge;
+import com.bladelow.network.HudCommandPayload;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.keybinding.v1.KeyBindingHelper;
 import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents;
@@ -12,32 +15,22 @@ import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import org.lwjgl.glfw.GLFW;
 
-import java.util.Locale;
 import java.util.Set;
 
 /**
- * Client bootstrap for the Bladelow HUD, telemetry, and hash-command shortcut
- * flow.
+ * Client bootstrap for the Bladelow HUD, telemetry, and minimal recovery
+ * shortcuts.
  *
- * The client side mostly translates user input into normal server commands so
- * gameplay logic remains authoritative on the server.
+ * The player-facing workflow is now HUD-first. Hash shortcuts remain only for
+ * the manual recovery surface: pause, continue, cancel, and status.
  */
 public class BladelowClientMod implements ClientModInitializer {
     private static final String KEY_OPEN_HUD = "key.bladelow.open_hud";
     private static final Set<String> HASH_COMMAND_ROOTS = Set.of(
-        "bladehelp",
-        "bladeselect",
         "bladecancel",
         "bladepause",
         "bladecontinue",
-        "bladeconfirm",
-        "bladepreview",
-        "bladestatus",
-        "blademove",
-        "bladesafety",
-        "bladeprofile",
-        "bladeblueprint",
-        "blademodel"
+        "bladestatus"
     );
 
     private static KeyBinding openHudKey;
@@ -59,8 +52,6 @@ public class BladelowClientMod implements ClientModInitializer {
         );
 
         ClientSendMessageEvents.ALLOW_CHAT.register(message -> {
-            // Support "#blade..." chat shortcuts and forward them as proper
-            // commands while keeping the HUD/selection overlay in sync.
             String trimmed = message == null ? "" : message.trim();
             if (!trimmed.startsWith("#")) {
                 return true;
@@ -77,13 +68,8 @@ public class BladelowClientMod implements ClientModInitializer {
                 return true;
             }
 
-            String[] parts = command.split("\\s+", 2);
-            String root = parts[0].toLowerCase(Locale.ROOT);
-            if ("bladelow".equals(root)) {
-                command = "bladehelp";
-                root = "bladehelp";
-            }
-            if (!HASH_COMMAND_ROOTS.contains(root)) {
+            HudCommandPayload payload = parseRecoveryShortcut(command);
+            if (payload == null || !HASH_COMMAND_ROOTS.contains(firstToken(command))) {
                 return true;
             }
 
@@ -92,10 +78,19 @@ public class BladelowClientMod implements ClientModInitializer {
                 return false;
             }
 
-            BladelowSelectionOverlay.handleCommand(command);
-            client.player.networkHandler.sendChatCommand(command);
-            BladelowHudTelemetry.recordLocalMessage("/" + command);
-            client.player.sendMessage(Text.literal("[Bladelow] ran: /" + command).formatted(Formatting.AQUA), false);
+            BladelowSelectionOverlay.applyHudAction(payload);
+            if (HudCommandBridge.sendClientPayload(payload)) {
+                BladelowHudTelemetry.recordLocalMessage("[hud] " + payload.describe());
+                client.player.sendMessage(Text.literal("[Bladelow] ran: " + payload.describe()).formatted(Formatting.AQUA), false);
+                return false;
+            }
+
+            BladelowHudTelemetry.recordLocalMessage("[bridge-unavailable] " + payload.describe());
+            client.player.sendMessage(
+                Text.literal("[Bladelow] HUD bridge unavailable; recovery action not sent: " + payload.describe())
+                    .formatted(Formatting.RED),
+                false
+            );
             return false;
         });
     }
@@ -107,12 +102,34 @@ public class BladelowClientMod implements ClientModInitializer {
         BladelowSelectionOverlay.tick(client);
 
         while (openHudKey.wasPressed()) {
-            // The HUD is a simple toggleable planner surface, not a modal flow.
             if (client.currentScreen instanceof BladelowHudScreen) {
                 client.setScreen(null);
             } else {
                 client.setScreen(new BladelowHudScreen());
             }
         }
+    }
+
+    private static HudCommandPayload parseRecoveryShortcut(String command) {
+        if (command == null) {
+            return null;
+        }
+        String normalized = command.trim().toLowerCase();
+        return switch (normalized) {
+            case "bladepause" -> HudCommandPayload.of(HudAction.PAUSE_BUILD);
+            case "bladecontinue" -> HudCommandPayload.of(HudAction.CONTINUE_BUILD);
+            case "bladecancel" -> HudCommandPayload.of(HudAction.CANCEL_BUILD);
+            case "bladestatus" -> HudCommandPayload.of(HudAction.STATUS);
+            case "bladestatus detail" -> HudCommandPayload.of(HudAction.STATUS_DETAIL);
+            default -> null;
+        };
+    }
+
+    private static String firstToken(String command) {
+        if (command == null || command.isBlank()) {
+            return "";
+        }
+        String[] parts = command.trim().toLowerCase().split("\\s+", 2);
+        return parts.length == 0 ? "" : parts[0];
     }
 }

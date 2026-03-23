@@ -55,7 +55,7 @@ public final class TownZoneStore {
         // Collapse arbitrary selected points into the smallest covering box so
         // the planner can operate on a simple district shape.
         if (points == null || points.isEmpty()) {
-            return ZoneResult.error("selection is empty; use #bladeselect markerbox first");
+            return ZoneResult.error("selection is empty; mark an area in the HUD first");
         }
         int minX = Integer.MAX_VALUE;
         int minZ = Integer.MAX_VALUE;

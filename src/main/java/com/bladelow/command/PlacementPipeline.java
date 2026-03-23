@@ -23,7 +23,8 @@ import java.util.Map;
  * Orchestrates the full placement pipeline:
  *   palette assignment → material resolution → dependency ordering → job queue.
  *
- * Extracted from BladePlaceCommand so all command modules share one entrypoint.
+ * Shared placement entrypoint used by the HUD action service and any future
+ * server-side build orchestrators.
  */
 public final class PlacementPipeline {
 

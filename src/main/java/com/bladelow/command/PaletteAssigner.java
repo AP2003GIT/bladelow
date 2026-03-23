@@ -14,7 +14,8 @@ import java.util.List;
  * based on their position within the bounding box, giving structural variety.
  * When only 1 block is given, it is applied uniformly.
  *
- * Extracted from BladePlaceCommand for independent testability.
+ * Kept separate so palette assignment stays reusable across HUD-triggered and
+ * server-side build flows.
  */
 public final class PaletteAssigner {
 

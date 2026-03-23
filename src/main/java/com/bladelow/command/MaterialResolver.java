@@ -25,8 +25,8 @@ import java.util.function.Predicate;
  * Handles inventory stock checking, material fallback selection,
  * and feasibility reporting for placement jobs.
  *
- * Extracted from BladePlaceCommand to keep resolution logic independent
- * of command registration and testable without a command context.
+ * Originally split out from the old command layer so material resolution stays
+ * reusable for the HUD action service and other server-side entry points.
  */
 public final class MaterialResolver {
 

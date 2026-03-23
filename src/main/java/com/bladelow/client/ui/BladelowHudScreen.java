@@ -2,6 +2,9 @@ package com.bladelow.client.ui;
 
 import com.bladelow.client.BladelowHudTelemetry;
 import com.bladelow.client.BladelowSelectionOverlay;
+import com.bladelow.network.HudAction;
+import com.bladelow.network.HudCommandBridge;
+import com.bladelow.network.HudCommandPayload;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
 import net.minecraft.client.MinecraftClient;
@@ -486,13 +489,13 @@ public class BladelowHudScreen extends Screen {
         this.runButton = addDrawableChild(ButtonWidget.builder(Text.literal("Start Build"), b -> runActiveMode())
             .dimensions(actionX, actionsY, actionW, buttonH)
             .build());
-        this.cancelButton = addDrawableChild(ButtonWidget.builder(Text.literal("Stop"), b -> sendCommand("bladepause"))
+        this.cancelButton = addDrawableChild(ButtonWidget.builder(Text.literal("Stop"), b -> sendAction(HudAction.PAUSE_BUILD))
             .dimensions(actionX + actionW + rowGap, actionsY, actionW, buttonH)
             .build());
-        this.confirmButton = addDrawableChild(ButtonWidget.builder(Text.literal("Continue Build"), b -> sendCommand("bladecontinue"))
+        this.confirmButton = addDrawableChild(ButtonWidget.builder(Text.literal("Continue Build"), b -> sendAction(HudAction.CONTINUE_BUILD))
             .dimensions(actionX + (actionW + rowGap) * 2, actionsY, actionW, buttonH)
             .build());
-        this.previewModeButton = addDrawableChild(ButtonWidget.builder(Text.literal("Cancel"), b -> sendCommand("bladecancel"))
+        this.previewModeButton = addDrawableChild(ButtonWidget.builder(Text.literal("Cancel"), b -> sendAction(HudAction.CANCEL_BUILD))
             .dimensions(actionX + (actionW + rowGap) * 3, actionsY, actionW, buttonH)
             .build());
 
@@ -545,21 +548,21 @@ public class BladelowHudScreen extends Screen {
             .dimensions(rightX + cityHalfW + rowGap, cityY, cityHalfW, buttonH)
             .build());
         cityY += buttonH + rowGap;
-        this.zoneListButton = addDrawableChild(ButtonWidget.builder(Text.literal("List Districts"), b -> sendCommand("bladezone list"))
+        this.zoneListButton = addDrawableChild(ButtonWidget.builder(Text.literal("List Districts"), b -> sendAction(HudAction.ZONE_LIST))
             .dimensions(rightX, cityY, cityHalfW, buttonH)
             .build());
-        this.zoneClearButton = addDrawableChild(ButtonWidget.builder(Text.literal("Clear Districts"), b -> sendCommand("bladezone clear"))
+        this.zoneClearButton = addDrawableChild(ButtonWidget.builder(Text.literal("Clear Districts"), b -> sendAction(HudAction.ZONE_CLEAR))
             .dimensions(rightX + cityHalfW + rowGap, cityY, cityHalfW, buttonH)
             .build());
         cityY += buttonH + rowGap;
-        this.cityTownListButton = addDrawableChild(ButtonWidget.builder(Text.literal("Director Status"), b -> sendCommand("bladeblueprint citystatus"))
+        this.cityTownListButton = addDrawableChild(ButtonWidget.builder(Text.literal("Director Status"), b -> sendAction(HudAction.CITY_AUTOPLAY_STATUS))
             .dimensions(rightX, cityY, cityHalfW, buttonH)
             .build());
-        this.cityPreviewButton = addDrawableChild(ButtonWidget.builder(Text.literal("Director Stop"), b -> sendCommand("bladeblueprint citystop"))
+        this.cityPreviewButton = addDrawableChild(ButtonWidget.builder(Text.literal("Director Stop"), b -> sendAction(HudAction.CITY_AUTOPLAY_STOP))
             .dimensions(rightX + cityHalfW + rowGap, cityY, cityHalfW, buttonH)
             .build());
         cityY += buttonH + rowGap;
-        this.cityTownFillButton = addDrawableChild(ButtonWidget.builder(Text.literal("Director Continue"), b -> sendCommand("bladeblueprint citycontinue"))
+        this.cityTownFillButton = addDrawableChild(ButtonWidget.builder(Text.literal("Director Continue"), b -> sendAction(HudAction.CITY_AUTOPLAY_CONTINUE))
             .dimensions(rightX, cityY, cityHalfW, buttonH)
             .build());
         this.cityAutoZonesButton = addDrawableChild(ButtonWidget.builder(Text.literal("Auto Zones"), b -> runCityAutoZones())
@@ -596,7 +599,7 @@ public class BladelowHudScreen extends Screen {
         this.bpBuildButton = addDrawableChild(ButtonWidget.builder(Text.literal("Build"), b -> buildBlueprint())
             .dimensions(rightX, hiddenY, sx(1), buttonH)
             .build());
-        this.statusDetailButton = addDrawableChild(ButtonWidget.builder(Text.literal("Stat"), b -> sendCommand("bladestatus detail"))
+        this.statusDetailButton = addDrawableChild(ButtonWidget.builder(Text.literal("Stat"), b -> sendAction(HudAction.STATUS_DETAIL))
             .dimensions(rightX + sideW + rowGap, rightRowY + buttonH + rowGap, sideW, buttonH)
             .build());
         this.reachMinusButton = addDrawableChild(ButtonWidget.builder(Text.literal("-"), b -> adjustReach(-0.25))
@@ -1754,7 +1757,7 @@ public class BladelowHudScreen extends Screen {
             return;
         }
         citySummary = "fill requested";
-        sendCommand("bladeblueprint townfillsel");
+        sendAction(HudAction.TOWN_FILL_SELECTION);
     }
 
     private void runCityPreview() {
@@ -1762,7 +1765,7 @@ public class BladelowHudScreen extends Screen {
             return;
         }
         citySummary = "preview requested";
-        sendCommand("bladeblueprint townpreviewsel");
+        sendAction(HudAction.TOWN_PREVIEW_SELECTION);
     }
 
     private void runCityAutoZones() {
@@ -1770,7 +1773,7 @@ public class BladelowHudScreen extends Screen {
             return;
         }
         citySummary = "auto zones";
-        sendCommand("bladezone autolayout " + cityLayoutPreset);
+        sendAction(HudAction.ZONE_AUTO_LAYOUT, cityLayoutPreset);
     }
 
     private void runCityAutoCity() {
@@ -1778,7 +1781,7 @@ public class BladelowHudScreen extends Screen {
             return;
         }
         citySummary = "director start";
-        sendCommand("bladeblueprint cityautoplay " + cityLayoutPreset);
+        sendAction(HudAction.CITY_AUTOPLAY_START, cityLayoutPreset);
     }
 
     private void cycleCityPreset() {
@@ -1824,13 +1827,17 @@ public class BladelowHudScreen extends Screen {
             statusText = "Select at least one block";
             return;
         }
-        sendCommand(String.format(Locale.ROOT,
-            "bladeselect markerbox %d %d %d %d %d %d %d solid",
-            markerA.getX(), markerA.getY(), markerA.getZ(),
-            markerB.getX(), markerB.getY(), markerB.getZ(),
-            height
-        ));
-        sendCommand("bladeselect buildh " + height + " " + blockSpec);
+        sendAction(HudAction.SELECTION_MARKER_BOX,
+            Integer.toString(markerA.getX()),
+            Integer.toString(markerA.getY()),
+            Integer.toString(markerA.getZ()),
+            Integer.toString(markerB.getX()),
+            Integer.toString(markerB.getY()),
+            Integer.toString(markerB.getZ()),
+            Integer.toString(height),
+            "solid"
+        );
+        sendAction(HudAction.SELECTION_BUILD_HEIGHT, Integer.toString(height), blockSpec);
     }
 
     private void markSelection() {
@@ -1888,16 +1895,20 @@ public class BladelowHudScreen extends Screen {
             statusText = "Height must be 1..256";
             return;
         }
-        sendCommand(String.format(Locale.ROOT,
-            "bladeselect markerbox %d %d %d %d %d %d %d solid",
-            markerA.getX(), markerA.getY(), markerA.getZ(),
-            markerB.getX(), markerB.getY(), markerB.getZ(),
-            height
-        ));
+        sendAction(HudAction.SELECTION_MARKER_BOX,
+            Integer.toString(markerA.getX()),
+            Integer.toString(markerA.getY()),
+            Integer.toString(markerA.getZ()),
+            Integer.toString(markerB.getX()),
+            Integer.toString(markerB.getY()),
+            Integer.toString(markerB.getZ()),
+            Integer.toString(height),
+            "solid"
+        );
         refreshSuggestedPlots();
         if (MODE_CITY.equals(activeMode)) {
             citySummary = "intent scan";
-            sendCommand("blademodel intent");
+            sendAction(HudAction.MODEL_SCAN_INTENT);
         }
         BladelowSelectionOverlay.setMarkers(markerA, markerB, height);
     }
@@ -1922,7 +1933,7 @@ public class BladelowHudScreen extends Screen {
         }
         bumpDistrictCount(type);
         citySummary = "district saved";
-        sendCommand("bladezone set " + type);
+        sendAction(HudAction.ZONE_SET, type);
     }
 
     private void setDistrictBrush(String type) {
@@ -1945,7 +1956,7 @@ public class BladelowHudScreen extends Screen {
         selectedSuggestedPlot = -1;
         updateMarkerButtonLabels();
         BladelowSelectionOverlay.clear();
-        sendCommand("bladeselect clear");
+        sendAction(HudAction.SELECTION_CLEAR);
         statusText = "Markers cleared";
     }
 
@@ -2238,7 +2249,7 @@ public class BladelowHudScreen extends Screen {
     private void toggleSmartMove() {
         smartMoveEnabled = !smartMoveEnabled;
         smartMoveButton.setMessage(Text.literal(smartMoveEnabled ? "S*" : "S"));
-        sendCommand(smartMoveEnabled ? "blademove on" : "blademove off");
+        sendAction(smartMoveEnabled ? HudAction.MOVE_SMART_ENABLE : HudAction.MOVE_SMART_DISABLE);
     }
 
     private void toggleMoveMode() {
@@ -2248,13 +2259,13 @@ public class BladelowHudScreen extends Screen {
             default -> "walk";
         };
         moveModeButton.setMessage(Text.literal("Mode: " + moveMode.toUpperCase(Locale.ROOT)));
-        sendCommand("blademove mode " + moveMode);
+        sendAction(HudAction.MOVE_SET_MODE, moveMode);
     }
 
     private void togglePreviewMode() {
         previewBeforeBuild = !previewBeforeBuild;
         previewModeButton.setMessage(Text.literal(previewBeforeBuild ? "Prev:ON" : "Prev:OFF"));
-        sendCommand("bladesafety preview " + (previewBeforeBuild ? "on" : "off"));
+        sendAction(HudAction.SAFETY_SET_PREVIEW, previewBeforeBuild ? "on" : "off");
     }
 
     private void toggleSlotMiniIcons() {
@@ -2268,14 +2279,14 @@ public class BladelowHudScreen extends Screen {
     private void adjustReach(double delta) {
         reachDistance = Math.max(2.0, Math.min(8.0, reachDistance + delta));
         reachButton.setMessage(Text.literal("R:" + String.format(Locale.ROOT, "%.2f", reachDistance)));
-        sendCommand("blademove reach " + String.format(Locale.ROOT, "%.2f", reachDistance));
+        sendAction(HudAction.MOVE_SET_REACH, String.format(Locale.ROOT, "%.2f", reachDistance));
     }
 
     private void cycleProfile() {
         profileIndex = (profileIndex + 1) % PROFILE_PRESETS.length;
         String profile = PROFILE_PRESETS[profileIndex];
         profileButton.setMessage(Text.literal("P" + (profileIndex + 1)));
-        sendCommand("bladeprofile load " + profile);
+        sendAction(HudAction.PROFILE_LOAD, profile);
     }
 
     private void cycleScale() {
@@ -2308,7 +2319,7 @@ public class BladelowHudScreen extends Screen {
             statusText = "Blueprint name required";
             return;
         }
-        sendCommand("bladeblueprint load " + name);
+        sendAction(HudAction.BLUEPRINT_LOAD, name);
     }
 
     private void buildBlueprint() {
@@ -2327,15 +2338,31 @@ public class BladelowHudScreen extends Screen {
         String blockSpec = selectedBlockSpec();
 
         if (name.isEmpty()) {
-            sendCommand(blockSpec == null
-                ? "bladeblueprint build " + c.x + " " + c.y + " " + c.z
-                : "bladeblueprint build " + c.x + " " + c.y + " " + c.z + " " + blockSpec);
+            dispatchAction(blockSpec == null
+                ? HudCommandPayload.of(HudAction.BLUEPRINT_BUILD,
+                    Integer.toString(c.x),
+                    Integer.toString(c.y),
+                    Integer.toString(c.z))
+                : HudCommandPayload.of(HudAction.BLUEPRINT_BUILD,
+                    Integer.toString(c.x),
+                    Integer.toString(c.y),
+                    Integer.toString(c.z),
+                    blockSpec));
             return;
         }
 
-        sendCommand(blockSpec == null
-            ? "bladeblueprint build " + name + " " + c.x + " " + c.y + " " + c.z
-            : "bladeblueprint build " + name + " " + c.x + " " + c.y + " " + c.z + " " + blockSpec);
+        dispatchAction(blockSpec == null
+            ? HudCommandPayload.of(HudAction.BLUEPRINT_BUILD,
+                name,
+                Integer.toString(c.x),
+                Integer.toString(c.y),
+                Integer.toString(c.z))
+            : HudCommandPayload.of(HudAction.BLUEPRINT_BUILD,
+                name,
+                Integer.toString(c.x),
+                Integer.toString(c.y),
+                Integer.toString(c.z),
+                blockSpec));
     }
 
     private String selectedBlockSpec() {
@@ -2392,101 +2419,86 @@ public class BladelowHudScreen extends Screen {
         updateDistrictBrushButtons();
     }
 
-    private void sendCommand(String command) {
+    private void sendAction(HudAction action) {
+        dispatchAction(HudCommandPayload.of(action));
+    }
+
+    private void sendAction(HudAction action, String... args) {
+        dispatchAction(HudCommandPayload.of(action, args));
+    }
+
+    private void dispatchAction(HudCommandPayload payload) {
         if (this.client == null || this.client.player == null || this.client.player.networkHandler == null) {
             statusText = "No player/network";
             return;
         }
-        BladelowSelectionOverlay.handleCommand(command);
-        this.client.player.networkHandler.sendChatCommand(command);
-        BladelowHudTelemetry.recordLocalMessage("/" + command);
-        statusText = commandStatus(command);
+        BladelowSelectionOverlay.applyHudAction(payload);
+        if (!HudCommandBridge.sendClientPayload(payload)) {
+            BladelowHudTelemetry.recordLocalMessage("[bridge-unavailable] " + payload.describe());
+            statusText = "Bladelow HUD bridge unavailable";
+            return;
+        }
+        BladelowHudTelemetry.recordLocalMessage("[hud] " + payload.describe());
+        statusText = actionStatus(payload);
     }
 
-    private String commandStatus(String command) {
-        if (command.startsWith("bladeblueprint load")) {
-            return "Loading blueprint...";
-        }
-        if (command.startsWith("bladeblueprint build")) {
-            return "Queueing blueprint...";
-        }
-        if (command.startsWith("bladeblueprint cityautoplay")) {
-            citySummary = "director queued";
-            return "Starting city director autoplay...";
-        }
-        if (command.startsWith("bladeblueprint citystatus")) {
-            return "Checking city director status...";
-        }
-        if (command.startsWith("bladeblueprint citystop")) {
-            citySummary = "director paused";
-            return "Pausing city director...";
-        }
-        if (command.startsWith("bladeblueprint citycontinue")) {
-            citySummary = "director resumed";
-            return "Resuming city director...";
-        }
-        if (command.startsWith("bladeblueprint citycancel")) {
-            citySummary = "director canceled";
-            return "Canceling city director...";
-        }
-        if (command.startsWith("bladeblueprint townautocity")) {
-            citySummary = "auto city queued";
-            return "Auto-zoning and queueing city phases...";
-        }
-        if (command.startsWith("bladeblueprint townruncity")) {
-            citySummary = "city pipeline queued";
-            return "Queueing city pipeline...";
-        }
-        if (command.startsWith("bladeblueprint townpreview")) {
-            citySummary = "preview requested";
-            return "Planning city preview...";
-        }
-        if (command.startsWith("bladeblueprint townfill") || command.startsWith("bladeblueprint townfillsel")) {
-            citySummary = "fill queued";
-            return "Queueing town layout...";
-        }
-        if (command.startsWith("bladeblueprint townlist")) {
-            return "Listing town blueprints...";
-        }
-        if (command.startsWith("bladeselect buildh")) {
-            return "Queueing selection columns...";
-        }
-        if (command.startsWith("bladeselect add")) {
-            return "Selection updated";
-        }
-        if (command.startsWith("bladeselect markerbox")) {
-            return "Area markers updated";
-        }
-        if (command.startsWith("bladezone set")) {
-            citySummary = "district saved";
-            return "Saving district type from current area...";
-        }
-        if (command.startsWith("bladezone autolayout")) {
-            citySummary = "districts auto-zoned";
-            return "Generating district layout...";
-        }
-        if (command.startsWith("blademodel intent")) {
-            citySummary = "intent scan";
-            return "Analyzing selected build intent...";
-        }
-        if (command.startsWith("bladezone list")) {
-            return "Listing districts...";
-        }
-        if (command.startsWith("bladezone clear")) {
-            clearDistrictCounts();
-            citySummary = "districts cleared";
-            return "Clearing saved districts...";
-        }
-        if (command.startsWith("bladepause")) {
-            return "Build paused";
-        }
-        if (command.startsWith("bladecontinue")) {
-            return "Continuing build...";
-        }
-        if (command.startsWith("blademove") || command.startsWith("bladesafety") || command.startsWith("bladeprofile")) {
-            return "Runtime updated";
-        }
-        return "Ran: /" + command;
+    private String actionStatus(HudCommandPayload payload) {
+        return switch (payload.action()) {
+            case BLUEPRINT_LOAD -> "Loading blueprint...";
+            case BLUEPRINT_BUILD -> "Queueing blueprint...";
+            case CITY_AUTOPLAY_START -> {
+                    citySummary = "director queued";
+                yield "Starting city director autoplay...";
+            }
+            case CITY_AUTOPLAY_STATUS -> "Checking city director status...";
+            case CITY_AUTOPLAY_STOP -> {
+                    citySummary = "director paused";
+                yield "Pausing city director...";
+            }
+            case CITY_AUTOPLAY_CONTINUE -> {
+                    citySummary = "director resumed";
+                yield "Resuming city director...";
+            }
+            case CITY_AUTOPLAY_CANCEL -> {
+                    citySummary = "director canceled";
+                yield "Canceling city director...";
+            }
+            case TOWN_FILL_SELECTION -> {
+                citySummary = "fill queued";
+                yield "Queueing town layout...";
+            }
+            case TOWN_PREVIEW_SELECTION -> {
+                citySummary = "preview requested";
+                yield "Planning city preview...";
+            }
+            case SELECTION_BUILD_HEIGHT -> "Queueing selection columns...";
+            case SELECTION_MARKER_BOX -> "Area markers updated";
+            case SELECTION_CLEAR -> "Markers cleared";
+            case ZONE_SET -> {
+                citySummary = "district saved";
+                yield "Saving district type from current area...";
+            }
+            case ZONE_AUTO_LAYOUT -> {
+                citySummary = "districts auto-zoned";
+                yield "Generating district layout...";
+            }
+            case ZONE_LIST -> "Listing districts...";
+            case ZONE_CLEAR -> {
+                clearDistrictCounts();
+                citySummary = "districts cleared";
+                yield "Clearing saved districts...";
+            }
+            case MODEL_SCAN_INTENT -> {
+                citySummary = "intent scan";
+                yield "Analyzing selected build intent...";
+            }
+            case STATUS, STATUS_DETAIL -> "Checking build status...";
+            case PAUSE_BUILD -> "Build paused";
+            case CONTINUE_BUILD -> "Continuing build...";
+            case MOVE_SMART_ENABLE, MOVE_SMART_DISABLE, MOVE_SET_MODE, MOVE_SET_REACH,
+                 SAFETY_SET_PREVIEW, PROFILE_LOAD -> "Runtime updated";
+            default -> "Ran: " + payload.describe();
+        };
     }
 
     private void updateRunGuard() {
@@ -3055,11 +3067,11 @@ public class BladelowHudScreen extends Screen {
                 return true;
             }
             if (keyCode == GLFW.GLFW_KEY_C) {
-                sendCommand("bladepause");
+                sendAction(HudAction.PAUSE_BUILD);
                 return true;
             }
             if (keyCode == GLFW.GLFW_KEY_V) {
-                sendCommand("bladecontinue");
+                sendAction(HudAction.CONTINUE_BUILD);
                 return true;
             }
         }
