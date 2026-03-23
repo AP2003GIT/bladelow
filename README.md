@@ -18,7 +18,9 @@ Bladelow is a Fabric mod for Minecraft `1.21.11` (Java `21`) focused on assisted
 - Suggested plot overlay on the minimap for open build footprints.
 - Build intent scan wired into the HUD city flow.
 - Typed HUD action bridge: the active UI path is packet/action based, not chat-command based.
-- Local ML-style datasets for placements, environment scans, and build-intent examples.
+- Local ML-style datasets for placements, environment scans, build-intent examples, and curated style examples.
+- Offline training script that turns JSONL datasets into reusable planner priors.
+- HUD model status page for checking sample counts, learned themes, and offline model state.
 
 ## Requirements
 
@@ -83,9 +85,11 @@ The HUD now includes a planning map on the left side for non-block steps. Use it
 - Layout colors are grouped by type: `water`, `road`, `structure`, `vegetation`, `open ground`, `terrain`.
 - Hovering the map shows the surface category plus the `x,z` location.
 - Suggested build plots are drawn as pale green rectangles inside the selected area.
-- Hold `Shift` and left-click a suggested plot to snap the current selection to that footprint.
+- In `CITY -> SOURCE`, left-click a suggested plot to snap the current selection to that footprint.
+- Suggested plots now show small preview labels such as `house`, `shop`, or `civic`.
 - In `CITY` mode, applying the marker box automatically requests a build-intent scan for the selected area.
 - The city status bar now shows the latest inferred intent summary from the planner.
+- In `CITY` mode, inferred intent can auto-fill `S1/S2/S3` with a matching palette when the HUD has not been manually overridden.
 
 ### Main Run Controls
 
@@ -99,10 +103,13 @@ The HUD now includes a planning map on the left side for non-block steps. Use it
 - `Preset`: cycles district layout preset (`medieval`, `balanced`, `harbor`, `adaptive`).
 - `Auto Zones`: applies the current district preset to the selected area.
 - `Director Start`: starts the staged city autoplay pipeline for the selected area.
+- `Auto Build Here`: snaps to the preferred suggested plot and runs the city build flow.
+- `Save Style Area`: stores the current marked area as a curated style example for later offline training.
 - `Director Status`: checks the active city director state.
 - `Director Stop`: pauses the city director.
 - `Director Continue`: resumes the city director.
 - `Residential`, `Market`, `Workshop`, `Civic`, `Mixed`: select the active district brush for map painting.
+- `Model`: opens the in-HUD model status page with dataset counts and learned themes.
 
 ### HUD Hotkeys (while HUD open)
 
@@ -177,11 +184,70 @@ Files currently used:
   - terrain/build/style observations gathered from scanned city areas
 - `build_intent_examples.jsonl`
   - accepted planner choices used to bias future lot/build intent decisions
+- `style_examples.jsonl`
+  - player-curated areas saved from the HUD as explicit style examples
 - `style_refs/`
   - optional `.png/.jpg/.jpeg` style reference images
   - optional sidecar `.json` files for tags/labels
+- `offline_model.json`
+  - offline-trained zone/theme priors produced from the datasets below
 
-The current runtime uses these datasets as local memory and scoring hints. It is not raw image-to-build generation yet.
+The current runtime uses these datasets as local memory, scoring hints, and offline-trained priors. It is not raw image-to-build generation yet.
+
+## ML Workflow
+
+Bladelow now has two learning paths:
+
+1. Live learning in-game
+- placement success/failure updates the lightweight placement model
+- manual player placements are logged
+- environment scans are logged
+- accepted lot/build choices are logged
+
+2. Offline training
+- save curated style examples from the HUD
+- run the offline trainer over the JSONL datasets
+- Bladelow loads the generated priors back into lot intent prediction
+
+### Save Style Examples
+
+Use `CITY -> SOURCE -> Save Style Area` after selecting an area that represents a good local style.
+
+Good style examples should be:
+- clean
+- consistent in theme
+- close to the style you want Bladelow to imitate
+- mostly real structures, not random terrain
+
+### Run Offline Training
+
+From the repo root:
+
+```bash
+python3 scripts/train_bladelow_model.py
+```
+
+This reads:
+- `config/bladelow/ml/placement_style_events.jsonl`
+- `config/bladelow/ml/environment_observations.jsonl`
+- `config/bladelow/ml/build_intent_examples.jsonl`
+- `config/bladelow/ml/style_examples.jsonl`
+- `config/bladelow/ml/style_refs/`
+
+And writes:
+- `config/bladelow/ml/offline_model.json`
+
+### Check Model Status
+
+Open the HUD and use the `Model` button to see:
+- placement sample count
+- environment sample count
+- build intent sample count
+- style example count
+- style reference image count
+- whether an offline model exists
+- top learned themes
+- available zone priors
 
 ## City Director Flow
 
@@ -226,11 +292,13 @@ Example:
 ## Recommended Town Workflow
 
 1. Open the HUD and drag the planning map to mark a build area.
-2. If the green suggested plots look good, use `Shift + left-click` to snap to one.
+2. If the green suggested plots look good, left-click one in `CITY -> SOURCE` to snap to it.
 3. In `CITY` mode, paint district zones or run `Auto Zones`.
 4. Let the HUD request an intent scan for the selected area.
-5. Use the city preview/fill flow from the HUD if you want a safe check first.
-6. Run `Run City Build` for a direct district fill or `Director Start` for staged city autoplay.
+5. Save especially good local structures with `Save Style Area` so they become curated ML examples.
+6. Use the city preview/fill flow from the HUD if you want a safe check first.
+7. Run `Run City Build` for a direct district fill or `Director Start` for staged city autoplay.
+8. Periodically run `python3 scripts/train_bladelow_model.py` to refresh offline priors.
 
 ## Troubleshooting
 

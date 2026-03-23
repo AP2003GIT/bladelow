@@ -2,6 +2,8 @@ package com.bladelow.network;
 
 import com.bladelow.BladelowMod;
 import com.bladelow.auto.CityAutoplayDirector;
+import com.bladelow.builder.BuildSiteAnalyzer;
+import com.bladelow.builder.BuildSiteScan;
 import com.bladelow.builder.BuildProfileStore;
 import com.bladelow.builder.BuildRuntimeSettings;
 import com.bladelow.builder.BlueprintLibrary;
@@ -27,6 +29,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Direct HUD/server action dispatcher.
@@ -82,7 +85,7 @@ public final class HudActionService {
                     handleMove(source, payload.action(), args);
                 case SAFETY_SET_PREVIEW -> handleSafety(source, args);
                 case PROFILE_LOAD -> handleProfile(source, player, args);
-                case MODEL_SCAN_INTENT -> handleModel(source, player);
+                case MODEL_SCAN_INTENT, MODEL_SAVE_STYLE_EXAMPLE -> handleModel(source, player, payload.action(), args);
             };
         } catch (IllegalArgumentException ex) {
             error(source, "[Bladelow] " + ex.getMessage());
@@ -357,23 +360,61 @@ public final class HudActionService {
         return true;
     }
 
-    private static boolean handleModel(ServerCommandSource source, ServerPlayerEntity player) {
-        BlockPos[] bounds = selectionBounds3d(player, source);
-        if (bounds == null) {
-            return true;
-        }
-        TownPlanner.IntentSuggestion suggestion = TownPlanner.suggestBuildIntent(
-            source.getWorld(),
-            bounds[0],
-            bounds[1],
-            TownZoneStore.snapshot(player.getUuid(), source.getWorld().getRegistryKey())
-        );
-        if (!suggestion.ok()) {
-            error(source, "[Bladelow] " + suggestion.message());
-        } else {
-            feedback(source, "[Bladelow] " + suggestion.message());
-        }
-        return true;
+    private static boolean handleModel(ServerCommandSource source, ServerPlayerEntity player, HudAction action, List<String> args) {
+        return switch (action) {
+            case MODEL_SCAN_INTENT -> {
+                BlockPos[] bounds = selectionBounds3d(player, source);
+                if (bounds == null) {
+                    yield true;
+                }
+                TownPlanner.IntentSuggestion suggestion = TownPlanner.suggestBuildIntent(
+                    source.getWorld(),
+                    bounds[0],
+                    bounds[1],
+                    TownZoneStore.snapshot(player.getUuid(), source.getWorld().getRegistryKey())
+                );
+                if (!suggestion.ok()) {
+                    error(source, "[Bladelow] " + suggestion.message());
+                } else {
+                    feedback(source, "[Bladelow] " + suggestion.message());
+                }
+                yield true;
+            }
+            case MODEL_SAVE_STYLE_EXAMPLE -> {
+                BlockPos[] bounds = selectionBounds3d(player, source);
+                if (bounds == null) {
+                    yield true;
+                }
+                BuildSiteScan scan = BuildSiteAnalyzer.scan(source.getWorld(), bounds[0], bounds[1], bounds[0].getY(), Set.of());
+                if (scan == BuildSiteScan.EMPTY) {
+                    error(source, "[Bladelow] could not extract a style scan from the selected area");
+                    yield true;
+                }
+                String label = remainder(args, 0);
+                if (label.isBlank()) {
+                    label = "example";
+                }
+                String normalizedLabel = label.trim().toLowerCase(Locale.ROOT);
+                com.bladelow.ml.BladelowLearning.styleExampleLogger().recordExample(
+                    "hud",
+                    normalizedLabel,
+                    source.getWorld(),
+                    bounds[0],
+                    bounds[1],
+                    scan
+                );
+                com.bladelow.ml.BladelowLearning.environmentLogger().recordScan(
+                    "style_example:" + normalizedLabel,
+                    source.getWorld(),
+                    bounds[0],
+                    bounds[1],
+                    scan
+                );
+                feedback(source, "[Bladelow] saved style example " + normalizedLabel + " => " + scan.summary());
+                yield true;
+            }
+            default -> false;
+        };
     }
 
     private static void runBlueprintBuild(ServerCommandSource source, ServerPlayerEntity player, List<String> args) {

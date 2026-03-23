@@ -21,8 +21,10 @@ public final class BladelowLearning {
     private static final BuildStyleDatasetLogger DATASET_LOGGER = new BuildStyleDatasetLogger();
     private static final EnvironmentObservationLogger ENVIRONMENT_LOGGER = new EnvironmentObservationLogger();
     private static final BuildIntentExampleLogger BUILD_INTENT_LOGGER = new BuildIntentExampleLogger();
+    private static final StyleExampleLogger STYLE_EXAMPLE_LOGGER = new StyleExampleLogger();
     private static final StyleReferenceLibrary STYLE_REFERENCES = new StyleReferenceLibrary();
     private static final EnvironmentStyleMemory STYLE_MEMORY = new EnvironmentStyleMemory(STYLE_REFERENCES);
+    private static final OfflineTrainingModel OFFLINE_MODEL = new OfflineTrainingModel();
     private static final BuildIntentPredictor BUILD_INTENT_PREDICTOR = new BuildIntentPredictor();
     private static final Path MODEL_PATH = Path.of("config", "bladelow", "model.properties");
 
@@ -45,6 +47,10 @@ public final class BladelowLearning {
         return BUILD_INTENT_LOGGER;
     }
 
+    public static StyleExampleLogger styleExampleLogger() {
+        return STYLE_EXAMPLE_LOGGER;
+    }
+
     public static StyleReferenceLibrary styleReferences() {
         return STYLE_REFERENCES;
     }
@@ -55,6 +61,10 @@ public final class BladelowLearning {
 
     public static BuildIntentPredictor buildIntentPredictor() {
         return BUILD_INTENT_PREDICTOR;
+    }
+
+    public static OfflineTrainingModel offlineModel() {
+        return OFFLINE_MODEL;
     }
 
     public static Path modelPath() {
@@ -97,8 +107,10 @@ public final class BladelowLearning {
             + " " + DATASET_LOGGER.summary()
             + " " + ENVIRONMENT_LOGGER.summary()
             + " " + BUILD_INTENT_LOGGER.summary()
+            + " " + STYLE_EXAMPLE_LOGGER.summary()
             + " " + STYLE_REFERENCES.summary()
             + " " + STYLE_MEMORY.summary()
+            + " " + OFFLINE_MODEL.summary()
             + " " + BUILD_INTENT_PREDICTOR.summary();
     }
 }

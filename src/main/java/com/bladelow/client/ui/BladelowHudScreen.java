@@ -1,6 +1,7 @@
 package com.bladelow.client.ui;
 
 import com.bladelow.client.BladelowHudTelemetry;
+import com.bladelow.client.BladelowModelStatus;
 import com.bladelow.client.BladelowSelectionOverlay;
 import com.bladelow.network.HudAction;
 import com.bladelow.network.HudCommandBridge;
@@ -38,6 +39,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Properties;
 
 /**
@@ -221,6 +223,8 @@ public class BladelowHudScreen extends Screen {
     private ButtonWidget cityTownFillButton;
     private ButtonWidget cityPresetButton;
     private ButtonWidget cityAutoZonesButton;
+    private ButtonWidget cityAutoBuildButton;
+    private ButtonWidget citySaveStyleButton;
     private ButtonWidget cityAutoCityButton;
     private ButtonWidget pagePrevButton;
     private ButtonWidget pageNextButton;
@@ -286,6 +290,9 @@ public class BladelowHudScreen extends Screen {
     private BlockPos planningDragOrigin;
     private List<SuggestedPlot> suggestedPlots = List.of();
     private int selectedSuggestedPlot = -1;
+    private boolean showModelStatusPage;
+    private String lastIntentPaletteKey = "";
+    private final String[] lastAutoFilledSlots = new String[SLOT_COUNT];
 
     public BladelowHudScreen() {
         super(Text.literal("Bladelow Builder"));
@@ -569,8 +576,15 @@ public class BladelowHudScreen extends Screen {
             .dimensions(rightX + cityHalfW + rowGap, cityY, cityHalfW, buttonH)
             .build());
         cityY += buttonH + rowGap;
-        this.cityAutoCityButton = addDrawableChild(ButtonWidget.builder(Text.literal("Director Start"), b -> runCityAutoCity())
+        this.cityAutoBuildButton = addDrawableChild(ButtonWidget.builder(Text.literal("Auto Build Here"), b -> runCityAutoBuild())
             .dimensions(rightX, cityY, rightW, buttonH)
+            .build());
+        cityY += buttonH + rowGap;
+        this.citySaveStyleButton = addDrawableChild(ButtonWidget.builder(Text.literal("Save Style Area"), b -> saveStyleExampleArea())
+            .dimensions(rightX, cityY, cityHalfW, buttonH)
+            .build());
+        this.cityAutoCityButton = addDrawableChild(ButtonWidget.builder(Text.literal("Director Start"), b -> runCityAutoCity())
+            .dimensions(rightX + cityHalfW + rowGap, cityY, cityHalfW, buttonH)
             .build());
 
         rightRowY += buttonH + rowGap;
@@ -599,7 +613,7 @@ public class BladelowHudScreen extends Screen {
         this.bpBuildButton = addDrawableChild(ButtonWidget.builder(Text.literal("Build"), b -> buildBlueprint())
             .dimensions(rightX, hiddenY, sx(1), buttonH)
             .build());
-        this.statusDetailButton = addDrawableChild(ButtonWidget.builder(Text.literal("Stat"), b -> sendAction(HudAction.STATUS_DETAIL))
+        this.statusDetailButton = addDrawableChild(ButtonWidget.builder(Text.literal("Model"), b -> toggleModelStatusPage())
             .dimensions(rightX + sideW + rowGap, rightRowY + buttonH + rowGap, sideW, buttonH)
             .build());
         this.reachMinusButton = addDrawableChild(ButtonWidget.builder(Text.literal("-"), b -> adjustReach(-0.25))
@@ -686,6 +700,7 @@ public class BladelowHudScreen extends Screen {
 
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
+        maybeAutofillSlotsFromIntent();
         drawPanelBackground(context);
         if (showPlanningMap()) {
             drawPlanningMap(context, mouseX, mouseY);
@@ -697,6 +712,9 @@ public class BladelowHudScreen extends Screen {
         drawBlockGrid(context, mouseX, mouseY);
         drawSlotCards(context);
         drawStatusPanel(context);
+        if (showModelStatusPage) {
+            drawModelStatusPage(context);
+        }
 
         if (hoveredBlockId != null) {
             drawBlockTooltip(context, mouseX, mouseY, hoveredBlockId);
@@ -942,7 +960,30 @@ public class BladelowHudScreen extends Screen {
             int bottom = Math.max(worldToMapZ(view, plot.minZ()), worldToMapZ(view, plot.maxZ()));
             context.fill(left, top, right + 1, bottom + 1, fillColor);
             drawBorder(context, left, top, Math.max(1, right - left + 1), Math.max(1, bottom - top + 1), color);
+            drawSuggestedPlotLabel(context, plot, left, top, right, bottom, i == selectedSuggestedPlot);
         }
+    }
+
+    private void drawSuggestedPlotLabel(DrawContext context, SuggestedPlot plot, int left, int top, int right, int bottom, boolean selected) {
+        String label = plot.label();
+        if (label == null || label.isBlank()) {
+            return;
+        }
+
+        int width = Math.max(1, right - left + 1);
+        int height = Math.max(1, bottom - top + 1);
+        int textWidth = this.textRenderer.getWidth(label);
+        if (width < textWidth + sx(8) || height < this.textRenderer.fontHeight + sx(6)) {
+            return;
+        }
+
+        int boxW = textWidth + sx(6);
+        int boxH = this.textRenderer.fontHeight + sx(4);
+        int boxX = left + (width - boxW) / 2;
+        int boxY = top + (height - boxH) / 2;
+        context.fill(boxX, boxY, boxX + boxW, boxY + boxH, selected ? 0xCC243A2A : 0xB8222A20);
+        drawBorder(context, boxX, boxY, boxW, boxH, selected ? 0xFF91F9B0 : 0xFFD7E989);
+        context.drawText(this.textRenderer, Text.literal(label), boxX + sx(3), boxY + sx(2), 0xFFF2F7E7, false);
     }
 
     private int shadeColor(int argb, int amount) {
@@ -1077,9 +1118,9 @@ public class BladelowHudScreen extends Screen {
     private record MinimapCell(MapCellType type, int color, String label, int topY) {
     }
 
-    private record PlotEvaluation(boolean accepted, double score) {
+    private record PlotEvaluation(boolean accepted, double score, String label) {
         private static PlotEvaluation reject() {
-            return new PlotEvaluation(false, Double.NEGATIVE_INFINITY);
+            return new PlotEvaluation(false, Double.NEGATIVE_INFINITY, "");
         }
     }
 
@@ -1094,6 +1135,9 @@ public class BladelowHudScreen extends Screen {
                 && minZ - padding <= other.maxZ
                 && maxZ + padding >= other.minZ;
         }
+    }
+
+    private record IntentPalette(String archetype, String paletteProfile, String signature) {
     }
 
     private String rightPanelLabel() {
@@ -1244,7 +1288,7 @@ public class BladelowHudScreen extends Screen {
         int barY = statusY;
         int barW = panelW - sx(16);
         boolean cityStatus = MODE_CITY.equals(activeMode);
-        int barH = cityStatus ? sx(36) : sx(24);
+        int barH = cityStatus ? sx(64) : sx(24);
 
         boolean hasValidation = !validationText.isEmpty();
         boolean isWarning = hasValidation || statusLooksError(statusText);
@@ -1262,14 +1306,71 @@ public class BladelowHudScreen extends Screen {
         context.drawText(this.textRenderer, Text.literal(clippedPrimary), barX + sx(4), barY + sx(3), textColor, false);
         context.drawText(this.textRenderer, Text.literal(clippedSecondary), barX + sx(4), barY + sx(13), 0xFFB7C7DF, false);
         if (cityStatus) {
-            String latestIntent = BladelowHudTelemetry.latestIntent();
-            String cityLine = districtSummaryText()
-                + " | Plan: " + citySummary
-                + " | Intent: " + (latestIntent == null || latestIntent.isBlank() ? "-" : latestIntent)
-                + " | Brush: " + (districtBrush.isBlank() ? "-" : districtBrush);
-            String clippedCityLine = this.textRenderer.trimToWidth(cityLine, barW - sx(10));
-            context.drawText(this.textRenderer, Text.literal(clippedCityLine), barX + sx(4), barY + sx(23), 0xFFAED2B4, false);
+            drawIntentCard(context, barX + sx(4), barY + sx(23), barW - sx(8), sx(36));
         }
+    }
+
+    private void drawModelStatusPage(DrawContext context) {
+        BladelowModelStatus.Snapshot snapshot = BladelowModelStatus.snapshot();
+        int width = Math.min(panelW - sx(64), sx(560));
+        int height = Math.min(panelH - sx(80), sx(170));
+        int x = panelX + (panelW - width) / 2;
+        int y = panelY + sx(44);
+
+        context.fill(x, y, x + width, y + height, 0xEA121923);
+        drawBorder(context, x, y, width, height, 0xFF7FA2CF);
+        context.fill(x, y, x + width, y + sx(20), 0xCC223246);
+        context.drawText(this.textRenderer, Text.literal("MODEL STATUS"), x + sx(8), y + sx(6), 0xFFF2F6FC, false);
+
+        int lineY = y + sx(30);
+        for (String line : snapshot.lines()) {
+            String clipped = this.textRenderer.trimToWidth(line, width - sx(16));
+            context.drawText(this.textRenderer, Text.literal(clipped), x + sx(8), lineY, 0xFFD8E6F8, false);
+            lineY += sx(14);
+            if (lineY > y + height - sx(18)) {
+                break;
+            }
+        }
+    }
+
+    private void drawIntentCard(DrawContext context, int x, int y, int width, int height) {
+        context.fill(x, y, x + width, y + height, 0x6633472B);
+        drawBorder(context, x, y, width, height, 0xFF6D8B73);
+
+        String[] intentParts = intentCardLines();
+        String intentLine = this.textRenderer.trimToWidth("Intent: " + intentParts[0], width - sx(8));
+        String contextLine = this.textRenderer.trimToWidth("Context: " + intentParts[1], width - sx(8));
+        String plotLine = this.textRenderer.trimToWidth("Plot: " + selectedPlotSummary(), width - sx(8));
+
+        context.drawText(this.textRenderer, Text.literal(intentLine), x + sx(4), y + sx(3), 0xFFE0F2E2, false);
+        context.drawText(this.textRenderer, Text.literal(contextLine), x + sx(4), y + sx(13), 0xFFC7DFC9, false);
+        context.drawText(this.textRenderer, Text.literal(plotLine), x + sx(4), y + sx(23), 0xFFAED2B4, false);
+    }
+
+    private String[] intentCardLines() {
+        String latestIntent = BladelowHudTelemetry.latestIntent();
+        if (latestIntent == null || latestIntent.isBlank()) {
+            return new String[]{"waiting for scan", "select or snap a plot in CITY mode"};
+        }
+        String[] parts = latestIntent.split("\\s+\\|\\s+", 2);
+        String summary = parts.length > 0 && !parts[0].isBlank() ? parts[0] : latestIntent;
+        String context = parts.length > 1 && !parts[1].isBlank() ? parts[1] : "no planner context";
+        return new String[]{summary, context};
+    }
+
+    private String selectedPlotSummary() {
+        SuggestedPlot plot = preferredSuggestedPlot();
+        if (plot == null) {
+            if (markerA != null && markerB != null) {
+                int width = Math.abs(markerA.getX() - markerB.getX()) + 1;
+                int depth = Math.abs(markerA.getZ() - markerB.getZ()) + 1;
+                return width + "x" + depth + " manual";
+            }
+            return "none";
+        }
+        int width = Math.abs(plot.maxX() - plot.minX()) + 1;
+        int depth = Math.abs(plot.maxZ() - plot.minZ()) + 1;
+        return plot.label() + " " + width + "x" + depth + " score=" + String.format(Locale.ROOT, "%.1f", plot.score());
     }
 
     private boolean statusLooksError(String text) {
@@ -1387,6 +1488,8 @@ public class BladelowHudScreen extends Screen {
         setVisible(cityPreviewButton, source && cityMode);
         setVisible(cityTownFillButton, source && cityMode);
         setVisible(cityAutoZonesButton, source && cityMode);
+        setVisible(cityAutoBuildButton, source && cityMode);
+        setVisible(citySaveStyleButton, source && cityMode);
         setVisible(cityAutoCityButton, source && cityMode);
 
         setVisible(runButton, run);
@@ -1396,7 +1499,7 @@ public class BladelowHudScreen extends Screen {
         setVisible(moveModeButton, run);
         setVisible(smartMoveButton, run);
         setVisible(profileButton, run);
-        setVisible(statusDetailButton, run);
+        setVisible(statusDetailButton, run || (source && cityMode));
         setVisible(bpBuildButton, run && blueprintMode);
         setVisible(scaleButton, run);
 
@@ -1555,6 +1658,171 @@ public class BladelowHudScreen extends Screen {
         updateQuickButtons();
         updateRunGuard();
         statusText = "S" + (assigned + 1) + " <- " + shortBlockName(blockId, 16);
+    }
+
+    private void maybeAutofillSlotsFromIntent() {
+        if (!MODE_CITY.equals(activeMode)) {
+            return;
+        }
+
+        IntentPalette palette = intentPaletteFromTelemetry();
+        if (palette == null || palette.signature().isBlank() || "none".equals(palette.signature())) {
+            return;
+        }
+        if (palette.signature().equals(lastIntentPaletteKey)) {
+            return;
+        }
+
+        boolean allEmpty = true;
+        for (String slot : selectedSlots) {
+            if (slot != null && !slot.isBlank()) {
+                allEmpty = false;
+                break;
+            }
+        }
+        boolean stillAutoFilled = Arrays.equals(selectedSlots, lastAutoFilledSlots);
+        if (!allEmpty && !stillAutoFilled) {
+            return;
+        }
+
+        String[] mapped = mapIntentPaletteToSlots(palette);
+        boolean changed = false;
+        for (int i = 0; i < SLOT_COUNT; i++) {
+            if (!Objects.equals(selectedSlots[i], mapped[i])) {
+                selectedSlots[i] = mapped[i];
+                changed = true;
+            }
+        }
+        System.arraycopy(selectedSlots, 0, lastAutoFilledSlots, 0, SLOT_COUNT);
+        lastIntentPaletteKey = palette.signature();
+        if (!changed) {
+            return;
+        }
+
+        addRecent(selectedSlots[0]);
+        addRecent(selectedSlots[1]);
+        addRecent(selectedSlots[2]);
+        updateSlotButtons();
+        updateQuickButtons();
+        updateRunGuard();
+        statusText = "Auto-filled slots from inferred intent";
+    }
+
+    private IntentPalette intentPaletteFromTelemetry() {
+        String latestIntent = BladelowHudTelemetry.latestIntent();
+        if (latestIntent == null || latestIntent.isBlank()) {
+            return null;
+        }
+        String[] parts = latestIntent.split("\\s+\\|\\s+", 2);
+        String summary = parts.length > 0 ? parts[0].trim().toLowerCase(Locale.ROOT) : latestIntent.trim().toLowerCase(Locale.ROOT);
+        if (summary.isBlank() || "none".equals(summary)) {
+            return null;
+        }
+
+        String[] tokens = summary.split("\\s+");
+        if (tokens.length == 0) {
+            return null;
+        }
+
+        String archetype = tokens[0];
+        String paletteProfile = "";
+        for (String token : tokens) {
+            if (token.endsWith("f") || token.startsWith("conf=") || token.startsWith("mem=")) {
+                continue;
+            }
+            if ("small".equals(token) || "medium".equals(token) || "large".equals(token)) {
+                continue;
+            }
+            if (token.contains("_")
+                || "stone".equals(token)
+                || "oak".equals(token)
+                || "market".equals(token)
+                || "plaster".equals(token)) {
+                paletteProfile = token;
+            }
+        }
+
+        return new IntentPalette(archetype, paletteProfile, summary);
+    }
+
+    private String[] mapIntentPaletteToSlots(IntentPalette palette) {
+        String archetype = palette.archetype();
+        List<String> paletteParts = new ArrayList<>();
+        if (!palette.paletteProfile().isBlank()) {
+            paletteParts.addAll(Arrays.asList(palette.paletteProfile().split("_")));
+        }
+
+        String slot1 = primaryBlockForPalette(paletteParts, archetype);
+        String slot2 = trimBlockForPalette(paletteParts, archetype, slot1);
+        String slot3 = roofBlockForPalette(paletteParts, archetype, slot1, slot2);
+        return new String[]{slot1, slot2, slot3};
+    }
+
+    private String primaryBlockForPalette(List<String> paletteParts, String archetype) {
+        if (paletteParts.contains("plaster")) {
+            return "minecraft:calcite";
+        }
+        if (paletteParts.contains("stone")) {
+            return "minecraft:stone_bricks";
+        }
+        if (paletteParts.contains("market")) {
+            return "minecraft:terracotta";
+        }
+        if (paletteParts.contains("oak")) {
+            return "minecraft:oak_planks";
+        }
+        return switch (archetype) {
+            case "civic" -> "minecraft:stone_bricks";
+            case "market" -> "minecraft:terracotta";
+            case "workshop" -> "minecraft:cobblestone";
+            default -> "minecraft:oak_planks";
+        };
+    }
+
+    private String trimBlockForPalette(List<String> paletteParts, String archetype, String primary) {
+        if (paletteParts.contains("oak") && !"minecraft:oak_planks".equals(primary)) {
+            return "minecraft:oak_planks";
+        }
+        if (paletteParts.contains("stone") && !"minecraft:stone_bricks".equals(primary)) {
+            return "minecraft:stone_bricks";
+        }
+        if (paletteParts.contains("plaster") && !"minecraft:calcite".equals(primary)) {
+            return "minecraft:calcite";
+        }
+        if (paletteParts.contains("market") && !"minecraft:terracotta".equals(primary)) {
+            return "minecraft:terracotta";
+        }
+        return switch (archetype) {
+            case "civic" -> "minecraft:calcite";
+            case "market" -> "minecraft:oak_planks";
+            case "workshop" -> "minecraft:oak_planks";
+            default -> "minecraft:cobblestone";
+        };
+    }
+
+    private String roofBlockForPalette(List<String> paletteParts, String archetype, String primary, String trim) {
+        if (paletteParts.contains("market")) {
+            return "minecraft:copper_block";
+        }
+        if (paletteParts.contains("oak")) {
+            return "minecraft:spruce_planks";
+        }
+        if (paletteParts.contains("stone")) {
+            return "minecraft:deepslate_tiles";
+        }
+        if (paletteParts.contains("plaster")) {
+            return "minecraft:gray_concrete";
+        }
+        String candidate = switch (archetype) {
+            case "civic" -> "minecraft:deepslate_tiles";
+            case "market" -> "minecraft:terracotta";
+            case "workshop" -> "minecraft:deepslate_tiles";
+            default -> "minecraft:spruce_planks";
+        };
+        if (candidate.equals(primary) || candidate.equals(trim)) {
+            return "minecraft:gray_concrete";
+        }
+        return candidate;
     }
 
     private void addFavoriteFromActiveSlot() {
@@ -1782,6 +2050,48 @@ public class BladelowHudScreen extends Screen {
         }
         citySummary = "director start";
         sendAction(HudAction.CITY_AUTOPLAY_START, cityLayoutPreset);
+    }
+
+    private void runCityAutoBuild() {
+        SuggestedPlot plot = preferredSuggestedPlot();
+        if (plot != null) {
+            snapToSuggestedPlot(plot);
+        } else if (markerA == null || markerB == null) {
+            statusText = "Select an area or suggested plot first";
+            return;
+        }
+        citySummary = plot == null ? "auto build queued" : "auto build " + plot.label();
+        runCityBuild();
+    }
+
+    private void saveStyleExampleArea() {
+        if (!ensureMarkerSelection()) {
+            return;
+        }
+        String label = styleExampleLabel();
+        citySummary = "style example " + label;
+        sendAction(HudAction.MODEL_SAVE_STYLE_EXAMPLE, label);
+    }
+
+    private String styleExampleLabel() {
+        if (!districtBrush.isBlank()) {
+            return districtBrush;
+        }
+        SuggestedPlot plot = preferredSuggestedPlot();
+        if (plot != null && plot.label() != null && !plot.label().isBlank()) {
+            return plot.label();
+        }
+        IntentPalette palette = intentPaletteFromTelemetry();
+        if (palette != null && !palette.archetype().isBlank()) {
+            return palette.archetype();
+        }
+        return MODE_CITY.equals(activeMode) ? "city" : "example";
+    }
+
+    private void toggleModelStatusPage() {
+        showModelStatusPage = !showModelStatusPage;
+        refreshButtonLabels();
+        statusText = showModelStatusPage ? "Opened model status page" : "Closed model status page";
     }
 
     private void cycleCityPreset() {
@@ -2052,7 +2362,7 @@ public class BladelowHudScreen extends Screen {
                         startX + plotW - 1,
                         startZ + plotD - 1,
                         evaluation.score(),
-                        plotW + "x" + plotD
+                        evaluation.label()
                     ));
                 }
             }
@@ -2173,7 +2483,18 @@ public class BladelowHudScreen extends Screen {
             + centerScore * 1.5
             - (maxY - minY) * 0.6
             - roadInside * 0.15;
-        return new PlotEvaluation(true, score);
+        return new PlotEvaluation(true, score, classifySuggestedPlotLabel(plotW, plotD, roadScore, centerScore));
+    }
+
+    private String classifySuggestedPlotLabel(int plotW, int plotD, double roadScore, double centerScore) {
+        int area = plotW * plotD;
+        if (area >= 100 && centerScore >= 0.35) {
+            return "civic";
+        }
+        if (roadScore >= 0.18 && area <= 99) {
+            return "shop";
+        }
+        return "house";
     }
 
     private SuggestedPlot suggestedPlotAt(BlockPos pos) {
@@ -2186,6 +2507,16 @@ public class BladelowHudScreen extends Screen {
             }
         }
         return null;
+    }
+
+    private SuggestedPlot preferredSuggestedPlot() {
+        if (suggestedPlots.isEmpty()) {
+            return null;
+        }
+        if (selectedSuggestedPlot >= 0 && selectedSuggestedPlot < suggestedPlots.size()) {
+            return suggestedPlots.get(selectedSuggestedPlot);
+        }
+        return suggestedPlots.get(0);
     }
 
     private void snapToSuggestedPlot(SuggestedPlot plot) {
@@ -2397,7 +2728,7 @@ public class BladelowHudScreen extends Screen {
 
         profileButton.setMessage(Text.literal("Profile: " + PROFILE_PRESETS[clamp(profileIndex, 0, PROFILE_PRESETS.length - 1)]));
         scaleButton.setMessage(Text.literal("HUD Scale: " + SCALE_LABELS[clamp(uiScaleIndex, 0, SCALE_LABELS.length - 1)]));
-        statusDetailButton.setMessage(Text.literal("Diagnostics"));
+        statusDetailButton.setMessage(Text.literal(showModelStatusPage ? "Hide Model" : "Model"));
         if (cityTownFillButton != null) {
             cityTownFillButton.setMessage(Text.literal("Director Continue"));
         }
@@ -2409,6 +2740,12 @@ public class BladelowHudScreen extends Screen {
         }
         if (cityAutoZonesButton != null) {
             cityAutoZonesButton.setMessage(Text.literal("Auto Zones"));
+        }
+        if (cityAutoBuildButton != null) {
+            cityAutoBuildButton.setMessage(Text.literal("Auto Build Here"));
+        }
+        if (citySaveStyleButton != null) {
+            citySaveStyleButton.setMessage(Text.literal("Save Style Area"));
         }
         if (cityAutoCityButton != null) {
             cityAutoCityButton.setMessage(Text.literal("Director Start"));
@@ -2491,6 +2828,10 @@ public class BladelowHudScreen extends Screen {
             case MODEL_SCAN_INTENT -> {
                 citySummary = "intent scan";
                 yield "Analyzing selected build intent...";
+            }
+            case MODEL_SAVE_STYLE_EXAMPLE -> {
+                citySummary = "style example saved";
+                yield "Saving selected area as a style example...";
             }
             case STATUS, STATUS_DETAIL -> "Checking build status...";
             case PAUSE_BUILD -> "Build paused";
@@ -3011,7 +3352,8 @@ public class BladelowHudScreen extends Screen {
         if (clicked == null) {
             return false;
         }
-        if (isShiftPressed() && districtBrush.isBlank()) {
+        boolean cityPlotSelection = MODE_CITY.equals(activeMode) && FLOW_SOURCE.equals(activeFlow) && districtBrush.isBlank();
+        if (cityPlotSelection || (isShiftPressed() && districtBrush.isBlank())) {
             SuggestedPlot snappedPlot = suggestedPlotAt(clicked);
             if (snappedPlot != null) {
                 snapToSuggestedPlot(snappedPlot);

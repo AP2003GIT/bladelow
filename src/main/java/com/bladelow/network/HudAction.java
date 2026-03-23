@@ -40,7 +40,8 @@ public enum HudAction {
     MOVE_SET_REACH("move_set_reach"),
     SAFETY_SET_PREVIEW("safety_set_preview"),
     PROFILE_LOAD("profile_load"),
-    MODEL_SCAN_INTENT("model_scan_intent");
+    MODEL_SCAN_INTENT("model_scan_intent"),
+    MODEL_SAVE_STYLE_EXAMPLE("model_save_style_example");
 
     private final String wireId;
 

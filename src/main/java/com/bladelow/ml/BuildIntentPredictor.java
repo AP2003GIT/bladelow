@@ -33,6 +33,7 @@ public final class BuildIntentPredictor {
         if (context == null) {
             return BuildIntent.NONE;
         }
+        BuildIntent offlinePrior = BladelowLearning.offlineModel().suggest(context);
 
         List<ScoredObservation> matches = observations.stream()
             .map(observation -> new ScoredObservation(observation, similarity(context, observation)))
@@ -41,7 +42,7 @@ public final class BuildIntentPredictor {
             .limit(MAX_MATCHES)
             .toList();
         if (matches.isEmpty()) {
-            return heuristic(context);
+            return offlinePrior.confidence() > 0.0 ? offlinePrior : heuristic(context);
         }
 
         Map<String, Double> archetypeVotes = new HashMap<>();
@@ -68,16 +69,20 @@ public final class BuildIntentPredictor {
         }
 
         String primaryTheme = best(themeVotes, context.learnedPrimaryTheme(), context.stylePrimaryTheme());
-        String secondaryTheme = nextBest(themeVotes, primaryTheme, context.learnedSecondaryTheme(), context.styleSecondaryTheme());
-        double confidence = Math.min(1.0, totalWeight / 4.0);
-        return new BuildIntent(
-            best(archetypeVotes, heuristicArchetype(context)),
-            best(sizeVotes, heuristicSize(context)),
-            totalWeight <= 0.0 ? heuristicFloors(context) : Math.max(1, (int) Math.round(floors / totalWeight)),
-            best(roofVotes, heuristicRoof(context)),
-            best(paletteVotes, heuristicPalette(context)),
-            best(detailVotes, heuristicDetail(context)),
+        String secondaryTheme = nextBest(
+            themeVotes,
             primaryTheme,
+            fallbackValue(offlinePrior.secondaryTheme(), context.learnedSecondaryTheme(), context.styleSecondaryTheme())
+        );
+        double confidence = Math.min(1.0, (totalWeight / 4.0) + (offlinePrior.confidence() * 0.1));
+        return new BuildIntent(
+            best(archetypeVotes, fallbackValue(offlinePrior.primaryArchetype(), heuristicArchetype(context))),
+            best(sizeVotes, fallbackValue(offlinePrior.sizeClass(), heuristicSize(context))),
+            totalWeight <= 0.0 ? heuristicFloors(context) : Math.max(1, (int) Math.round(floors / totalWeight)),
+            best(roofVotes, fallbackValue(offlinePrior.roofFamily(), heuristicRoof(context))),
+            best(paletteVotes, fallbackValue(offlinePrior.paletteProfile(), heuristicPalette(context))),
+            best(detailVotes, fallbackValue(offlinePrior.detailDensity(), heuristicDetail(context))),
+            fallbackValue(primaryTheme, offlinePrior.primaryTheme(), bestTheme(context)),
             secondaryTheme,
             confidence,
             matches.size()
@@ -239,6 +244,16 @@ public final class BuildIntentPredictor {
             return learnedSecondary;
         }
         return normalize(context.styleSecondaryTheme());
+    }
+
+    private static String fallbackValue(String... values) {
+        for (String value : values) {
+            String normalized = normalize(value);
+            if (!normalized.isBlank()) {
+                return normalized;
+            }
+        }
+        return "";
     }
 
     private static double similarity(BuildIntentContext context, Observation observation) {
