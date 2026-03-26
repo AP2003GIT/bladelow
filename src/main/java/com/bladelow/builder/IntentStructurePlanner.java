@@ -49,6 +49,18 @@ public final class IntentStructurePlanner {
         String plotLabel,
         List<String> slotOverrides
     ) {
+        return planSelection(world, playerId, from, to, plotLabel, slotOverrides, 0);
+    }
+
+    public static GeneratedBuild planSelection(
+        ServerWorld world,
+        UUID playerId,
+        BlockPos from,
+        BlockPos to,
+        String plotLabel,
+        List<String> slotOverrides,
+        int variant
+    ) {
         if (world == null || from == null || to == null) {
             return GeneratedBuild.error("invalid auto-build bounds");
         }
@@ -90,11 +102,12 @@ public final class IntentStructurePlanner {
         BuildIntentContext context = suggestion.context();
         String archetype = effectiveArchetype(intent, plotLabel);
         String roadSide = detectRoadSide(world, minX, maxX, minY, minZ, maxZ);
+        int normalizedVariant = Math.max(0, variant);
         MaterialSet materials = chooseMaterials(intent, scan, archetype, slotOverrides);
 
-        int bodyWidth = chooseFootprintWidth(plotWidth, context, intent, archetype);
-        int bodyDepth = chooseFootprintDepth(plotDepth, context, intent, archetype);
-        int floors = Math.max(1, Math.min(3, intent.floors() <= 0 ? 1 : intent.floors()));
+        int bodyWidth = chooseFootprintWidth(plotWidth, context, intent, archetype, normalizedVariant);
+        int bodyDepth = chooseFootprintDepth(plotDepth, context, intent, archetype, normalizedVariant);
+        int floors = chooseFloors(intent, archetype, normalizedVariant);
 
         int originX = placeOriginX(minX, maxX, bodyWidth, roadSide);
         int originZ = placeOriginZ(minZ, maxZ, bodyDepth, roadSide);
@@ -107,7 +120,8 @@ public final class IntentStructurePlanner {
             bodyDepth,
             floors,
             intent,
-            materials
+            materials,
+            normalizedVariant
         );
         BlueprintLibrary.BuildPlan buildPlan = resolveGeneratedPlan(world, blueprint, originX, floorY, originZ, materials.foundation());
         if (!buildPlan.ok()) {
@@ -119,8 +133,9 @@ public final class IntentStructurePlanner {
             + " " + bodyWidth + "x" + bodyDepth
             + " floors=" + floors
             + " road=" + roadSide
+            + " variant=" + normalizedVariant
             + " intent=" + intent.summary();
-        return GeneratedBuild.ok(message, intent, context, blueprint, buildPlan.blockStates(), buildPlan.targets());
+        return GeneratedBuild.ok(message, intent, context, blueprint, originX, floorY, originZ, buildPlan.blockStates(), buildPlan.targets());
     }
 
     private static BlueprintLibrary.BuildPlan resolveGeneratedPlan(
@@ -168,12 +183,13 @@ public final class IntentStructurePlanner {
         int depth,
         int floors,
         BuildIntent intent,
-        MaterialSet materials
+        MaterialSet materials,
+        int variant
     ) {
         List<TownBlueprint.Placement> placements = new ArrayList<>();
         int storyHeight = 4;
         int bodyTop = floors * storyHeight;
-        int doorOffset = entranceOffset(roadSide, width, depth);
+        int doorOffset = entranceOffset(roadSide, width, depth, variant);
 
         for (int x = 0; x < width; x++) {
             for (int z = 0; z < depth; z++) {
@@ -211,10 +227,10 @@ public final class IntentStructurePlanner {
             }
         }
 
-        addRoof(placements, width, depth, bodyTop + 1, roofLayers(intent, width, depth), materials);
+        addRoof(placements, width, depth, bodyTop + 1, roofLayers(intent, width, depth, variant), materials, variant);
         addEntranceDetail(placements, roadSide, width, depth, doorOffset, materials, archetype);
 
-        String name = "generated_" + archetype + "_" + intent.sizeClass();
+        String name = "generated_" + archetype + "_" + intent.sizeClass() + (variant <= 0 ? "" : "_v" + variant);
         return new TownBlueprint(
             name,
             "generated",
@@ -237,9 +253,13 @@ public final class IntentStructurePlanner {
         int depth,
         int roofBaseY,
         int layers,
-        MaterialSet materials
+        MaterialSet materials,
+        int variant
     ) {
         boolean slopeNorthSouth = width >= depth;
+        if (Math.abs(width - depth) <= 2 && (variant & 1) == 1) {
+            slopeNorthSouth = !slopeNorthSouth;
+        }
         int maxLayers = slopeNorthSouth ? Math.max(1, (depth + 1) / 2) : Math.max(1, (width + 1) / 2);
         int roofLayers = Math.min(layers, maxLayers);
 
@@ -380,7 +400,7 @@ public final class IntentStructurePlanner {
         return intent.primaryArchetype();
     }
 
-    private static int chooseFootprintWidth(int plotWidth, BuildIntentContext context, BuildIntent intent, String archetype) {
+    private static int chooseFootprintWidth(int plotWidth, BuildIntentContext context, BuildIntent intent, String archetype, int variant) {
         int base = switch (archetype) {
             case "civic" -> 11;
             case "market" -> 8;
@@ -395,11 +415,12 @@ public final class IntentStructurePlanner {
         if (context != null && context.styleAverageWidth() > 1.0) {
             base = (int) Math.round((base + context.styleAverageWidth()) * 0.5);
         }
+        base += variantOffset(variant, 0, 2);
         int max = plotWidth >= 8 ? plotWidth - 2 : plotWidth;
         return Math.max(5, Math.min(max, base));
     }
 
-    private static int chooseFootprintDepth(int plotDepth, BuildIntentContext context, BuildIntent intent, String archetype) {
+    private static int chooseFootprintDepth(int plotDepth, BuildIntentContext context, BuildIntent intent, String archetype, int variant) {
         int base = switch (archetype) {
             case "civic" -> 9;
             case "market" -> 7;
@@ -414,8 +435,18 @@ public final class IntentStructurePlanner {
         if (context != null && context.styleAverageDepth() > 1.0) {
             base = (int) Math.round((base + context.styleAverageDepth()) * 0.5);
         }
+        base += variantOffset(variant, 2, 2);
         int max = plotDepth >= 8 ? plotDepth - 2 : plotDepth;
         return Math.max(5, Math.min(max, base));
+    }
+
+    private static int chooseFloors(BuildIntent intent, String archetype, int variant) {
+        int base = Math.max(1, Math.min(3, intent == null || intent.floors() <= 0 ? 1 : intent.floors()));
+        int delta = variantOffset(variant, 4, 1);
+        if ("civic".equals(archetype)) {
+            delta = Math.max(0, delta);
+        }
+        return Math.max(1, Math.min(3, base + delta));
     }
 
     private static int placeOriginX(int minX, int maxX, int width, String roadSide) {
@@ -552,7 +583,7 @@ public final class IntentStructurePlanner {
         return false;
     }
 
-    private static int roofLayers(BuildIntent intent, int width, int depth) {
+    private static int roofLayers(BuildIntent intent, int width, int depth, int variant) {
         int max = Math.max(1, Math.min(width, depth) / 2);
         String roofFamily = intent == null ? "" : normalize(intent.roofFamily());
         int requested = switch (roofFamily) {
@@ -561,6 +592,7 @@ public final class IntentStructurePlanner {
             case "steep" -> 4;
             default -> 3;
         };
+        requested += variantOffset(variant, 1, 1);
         return Math.max(1, Math.min(max, requested));
     }
 
@@ -633,12 +665,18 @@ public final class IntentStructurePlanner {
         return materials.wall();
     }
 
-    private static int entranceOffset(String roadSide, int width, int depth) {
-        return switch (roadSide) {
+    private static int entranceOffset(String roadSide, int width, int depth, int variant) {
+        int center = switch (roadSide) {
             case "north", "south" -> width / 2;
             case "west", "east" -> depth / 2;
             default -> width / 2;
         };
+        int limit = switch (roadSide) {
+            case "north", "south" -> Math.max(1, width - 2);
+            case "west", "east" -> Math.max(1, depth - 2);
+            default -> Math.max(1, width - 2);
+        };
+        return clamp(center + variantOffset(variant, 3, 1), 1, limit);
     }
 
     private static int entranceX(String roadSide, int width, int depth, int doorOffset) {
@@ -741,6 +779,18 @@ public final class IntentStructurePlanner {
         return BlueprintStateCodec.tryParse(blockState) != null;
     }
 
+    private static int variantOffset(int variant, int phase, int magnitude) {
+        int cycle = Math.floorMod(variant + phase, 5);
+        int raw = switch (cycle) {
+            case 1 -> 1;
+            case 2 -> -1;
+            case 3 -> 2;
+            case 4 -> -2;
+            default -> 0;
+        };
+        return clamp(raw, -magnitude, magnitude);
+    }
+
     private static int clamp(int value, int min, int max) {
         return Math.max(min, Math.min(max, value));
     }
@@ -771,6 +821,9 @@ public final class IntentStructurePlanner {
         BuildIntent intent,
         BuildIntentContext context,
         TownBlueprint blueprint,
+        int originX,
+        int originY,
+        int originZ,
         List<BlockState> blockStates,
         List<BlockPos> targets
     ) {
@@ -779,14 +832,41 @@ public final class IntentStructurePlanner {
             BuildIntent intent,
             BuildIntentContext context,
             TownBlueprint blueprint,
+            int originX,
+            int originY,
+            int originZ,
             List<BlockState> blockStates,
             List<BlockPos> targets
         ) {
-            return new GeneratedBuild(true, message, intent, context, blueprint, List.copyOf(blockStates), List.copyOf(targets));
+            return new GeneratedBuild(true, message, intent, context, blueprint, originX, originY, originZ, List.copyOf(blockStates), List.copyOf(targets));
         }
 
         private static GeneratedBuild error(String message) {
-            return new GeneratedBuild(false, message, BuildIntent.NONE, null, null, List.of(), List.of());
+            return new GeneratedBuild(false, message, BuildIntent.NONE, null, null, 0, 0, 0, List.of(), List.of());
+        }
+
+        public int minX() {
+            return blueprint == null ? originX : originX;
+        }
+
+        public int maxX() {
+            return blueprint == null ? originX : originX + blueprint.plotWidth() - 1;
+        }
+
+        public int minZ() {
+            return blueprint == null ? originZ : originZ;
+        }
+
+        public int maxZ() {
+            return blueprint == null ? originZ : originZ + blueprint.plotDepth() - 1;
+        }
+
+        public int entranceWorldX() {
+            return blueprint == null ? originX : originX + blueprint.entranceX();
+        }
+
+        public int entranceWorldZ() {
+            return blueprint == null ? originZ : originZ + blueprint.entranceZ();
         }
     }
 }

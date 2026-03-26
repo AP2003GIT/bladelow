@@ -29,6 +29,7 @@ public final class BladelowModelStatus {
     private static final Path ENVIRONMENT_DATASET = ML_DIR.resolve("environment_observations.jsonl");
     private static final Path BUILD_INTENT_DATASET = ML_DIR.resolve("build_intent_examples.jsonl");
     private static final Path STYLE_EXAMPLES_DATASET = ML_DIR.resolve("style_examples.jsonl");
+    private static final Path PREVIEW_FEEDBACK_DATASET = ML_DIR.resolve("preview_feedback.jsonl");
     private static final Path STYLE_REFS_DIR = ML_DIR.resolve("style_refs");
 
     private static long fingerprint = Long.MIN_VALUE;
@@ -51,6 +52,7 @@ public final class BladelowModelStatus {
         long environment = countLines(ENVIRONMENT_DATASET);
         long intent = countLines(BUILD_INTENT_DATASET);
         long styleExamples = countLines(STYLE_EXAMPLES_DATASET);
+        long previewFeedback = countLines(PREVIEW_FEEDBACK_DATASET);
         long refs = countImages(STYLE_REFS_DIR);
         List<String> rawThemes = topThemesFromRawData();
         var offline = BladelowLearning.offlineModel().snapshot();
@@ -60,6 +62,7 @@ public final class BladelowModelStatus {
             environment,
             intent,
             styleExamples,
+            previewFeedback,
             refs,
             offline.trained(),
             offline.generatedAt(),
@@ -73,6 +76,7 @@ public final class BladelowModelStatus {
             ^ fingerprintFor(ENVIRONMENT_DATASET)
             ^ fingerprintFor(BUILD_INTENT_DATASET)
             ^ fingerprintFor(STYLE_EXAMPLES_DATASET)
+            ^ fingerprintFor(PREVIEW_FEEDBACK_DATASET)
             ^ fingerprintForDirectory(STYLE_REFS_DIR)
             ^ BladelowLearning.offlineModel().snapshot().generatedAt().hashCode();
     }
@@ -197,6 +201,7 @@ public final class BladelowModelStatus {
         long environmentSamples,
         long intentSamples,
         long styleExampleSamples,
+        long previewFeedbackSamples,
         long referenceImages,
         boolean offlineModelPresent,
         String generatedAt,
@@ -204,13 +209,13 @@ public final class BladelowModelStatus {
         List<String> zonePriors
     ) {
         private static Snapshot empty() {
-            return new Snapshot(0L, 0L, 0L, 0L, 0L, false, "", List.of(), List.of());
+            return new Snapshot(0L, 0L, 0L, 0L, 0L, 0L, false, "", List.of(), List.of());
         }
 
         public List<String> lines() {
             List<String> out = new ArrayList<>();
             out.add("placements=" + placementSamples + " env=" + environmentSamples + " intent=" + intentSamples);
-            out.add("style examples=" + styleExampleSamples + " refs=" + referenceImages);
+            out.add("style examples=" + styleExampleSamples + " preview feedback=" + previewFeedbackSamples + " refs=" + referenceImages);
             out.add(offlineModelPresent
                 ? "offline model: trained"
                 : "offline model: not trained");

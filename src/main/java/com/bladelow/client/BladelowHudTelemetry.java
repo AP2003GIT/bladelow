@@ -3,6 +3,7 @@ package com.bladelow.client;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.regex.Matcher;
@@ -12,7 +13,8 @@ import java.util.regex.Pattern;
  * Client-side parser for Bladelow status output.
  *
  * The HUD uses this as a lightweight telemetry stream so it can display build
- * progress without needing a custom networking layer.
+ * progress and preview metadata without needing a heavier custom sync layer for
+ * every small status update.
  */
 public final class BladelowHudTelemetry {
     private static final int MAX_LOG_LINES = 24;
@@ -28,6 +30,8 @@ public final class BladelowHudTelemetry {
     private static int skipped;
     private static int failed;
     private static String latestIntent = "";
+    private static String latestPreviewSummary = "";
+    private static PreviewSnapshot latestPreview;
 
     private BladelowHudTelemetry() {
     }
@@ -42,7 +46,6 @@ public final class BladelowHudTelemetry {
             return;
         }
 
-        // Ignore unrelated chat so the HUD reflects only Bladelow runtime state.
         boolean isBladelowLine = line.contains("[Bladelow]");
         if (!isBladelowLine) {
             return;
@@ -56,6 +59,7 @@ public final class BladelowHudTelemetry {
         appendLine(line);
         parseProgress(line);
         parseIntent(line);
+        parsePreview(line);
     }
 
     public static synchronized void recordLocalMessage(String localLine) {
@@ -86,6 +90,10 @@ public final class BladelowHudTelemetry {
         return latestIntent;
     }
 
+    public static synchronized PreviewSnapshot latestPreview() {
+        return latestPreview;
+    }
+
     private static void appendLine(String line) {
         LINES.addLast(line);
         while (LINES.size() > MAX_LOG_LINES) {
@@ -94,8 +102,6 @@ public final class BladelowHudTelemetry {
     }
 
     private static void parseProgress(String line) {
-        // Parse the same human-readable lines shown to the player so command
-        // output and HUD status stay aligned.
         Matcher progress = PROGRESS_PATTERN.matcher(line.toLowerCase(Locale.ROOT));
         if (progress.find()) {
             done = parseInt(progress.group(1), done);
@@ -114,10 +120,8 @@ public final class BladelowHudTelemetry {
             }
         }
 
-        if (line.contains("build complete")) {
-            if (total > 0) {
-                done = total;
-            }
+        if (line.contains("build complete") && total > 0) {
+            done = total;
         }
     }
 
@@ -127,6 +131,58 @@ public final class BladelowHudTelemetry {
             return;
         }
         latestIntent = line.substring("intent ".length()).trim();
+    }
+
+    private static void parsePreview(String line) {
+        String lower = line.toLowerCase(Locale.ROOT);
+        if (lower.startsWith("preview-clear")) {
+            latestPreviewSummary = "";
+            latestPreview = null;
+            return;
+        }
+        if (lower.startsWith("preview plan ")) {
+            latestPreviewSummary = line.substring("preview plan ".length()).trim();
+            if (latestPreview != null) {
+                latestPreview = latestPreview.withSummary(latestPreviewSummary);
+            }
+            return;
+        }
+        if (!lower.startsWith("preview-map ")) {
+            return;
+        }
+
+        KeyValueReader values = KeyValueReader.parse(line.substring("preview-map ".length()));
+        Integer selMinX = values.intValue("selMinX");
+        Integer selMinZ = values.intValue("selMinZ");
+        Integer selMaxX = values.intValue("selMaxX");
+        Integer selMaxZ = values.intValue("selMaxZ");
+        Integer minX = values.intValue("minX");
+        Integer minZ = values.intValue("minZ");
+        Integer maxX = values.intValue("maxX");
+        Integer maxZ = values.intValue("maxZ");
+        Integer doorX = values.intValue("doorX");
+        Integer doorZ = values.intValue("doorZ");
+        Integer variant = values.intValue("variant");
+        if (selMinX == null || selMinZ == null || selMaxX == null || selMaxZ == null
+            || minX == null || minZ == null || maxX == null || maxZ == null || doorX == null || doorZ == null) {
+            return;
+        }
+
+        latestPreview = new PreviewSnapshot(
+            selMinX,
+            selMinZ,
+            selMaxX,
+            selMaxZ,
+            minX,
+            minZ,
+            maxX,
+            maxZ,
+            doorX,
+            doorZ,
+            variant == null ? 0 : variant,
+            values.value("label", "house"),
+            latestPreviewSummary
+        );
     }
 
     private static int parseInt(String text, int fallback) {
@@ -143,6 +199,64 @@ public final class BladelowHudTelemetry {
                 return 0;
             }
             return (int) Math.round((done * 100.0) / total);
+        }
+    }
+
+    public record PreviewSnapshot(
+        int selMinX,
+        int selMinZ,
+        int selMaxX,
+        int selMaxZ,
+        int minX,
+        int minZ,
+        int maxX,
+        int maxZ,
+        int doorX,
+        int doorZ,
+        int variant,
+        String label,
+        String summary
+    ) {
+        public boolean matchesSelection(int minSelX, int minSelZ, int maxSelX, int maxSelZ) {
+            return selMinX == minSelX
+                && selMinZ == minSelZ
+                && selMaxX == maxSelX
+                && selMaxZ == maxSelZ;
+        }
+
+        public PreviewSnapshot withSummary(String nextSummary) {
+            return new PreviewSnapshot(selMinX, selMinZ, selMaxX, selMaxZ, minX, minZ, maxX, maxZ, doorX, doorZ, variant, label, nextSummary);
+        }
+    }
+
+    private record KeyValueReader(HashMap<String, String> values) {
+        private static KeyValueReader parse(String raw) {
+            HashMap<String, String> values = new HashMap<>();
+            for (String token : raw.split("\\s+")) {
+                int split = token.indexOf('=');
+                if (split <= 0 || split >= token.length() - 1) {
+                    continue;
+                }
+                values.put(token.substring(0, split), token.substring(split + 1));
+            }
+            return new KeyValueReader(values);
+        }
+
+        private Integer intValue(String key) {
+            String value = values.get(key);
+            if (value == null) {
+                return null;
+            }
+            try {
+                return Integer.parseInt(value);
+            } catch (NumberFormatException ex) {
+                return null;
+            }
+        }
+
+        private String value(String key, String fallback) {
+            String value = values.get(key);
+            return value == null || value.isBlank() ? fallback : value;
         }
     }
 }

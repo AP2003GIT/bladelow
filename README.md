@@ -19,7 +19,7 @@ Bladelow currently includes:
 - district zoning with `residential`, `market`, `workshop`, `civic`, and `mixed`
 - suggested build plots inside a selected city area
 - intent scanning that reads nearby style, scale, and context
-- single-plot `Auto Build Here` generation for one road-facing building at a time
+- single-plot `Auto Build Here` generation with preview-first commit flow
 - city director automation for staged district building across a larger area
 - automatic safety rules to avoid damaging sensitive blocks
 - local learning datasets for style, environment, and build-intent memory
@@ -82,8 +82,10 @@ The intended flow now is:
 3. Drag on the planning map to mark an area
 4. Click a suggested plot or let Bladelow choose the best one
 5. Let Bladelow infer build intent and palette
-6. Press `Auto Build Here` for one generated structure
-7. Use the director flow when you want a larger staged district pass
+6. Press `Preview Here` to generate one candidate structure for the selected plot
+7. Use `Reroll` or `Reject` until the preview feels right
+8. Press `Build Preview` to commit the accepted preview
+9. Use the director flow when you want a larger staged district pass
 
 For direct/manual workflows:
 - `SEL` is for marker-based selection and controlled builds
@@ -139,7 +141,7 @@ The right-side panel currently supports:
 - district preset cycling
 - auto zoning
 - city director start, stop, continue, and status
-- single-plot `Auto Build Here`
+- single-plot preview/build workflow (`Preview Here`, `Reroll`, `Reject`, `Build Preview`)
 - saving the current area as a style example
 - model status page
 
@@ -164,21 +166,23 @@ Optional behavior:
 
 ## Auto Build Here
 
-`Auto Build Here` is the current bridge between ML-style intent prediction and actual structure generation.
+`Auto Build Here` is the current bridge between ML-style intent prediction and actual structure generation. It is now a preview-first flow rather than an immediate commit.
 
-When used, Bladelow:
-1. picks the selected or best suggested plot
-2. scans terrain and nearby structures
-3. infers a `BuildIntent`
-4. chooses footprint, facing, floors, roof, and palette
-5. generates one exterior-first building plan
-6. adds support/foundation blocks where needed
-7. queues the build through the normal runtime
+Current flow:
+1. pick the selected or best suggested plot
+2. scan terrain and nearby structures
+3. infer a `BuildIntent`
+4. choose footprint, facing, floors, roof, and palette
+5. generate one exterior-first building preview
+6. show that preview on the minimap with footprint and entrance marker
+7. let you `Reroll` or `Reject` if the plan is not good enough
+8. commit with `Build Preview` when you are happy with it
 
 Current limitations:
 - focused on one generated building at a time
 - exterior quality is prioritized over rich interiors
 - overlapping plots are rejected rather than forced
+- rerolls are controlled generator variants, not freeform generative AI
 
 ## City Director
 
@@ -256,6 +260,8 @@ Current datasets:
   - accepted planner/build-intent decisions
 - `style_examples.jsonl`
   - curated style areas saved from the HUD
+- `preview_feedback.jsonl`
+  - explicit preview outcomes: accepted, rerolled, rejected
 - `style_refs/`
   - optional style reference images and sidecar metadata
 - `offline_model.json`
@@ -268,6 +274,7 @@ Bladelow currently learns from:
 - nearby building scale and style
 - saved style areas
 - repeated build-intent choices for similar plots
+- explicit preview feedback from accepted, rerolled, and rejected proposals
 - optional image style references
 
 This is still structured learning, not raw generative AI.
@@ -295,6 +302,7 @@ It reads:
 - `config/bladelow/ml/environment_observations.jsonl`
 - `config/bladelow/ml/build_intent_examples.jsonl`
 - `config/bladelow/ml/style_examples.jsonl`
+- `config/bladelow/ml/preview_feedback.jsonl`
 - `config/bladelow/ml/style_refs/`
 
 It writes:
@@ -307,6 +315,7 @@ Open the HUD and use `Model` to inspect:
 - environment sample count
 - build intent sample count
 - style example count
+- preview feedback count
 - style reference image count
 - whether an offline model exists
 - learned themes
@@ -319,10 +328,12 @@ A practical loop for improving Bladelow is:
 1. Build or keep a few good example structures in one area
 2. Mark clean city areas with the HUD
 3. Save especially good areas with `Save Style Area`
-4. Let Bladelow run `Auto Build Here` on nearby plots
-5. Use the recovery commands only if something gets stuck
-6. Periodically run the offline trainer
-7. Repeat in one style at a time so the data stays coherent
+4. Generate a preview on nearby plots
+5. Use `Reroll` and `Reject` honestly so Bladelow gets useful preference data
+6. Commit good previews with `Build Preview`
+7. Use the recovery commands only if something gets stuck
+8. Periodically run the offline trainer
+9. Repeat in one style at a time so the data stays coherent
 
 ## Important Files
 
@@ -345,6 +356,7 @@ Learning and training:
 - `src/main/java/com/bladelow/ml/BladelowLearning.java`
 - `src/main/java/com/bladelow/ml/BuildIntentPredictor.java`
 - `src/main/java/com/bladelow/ml/StyleExampleLogger.java`
+- `src/main/java/com/bladelow/ml/PreviewFeedbackLogger.java`
 - `src/main/java/com/bladelow/ml/OfflineTrainingModel.java`
 - `scripts/train_bladelow_model.py`
 
@@ -374,9 +386,17 @@ Common files you may care about:
 ### Auto Build Here does nothing
 
 - Make sure an area or suggested plot is selected.
+- If the button says `Build Preview`, there is already a cached preview for that plot.
 - Check that the chosen plot is not overlapping an existing structure.
 - Try another suggested plot.
 - Use `Model` to confirm the intent system is active.
+
+### Preview keeps giving bad house variants
+
+- Use `Reroll` a few times before committing.
+- Use `Reject` instead of building a preview you do not want.
+- Save strong nearby examples with `Save Style Area`.
+- Re-run the offline trainer after collecting more accepted/rejected preview data.
 
 ### No suggested plots appear
 

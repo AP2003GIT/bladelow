@@ -15,6 +15,7 @@ import com.bladelow.builder.TownPlanner;
 import com.bladelow.builder.TownZoneStore;
 import com.bladelow.command.MaterialResolver;
 import com.bladelow.command.PaletteAssigner;
+import com.bladelow.ml.BladelowLearning;
 import com.bladelow.command.PlacementPipeline;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
@@ -27,10 +28,12 @@ import net.minecraft.util.Formatting;
 import net.minecraft.util.math.BlockPos;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 /**
  * Direct HUD/server action dispatcher.
@@ -41,6 +44,7 @@ import java.util.Set;
  */
 public final class HudActionService {
     private static final int MAX_SELECTION_BOX_BLOCKS = 131072;
+    private static final Map<UUID, CachedPreview> CITY_BUILD_PREVIEWS = new HashMap<>();
 
     private HudActionService() {
     }
@@ -79,7 +83,8 @@ public final class HudActionService {
                 case ZONE_SET, ZONE_LIST, ZONE_CLEAR, ZONE_AUTO_LAYOUT ->
                     handleZone(source, player, payload.action(), args);
                 case BLUEPRINT_LOAD, BLUEPRINT_BUILD, TOWN_FILL_SELECTION, TOWN_PREVIEW_SELECTION,
-                     CITY_BUILD_AUTO, CITY_AUTOPLAY_START, CITY_AUTOPLAY_STATUS, CITY_AUTOPLAY_STOP,
+                     CITY_BUILD_PREVIEW, CITY_BUILD_REROLL, CITY_BUILD_REJECT, CITY_BUILD_COMMIT, CITY_BUILD_AUTO,
+                     CITY_AUTOPLAY_START, CITY_AUTOPLAY_STATUS, CITY_AUTOPLAY_STOP,
                      CITY_AUTOPLAY_CONTINUE, CITY_AUTOPLAY_CANCEL ->
                     handleBlueprint(source, player, payload.action(), args);
                 case MOVE_SMART_ENABLE, MOVE_SMART_DISABLE, MOVE_SET_MODE, MOVE_SET_REACH ->
@@ -102,6 +107,8 @@ public final class HudActionService {
         return switch (action) {
             case SELECTION_CLEAR -> {
                 SelectionState.clear(player.getUuid(), source.getWorld().getRegistryKey());
+                clearCityPreview(player.getUuid());
+                feedback(source, "[Bladelow] preview-clear");
                 feedback(source, "[Bladelow] selection cleared");
                 yield true;
             }
@@ -259,31 +266,124 @@ public final class HudActionService {
                 }
                 yield true;
             }
+            case CITY_BUILD_PREVIEW -> {
+                BlockPos[] bounds = selectionBounds3d(player, source);
+                if (bounds == null) {
+                    yield true;
+                }
+                IntentStructurePlanner.GeneratedBuild plan = generateCityPlan(source, player, bounds, args, 0);
+                if (!plan.ok()) {
+                    clearCityPreview(player.getUuid());
+                    error(source, "[Bladelow] " + plan.message());
+                } else {
+                    rememberCityPreview(player.getUuid(), bounds[0], bounds[1], 0, plan);
+                    feedback(source, "[Bladelow] preview plan " + previewSummary(plan, 0));
+                    feedback(source, "[Bladelow] " + previewMapLine(bounds[0], bounds[1], 0, plan));
+                }
+                yield true;
+            }
+            case CITY_BUILD_REROLL -> {
+                BlockPos[] bounds = selectionBounds3d(player, source);
+                if (bounds == null) {
+                    yield true;
+                }
+                CachedPreview previous = CITY_BUILD_PREVIEWS.get(player.getUuid());
+                boolean matchingPrevious = previous != null && previous.matches(bounds[0], bounds[1]);
+                int nextVariant = matchingPrevious ? previous.variant() + 1 : 1;
+                IntentStructurePlanner.GeneratedBuild plan = generateCityPlan(source, player, bounds, args, nextVariant);
+                if (!plan.ok()) {
+                    if (!matchingPrevious) {
+                        clearCityPreview(player.getUuid());
+                    }
+                    error(source, "[Bladelow] " + plan.message());
+                } else {
+                    if (matchingPrevious) {
+                        BladelowLearning.previewFeedbackLogger().recordFeedback(
+                            "preview_reroll",
+                            "rerolled",
+                            source.getWorld(),
+                            bounds[0],
+                            bounds[1],
+                            previous.plan(),
+                            previous.variant()
+                        );
+                    }
+                    rememberCityPreview(player.getUuid(), bounds[0], bounds[1], nextVariant, plan);
+                    feedback(source, "[Bladelow] preview plan " + previewSummary(plan, nextVariant));
+                    feedback(source, "[Bladelow] " + previewMapLine(bounds[0], bounds[1], nextVariant, plan));
+                }
+                yield true;
+            }
+            case CITY_BUILD_REJECT -> {
+                BlockPos[] bounds = selectionBounds3d(player, source);
+                if (bounds == null) {
+                    yield true;
+                }
+                CachedPreview preview = CITY_BUILD_PREVIEWS.get(player.getUuid());
+                if (preview == null || !preview.matches(bounds[0], bounds[1])) {
+                    clearCityPreview(player.getUuid());
+                    feedback(source, "[Bladelow] preview-clear");
+                    error(source, "[Bladelow] no matching preview to reject");
+                    yield true;
+                }
+                BladelowLearning.previewFeedbackLogger().recordFeedback(
+                    "preview_reject",
+                    "rejected",
+                    source.getWorld(),
+                    bounds[0],
+                    bounds[1],
+                    preview.plan(),
+                    preview.variant()
+                );
+                clearCityPreview(player.getUuid());
+                feedback(source, "[Bladelow] preview-clear");
+                feedback(source, "[Bladelow] preview rejected");
+                yield true;
+            }
+            case CITY_BUILD_COMMIT -> {
+                BlockPos[] bounds = selectionBounds3d(player, source);
+                if (bounds == null) {
+                    yield true;
+                }
+                CachedPreview preview = CITY_BUILD_PREVIEWS.get(player.getUuid());
+                if (preview == null) {
+                    error(source, "[Bladelow] no cached preview; preview a plot first");
+                    yield true;
+                }
+                if (!preview.matches(bounds[0], bounds[1])) {
+                    clearCityPreview(player.getUuid());
+                    feedback(source, "[Bladelow] preview-clear");
+                    error(source, "[Bladelow] selection changed; preview the plot again before building");
+                    yield true;
+                }
+                IntentStructurePlanner.GeneratedBuild plan = preview.plan();
+                BladelowLearning.previewFeedbackLogger().recordFeedback(
+                    "preview_commit",
+                    "accepted",
+                    source.getWorld(),
+                    bounds[0],
+                    bounds[1],
+                    plan,
+                    preview.variant()
+                );
+                feedback(source, "[Bladelow] build queued from preview " + plan.blueprint().name());
+                feedback(source, "[Bladelow] preview-clear");
+                clearCityPreview(player.getUuid());
+                PlacementPipeline.queue(source, player, plan.blockStates(), plan.targets(), "autobuild:" + plan.blueprint().name(), false);
+                yield true;
+            }
             case CITY_BUILD_AUTO -> {
                 BlockPos[] bounds = selectionBounds3d(player, source);
                 if (bounds == null) {
                     yield true;
                 }
-                String plotLabel = args.isEmpty() ? "" : args.get(0);
-                List<String> slotOverrides = new ArrayList<>();
-                for (int i = 1; i < Math.min(args.size(), 4); i++) {
-                    String token = args.get(i);
-                    if (!token.equals("-")) {
-                        slotOverrides.add(token);
-                    }
-                }
-                IntentStructurePlanner.GeneratedBuild plan = IntentStructurePlanner.planSelection(
-                    source.getWorld(),
-                    player.getUuid(),
-                    bounds[0],
-                    bounds[1],
-                    plotLabel,
-                    slotOverrides
-                );
+                IntentStructurePlanner.GeneratedBuild plan = generateCityPlan(source, player, bounds, args, 0);
                 if (!plan.ok()) {
                     error(source, "[Bladelow] " + plan.message());
                 } else {
                     feedback(source, "[Bladelow] " + plan.message());
+                    feedback(source, "[Bladelow] preview-clear");
+                    clearCityPreview(player.getUuid());
                     PlacementPipeline.queue(source, player, plan.blockStates(), plan.targets(), "autobuild:" + plan.blueprint().name(), false);
                 }
                 yield true;
@@ -608,6 +708,8 @@ public final class HudActionService {
 
     private static void handleCancel(ServerCommandSource source, ServerPlayerEntity player) {
         boolean canceled = com.bladelow.builder.PlacementJobRunner.cancel(source.getServer(), player.getUuid());
+        clearCityPreview(player.getUuid());
+        feedback(source, "[Bladelow] preview-clear");
         feedback(source, canceled
             ? "[Bladelow] active build canceled."
             : "[Bladelow] no active build to cancel.");
@@ -722,6 +824,75 @@ public final class HudActionService {
         return true;
     }
 
+    private static IntentStructurePlanner.GeneratedBuild generateCityPlan(
+        ServerCommandSource source,
+        ServerPlayerEntity player,
+        BlockPos[] bounds,
+        List<String> args,
+        int variant
+    ) {
+        String plotLabel = args.isEmpty() ? "" : args.get(0);
+        List<String> slotOverrides = new ArrayList<>();
+        for (int i = 1; i < Math.min(args.size(), 4); i++) {
+            String token = args.get(i);
+            if (!token.equals("-")) {
+                slotOverrides.add(token);
+            }
+        }
+        return IntentStructurePlanner.planSelection(
+            source.getWorld(),
+            player.getUuid(),
+            bounds[0],
+            bounds[1],
+            plotLabel,
+            slotOverrides,
+            variant
+        );
+    }
+
+    private static void rememberCityPreview(UUID playerId, BlockPos from, BlockPos to, int variant, IntentStructurePlanner.GeneratedBuild plan) {
+        CITY_BUILD_PREVIEWS.put(playerId, new CachedPreview(
+            Math.min(from.getX(), to.getX()),
+            Math.min(from.getZ(), to.getZ()),
+            Math.max(from.getX(), to.getX()),
+            Math.max(from.getZ(), to.getZ()),
+            variant,
+            plan
+        ));
+    }
+
+    private static void clearCityPreview(UUID playerId) {
+        CITY_BUILD_PREVIEWS.remove(playerId);
+    }
+
+    private static String previewSummary(IntentStructurePlanner.GeneratedBuild plan, int variant) {
+        String label = plan.intent().primaryArchetype().isBlank() ? "house" : plan.intent().primaryArchetype();
+        String palette = plan.intent().paletteProfile().isBlank() ? "auto" : plan.intent().paletteProfile();
+        return "label=" + label
+            + " size=" + plan.blueprint().plotWidth() + "x" + plan.blueprint().plotDepth()
+            + " floors=" + Math.max(1, plan.intent().floors())
+            + " road=" + plan.blueprint().roadSide()
+            + " variant=" + variant
+            + " palette=" + palette;
+    }
+
+    private static String previewMapLine(BlockPos from, BlockPos to, int variant, IntentStructurePlanner.GeneratedBuild plan) {
+        String label = plan.intent().primaryArchetype().isBlank() ? "house" : plan.intent().primaryArchetype();
+        return "preview-map "
+            + "selMinX=" + Math.min(from.getX(), to.getX()) + " "
+            + "selMinZ=" + Math.min(from.getZ(), to.getZ()) + " "
+            + "selMaxX=" + Math.max(from.getX(), to.getX()) + " "
+            + "selMaxZ=" + Math.max(from.getZ(), to.getZ()) + " "
+            + "minX=" + plan.minX() + " "
+            + "minZ=" + plan.minZ() + " "
+            + "maxX=" + plan.maxX() + " "
+            + "maxZ=" + plan.maxZ() + " "
+            + "doorX=" + plan.entranceWorldX() + " "
+            + "doorZ=" + plan.entranceWorldZ() + " "
+            + "variant=" + variant + " "
+            + "label=" + label;
+    }
+
     private static void feedback(ServerCommandSource source, String message) {
         source.sendFeedback(() -> blue(message), false);
     }
@@ -732,5 +903,21 @@ public final class HudActionService {
 
     private static Text blue(String msg) {
         return Text.literal(msg).formatted(Formatting.AQUA);
+    }
+
+    private record CachedPreview(
+        int selMinX,
+        int selMinZ,
+        int selMaxX,
+        int selMaxZ,
+        int variant,
+        IntentStructurePlanner.GeneratedBuild plan
+    ) {
+        private boolean matches(BlockPos from, BlockPos to) {
+            return selMinX == Math.min(from.getX(), to.getX())
+                && selMinZ == Math.min(from.getZ(), to.getZ())
+                && selMaxX == Math.max(from.getX(), to.getX())
+                && selMaxZ == Math.max(from.getZ(), to.getZ());
+        }
     }
 }

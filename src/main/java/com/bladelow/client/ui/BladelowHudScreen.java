@@ -225,6 +225,8 @@ public class BladelowHudScreen extends Screen {
     private ButtonWidget cityPresetButton;
     private ButtonWidget cityAutoZonesButton;
     private ButtonWidget cityAutoBuildButton;
+    private ButtonWidget cityRerollPreviewButton;
+    private ButtonWidget cityRejectPreviewButton;
     private ButtonWidget citySaveStyleButton;
     private ButtonWidget cityPaletteOverrideButton;
     private ButtonWidget cityAutoCityButton;
@@ -584,6 +586,13 @@ public class BladelowHudScreen extends Screen {
             .dimensions(rightX, cityY, rightW, buttonH)
             .build());
         cityY += buttonH + rowGap;
+        this.cityRerollPreviewButton = addDrawableChild(ButtonWidget.builder(Text.literal("Reroll"), b -> runCityRerollPreview())
+            .dimensions(rightX, cityY, cityHalfW, buttonH)
+            .build());
+        this.cityRejectPreviewButton = addDrawableChild(ButtonWidget.builder(Text.literal("Reject"), b -> runCityRejectPreview())
+            .dimensions(rightX + cityHalfW + rowGap, cityY, cityHalfW, buttonH)
+            .build());
+        cityY += buttonH + rowGap;
         this.cityPaletteOverrideButton = addDrawableChild(ButtonWidget.builder(Text.literal("Palette: AUTO"), b -> toggleCityPaletteOverride())
             .dimensions(rightX, cityY, rightW, buttonH)
             .build());
@@ -762,6 +771,8 @@ public class BladelowHudScreen extends Screen {
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float delta) {
         maybeAutofillSlotsFromIntent();
+        refreshCityAutoBuildButtonLabel();
+        refreshPreviewActionButtons();
         drawPanelBackground(context);
         if (showPlanningMap()) {
             drawPlanningMap(context, mouseX, mouseY);
@@ -859,6 +870,7 @@ public class BladelowHudScreen extends Screen {
             drawMapSelectionRect(context, view, markerA, markerB, zoneColor);
         }
         drawSuggestedPlots(context, view);
+        drawGeneratedPreview(context, view);
         if (markerA != null) {
             drawMapMarker(context, view, markerA, 0xFFF5F5F5);
         }
@@ -895,6 +907,13 @@ public class BladelowHudScreen extends Screen {
 
     private String planningMapSubtitle() {
         String brush = districtBrush.isBlank() ? "-" : districtBrush.toUpperCase(Locale.ROOT);
+        BladelowHudTelemetry.PreviewSnapshot preview = matchingPreview();
+        if (preview != null) {
+            int width = Math.abs(preview.maxX() - preview.minX()) + 1;
+            int depth = Math.abs(preview.maxZ() - preview.minZ()) + 1;
+            String variantText = preview.variant() > 0 ? " v" + preview.variant() : "";
+            return "Preview " + preview.label() + variantText + " " + width + "x" + depth + " | Build, reroll, or reject";
+        }
         if (markerA != null && markerB != null) {
             int width = Math.abs(markerA.getX() - markerB.getX()) + 1;
             int depth = Math.abs(markerA.getZ() - markerB.getZ()) + 1;
@@ -1044,7 +1063,35 @@ public class BladelowHudScreen extends Screen {
         int boxY = top + (height - boxH) / 2;
         context.fill(boxX, boxY, boxX + boxW, boxY + boxH, selected ? 0xCC243A2A : 0xB8222A20);
         drawBorder(context, boxX, boxY, boxW, boxH, selected ? 0xFF91F9B0 : 0xFFD7E989);
-        context.drawText(this.textRenderer, Text.literal(label), boxX + sx(3), boxY + sx(2), 0xFFF2F7E7, false);
+            context.drawText(this.textRenderer, Text.literal(label), boxX + sx(3), boxY + sx(2), 0xFFF2F7E7, false);
+    }
+
+    private void drawGeneratedPreview(DrawContext context, MinimapView view) {
+        BladelowHudTelemetry.PreviewSnapshot preview = matchingPreview();
+        if (preview == null) {
+            return;
+        }
+        int left = Math.min(worldToMapX(view, preview.minX()), worldToMapX(view, preview.maxX()));
+        int right = Math.max(worldToMapX(view, preview.minX()), worldToMapX(view, preview.maxX()));
+        int top = Math.min(worldToMapZ(view, preview.minZ()), worldToMapZ(view, preview.maxZ()));
+        int bottom = Math.max(worldToMapZ(view, preview.minZ()), worldToMapZ(view, preview.maxZ()));
+
+        context.fill(left, top, right + 1, bottom + 1, 0x3344B8FF);
+        drawBorder(context, left, top, Math.max(1, right - left + 1), Math.max(1, bottom - top + 1), 0xFF67D6FF);
+
+        int doorX = worldToMapX(view, preview.doorX());
+        int doorY = worldToMapZ(view, preview.doorZ());
+        context.fill(doorX - sx(2), doorY - sx(2), doorX + sx(2), doorY + sx(2), 0xFFFFC86A);
+
+        String label = preview.summary() == null || preview.summary().isBlank()
+            ? "Preview: " + preview.label()
+            : "Preview: " + preview.summary();
+        int boxW = Math.min(view.screenW() - sx(8), this.textRenderer.getWidth(label) + sx(8));
+        int boxX = left + sx(2);
+        int boxY = Math.max(view.screenY() + sx(2), top + sx(2));
+        context.fill(boxX, boxY, boxX + boxW, boxY + this.textRenderer.fontHeight + sx(4), 0xC0182734);
+        drawBorder(context, boxX, boxY, boxW, this.textRenderer.fontHeight + sx(4), 0xFF67D6FF);
+        context.drawText(this.textRenderer, Text.literal(this.textRenderer.trimToWidth(label, boxW - sx(6))), boxX + sx(3), boxY + sx(2), 0xFFE7F8FF, false);
     }
 
     private int shadeColor(int argb, int amount) {
@@ -1595,6 +1642,8 @@ public class BladelowHudScreen extends Screen {
         setVisible(cityTownFillButton, source && cityMode);
         setVisible(cityAutoZonesButton, source && cityMode);
         setVisible(cityAutoBuildButton, source && cityMode);
+        setVisible(cityRerollPreviewButton, source && cityMode);
+        setVisible(cityRejectPreviewButton, source && cityMode);
         setVisible(cityPaletteOverrideButton, source && cityMode);
         setVisible(citySaveStyleButton, source && cityMode);
         setVisible(cityAutoCityButton, source && cityMode);
@@ -1619,6 +1668,7 @@ public class BladelowHudScreen extends Screen {
         updateFlowButtons();
         updateBlockButtons();
         updateSlotButtons();
+        refreshPreviewActionButtons();
     }
 
     private void updateFlowButtons() {
@@ -1630,6 +1680,21 @@ public class BladelowHudScreen extends Screen {
         flowBlocksButton.setMessage(Text.literal(FLOW_BLOCKS.equals(activeFlow) ? blocksLabel + "*" : blocksLabel));
         flowSourceButton.setMessage(Text.literal(FLOW_SOURCE.equals(activeFlow) ? "SOURCE*" : "SOURCE"));
         flowRunButton.setMessage(Text.literal(FLOW_RUN.equals(activeFlow) ? "RUN*" : "RUN"));
+    }
+
+    private void refreshPreviewActionButtons() {
+        boolean citySource = MODE_CITY.equals(activeMode) && FLOW_SOURCE.equals(activeFlow);
+        boolean previewReady = hasMatchingPreview();
+        if (cityRerollPreviewButton != null) {
+            cityRerollPreviewButton.visible = citySource;
+            cityRerollPreviewButton.active = citySource && previewReady;
+            cityRerollPreviewButton.setMessage(Text.literal("Reroll"));
+        }
+        if (cityRejectPreviewButton != null) {
+            cityRejectPreviewButton.visible = citySource;
+            cityRejectPreviewButton.active = citySource && previewReady;
+            cityRejectPreviewButton.setMessage(Text.literal("Reject"));
+        }
     }
 
     private void setVisible(ButtonWidget widget, boolean visible) {
@@ -2167,21 +2232,51 @@ public class BladelowHudScreen extends Screen {
 
     private void runCityAutoBuild() {
         SuggestedPlot plot = preferredSuggestedPlot();
-        if (plot != null) {
+        if (plot != null && !selectionMatchesPlot(plot)) {
             snapToSuggestedPlot(plot);
         } else if (markerA == null || markerB == null) {
             statusText = "Select an area or suggested plot first";
             return;
         }
         String label = plot == null || plot.label() == null || plot.label().isBlank() ? "auto" : plot.label();
-        citySummary = plot == null ? "auto build generating" : "auto build " + plot.label();
+        if (hasMatchingPreview()) {
+            citySummary = "build preview commit";
+            sendAction(HudAction.CITY_BUILD_COMMIT);
+            return;
+        }
+        citySummary = plot == null ? "preview generating" : "preview " + plot.label();
         sendAction(
-            HudAction.CITY_BUILD_AUTO,
+            HudAction.CITY_BUILD_PREVIEW,
             label,
             slotOverrideArg(0),
             slotOverrideArg(1),
             slotOverrideArg(2)
         );
+    }
+
+    private void runCityRerollPreview() {
+        if (!ensureMarkerSelection()) {
+            return;
+        }
+        SuggestedPlot plot = preferredSuggestedPlot();
+        String label = plot == null || plot.label() == null || plot.label().isBlank() ? "auto" : plot.label();
+        citySummary = "preview reroll";
+        sendAction(
+            HudAction.CITY_BUILD_REROLL,
+            label,
+            slotOverrideArg(0),
+            slotOverrideArg(1),
+            slotOverrideArg(2)
+        );
+    }
+
+    private void runCityRejectPreview() {
+        if (!hasMatchingPreview()) {
+            statusText = "No preview to reject";
+            return;
+        }
+        citySummary = "preview rejected";
+        sendAction(HudAction.CITY_BUILD_REJECT);
     }
 
     private void saveStyleExampleArea() {
@@ -2666,6 +2761,39 @@ public class BladelowHudScreen extends Screen {
         return suggestedPlots.get(0);
     }
 
+    private boolean selectionMatchesPlot(SuggestedPlot plot) {
+        if (plot == null || markerA == null || markerB == null) {
+            return false;
+        }
+        int minX = Math.min(markerA.getX(), markerB.getX());
+        int maxX = Math.max(markerA.getX(), markerB.getX());
+        int minZ = Math.min(markerA.getZ(), markerB.getZ());
+        int maxZ = Math.max(markerA.getZ(), markerB.getZ());
+        return minX == plot.minX()
+            && maxX == plot.maxX()
+            && minZ == plot.minZ()
+            && maxZ == plot.maxZ();
+    }
+
+    private BladelowHudTelemetry.PreviewSnapshot matchingPreview() {
+        if (markerA == null || markerB == null) {
+            return null;
+        }
+        BladelowHudTelemetry.PreviewSnapshot preview = BladelowHudTelemetry.latestPreview();
+        if (preview == null) {
+            return null;
+        }
+        int minX = Math.min(markerA.getX(), markerB.getX());
+        int maxX = Math.max(markerA.getX(), markerB.getX());
+        int minZ = Math.min(markerA.getZ(), markerB.getZ());
+        int maxZ = Math.max(markerA.getZ(), markerB.getZ());
+        return preview.matchesSelection(minX, minZ, maxX, maxZ) ? preview : null;
+    }
+
+    private boolean hasMatchingPreview() {
+        return matchingPreview() != null;
+    }
+
     private void snapToSuggestedPlot(SuggestedPlot plot) {
         if (plot == null) {
             return;
@@ -2888,11 +3016,15 @@ public class BladelowHudScreen extends Screen {
         if (cityAutoZonesButton != null) {
             cityAutoZonesButton.setMessage(Text.literal("Auto Zones"));
         }
-        if (cityAutoBuildButton != null) {
-            cityAutoBuildButton.setMessage(Text.literal("Auto Build Here"));
-        }
+        refreshCityAutoBuildButtonLabel();
         if (cityPaletteOverrideButton != null) {
             cityPaletteOverrideButton.setMessage(Text.literal(cityPaletteOverrideEnabled ? "Palette: OVERRIDE" : "Palette: AUTO"));
+        }
+        if (cityRerollPreviewButton != null) {
+            cityRerollPreviewButton.setMessage(Text.literal("Reroll"));
+        }
+        if (cityRejectPreviewButton != null) {
+            cityRejectPreviewButton.setMessage(Text.literal("Reject"));
         }
         if (citySaveStyleButton != null) {
             citySaveStyleButton.setMessage(Text.literal("Save Style Area"));
@@ -2904,6 +3036,13 @@ public class BladelowHudScreen extends Screen {
             cityTownListButton.setMessage(Text.literal("Director Status"));
         }
         updateDistrictBrushButtons();
+    }
+
+    private void refreshCityAutoBuildButtonLabel() {
+        if (cityAutoBuildButton == null) {
+            return;
+        }
+        cityAutoBuildButton.setMessage(Text.literal(hasMatchingPreview() ? "Build Preview" : "Preview Here"));
     }
 
     private void sendAction(HudAction action) {
@@ -2933,6 +3072,22 @@ public class BladelowHudScreen extends Screen {
         return switch (payload.action()) {
             case BLUEPRINT_LOAD -> "Loading blueprint...";
             case BLUEPRINT_BUILD -> "Queueing blueprint...";
+            case CITY_BUILD_PREVIEW -> {
+                citySummary = "preview requested";
+                yield "Generating build preview for the selected plot...";
+            }
+            case CITY_BUILD_REROLL -> {
+                citySummary = "preview rerolled";
+                yield "Generating another preview variant for the selected plot...";
+            }
+            case CITY_BUILD_REJECT -> {
+                citySummary = "preview rejected";
+                yield "Rejecting the cached preview...";
+            }
+            case CITY_BUILD_COMMIT -> {
+                citySummary = "preview committed";
+                yield "Queueing the cached preview build...";
+            }
             case CITY_BUILD_AUTO -> {
                 citySummary = "auto build queued";
                 yield "Generating one building for the selected plot...";

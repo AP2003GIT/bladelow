@@ -22,6 +22,7 @@ public final class BladelowLearning {
     private static final EnvironmentObservationLogger ENVIRONMENT_LOGGER = new EnvironmentObservationLogger();
     private static final BuildIntentExampleLogger BUILD_INTENT_LOGGER = new BuildIntentExampleLogger();
     private static final StyleExampleLogger STYLE_EXAMPLE_LOGGER = new StyleExampleLogger();
+    private static final PreviewFeedbackLogger PREVIEW_FEEDBACK_LOGGER = new PreviewFeedbackLogger();
     private static final StyleReferenceLibrary STYLE_REFERENCES = new StyleReferenceLibrary();
     private static final EnvironmentStyleMemory STYLE_MEMORY = new EnvironmentStyleMemory(STYLE_REFERENCES);
     private static final OfflineTrainingModel OFFLINE_MODEL = new OfflineTrainingModel();
@@ -49,6 +50,10 @@ public final class BladelowLearning {
 
     public static StyleExampleLogger styleExampleLogger() {
         return STYLE_EXAMPLE_LOGGER;
+    }
+
+    public static PreviewFeedbackLogger previewFeedbackLogger() {
+        return PREVIEW_FEEDBACK_LOGGER;
     }
 
     public static StyleReferenceLibrary styleReferences() {
@@ -108,6 +113,7 @@ public final class BladelowLearning {
             + " " + ENVIRONMENT_LOGGER.summary()
             + " " + BUILD_INTENT_LOGGER.summary()
             + " " + STYLE_EXAMPLE_LOGGER.summary()
+            + " " + PREVIEW_FEEDBACK_LOGGER.summary()
             + " " + STYLE_REFERENCES.summary()
             + " " + STYLE_MEMORY.summary()
             + " " + OFFLINE_MODEL.summary()
