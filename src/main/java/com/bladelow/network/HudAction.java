@@ -28,6 +28,7 @@ public enum HudAction {
     BLUEPRINT_BUILD("blueprint_build"),
     TOWN_FILL_SELECTION("town_fill_selection"),
     TOWN_PREVIEW_SELECTION("town_preview_selection"),
+    CITY_BUILD_AUTO("city_build_auto"),
     CITY_AUTOPLAY_START("city_autoplay_start"),
     CITY_AUTOPLAY_STATUS("city_autoplay_status"),
     CITY_AUTOPLAY_STOP("city_autoplay_stop"),

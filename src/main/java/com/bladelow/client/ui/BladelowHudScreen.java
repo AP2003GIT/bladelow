@@ -140,6 +140,7 @@ public class BladelowHudScreen extends Screen {
         private static String districtCounts = "";
         private static String citySummary = "";
         private static String cityPreset = "medieval";
+        private static boolean cityPaletteOverride = false;
     }
 
     private final String profileKey;
@@ -225,6 +226,7 @@ public class BladelowHudScreen extends Screen {
     private ButtonWidget cityAutoZonesButton;
     private ButtonWidget cityAutoBuildButton;
     private ButtonWidget citySaveStyleButton;
+    private ButtonWidget cityPaletteOverrideButton;
     private ButtonWidget cityAutoCityButton;
     private ButtonWidget pagePrevButton;
     private ButtonWidget pageNextButton;
@@ -291,6 +293,7 @@ public class BladelowHudScreen extends Screen {
     private List<SuggestedPlot> suggestedPlots = List.of();
     private int selectedSuggestedPlot = -1;
     private boolean showModelStatusPage;
+    private boolean cityPaletteOverrideEnabled;
     private String lastIntentPaletteKey = "";
     private final String[] lastAutoFilledSlots = new String[SLOT_COUNT];
 
@@ -327,6 +330,7 @@ public class BladelowHudScreen extends Screen {
         restoreDistrictCounts(UiState.districtCounts);
         this.citySummary = UiState.citySummary == null || UiState.citySummary.isBlank() ? "none" : UiState.citySummary;
         this.cityLayoutPreset = normalizeCityPreset(UiState.cityPreset);
+        this.cityPaletteOverrideEnabled = UiState.cityPaletteOverride;
 
         rebuildFilter();
     }
@@ -580,6 +584,10 @@ public class BladelowHudScreen extends Screen {
             .dimensions(rightX, cityY, rightW, buttonH)
             .build());
         cityY += buttonH + rowGap;
+        this.cityPaletteOverrideButton = addDrawableChild(ButtonWidget.builder(Text.literal("Palette: AUTO"), b -> toggleCityPaletteOverride())
+            .dimensions(rightX, cityY, rightW, buttonH)
+            .build());
+        cityY += buttonH + rowGap;
         this.citySaveStyleButton = addDrawableChild(ButtonWidget.builder(Text.literal("Save Style Area"), b -> saveStyleExampleArea())
             .dimensions(rightX, cityY, cityHalfW, buttonH)
             .build());
@@ -692,6 +700,59 @@ public class BladelowHudScreen extends Screen {
         this.planningMapY = searchY;
         this.planningMapW = leftW;
         this.planningMapH = Math.max(sx(180), actionsY - searchY - rowGap);
+    }
+
+    private void setButtonBounds(ButtonWidget button, int x, int y, int width, int height) {
+        if (button == null) {
+            return;
+        }
+        button.setDimensions(width, height);
+        button.setPosition(x, y);
+    }
+
+    private void layoutFlowButtons() {
+        if (flowAreaButton == null || flowBlocksButton == null || flowSourceButton == null || flowRunButton == null) {
+            return;
+        }
+
+        boolean compactCityFlow = MODE_CITY.equals(activeMode) && !cityPaletteOverrideEnabled;
+        int visibleSteps = compactCityFlow ? 3 : 4;
+        int flowGap = rowGap;
+        int flowButtonW = (panelW - sx(16) - flowGap * (visibleSteps - 1)) / visibleSteps;
+        int flowX = panelX + sx(8);
+
+        setButtonBounds(flowAreaButton, flowX, flowY, flowButtonW, buttonH);
+        if (compactCityFlow) {
+            // Keep the hidden palette button off the active strip so the
+            // visible CITY flow reads as a clean 3-step sequence.
+            setButtonBounds(flowBlocksButton, panelX + panelW + sx(12), flowY, flowButtonW, buttonH);
+            setButtonBounds(flowSourceButton, flowX + flowButtonW + flowGap, flowY, flowButtonW, buttonH);
+            setButtonBounds(flowRunButton, flowX + (flowButtonW + flowGap) * 2, flowY, flowButtonW, buttonH);
+            return;
+        }
+
+        setButtonBounds(flowBlocksButton, flowX + flowButtonW + flowGap, flowY, flowButtonW, buttonH);
+        setButtonBounds(flowSourceButton, flowX + (flowButtonW + flowGap) * 2, flowY, flowButtonW, buttonH);
+        setButtonBounds(flowRunButton, flowX + (flowButtonW + flowGap) * 3, flowY, flowButtonW, buttonH);
+    }
+
+    private void layoutStatusDetailButton(boolean source, boolean cityMode, boolean run) {
+        if (statusDetailButton == null) {
+            return;
+        }
+
+        int sideW = (rightW - rowGap) / 2;
+        if (source && cityMode) {
+            // In CITY/SOURCE the right panel is already dense, so park the
+            // model button just above the build controls instead of letting it
+            // overlap the district action rows.
+            setButtonBounds(statusDetailButton, rightX, actionsY - buttonH - rowGap, rightW, buttonH);
+            return;
+        }
+
+        if (run) {
+            setButtonBounds(statusDetailButton, rightX + sideW + rowGap, searchY + (buttonH + rowGap) * 6, sideW, buttonH);
+        }
     }
 
     private int sx(int base) {
@@ -837,7 +898,7 @@ public class BladelowHudScreen extends Screen {
         if (markerA != null && markerB != null) {
             int width = Math.abs(markerA.getX() - markerB.getX()) + 1;
             int depth = Math.abs(markerA.getZ() - markerB.getZ()) + 1;
-            return "Area " + width + "x" + depth + " | Brush " + brush + " | Shift-click a suggested plot to snap selection";
+            return "Area " + width + "x" + depth + " | Brush " + brush + " | Click a suggested plot to snap selection";
         }
         return "Brush " + brush + " | Layout view with roads, water, builds, and terrain";
     }
@@ -1075,7 +1136,9 @@ public class BladelowHudScreen extends Screen {
         int mapX = planningMapX + sx(8);
         int mapY = planningMapY + sx(8);
         int mapW = Math.max(sx(120), planningMapW - sx(16));
-        int mapH = Math.max(sx(120), planningMapH - sx(30));
+        // Reserve enough height for the title, subtitle, and legend so the
+        // map footer stays aligned instead of drifting into the build controls.
+        int mapH = Math.max(sx(120), planningMapH - sx(48));
         return new MinimapView(mapX, mapY, mapW, mapH, centerX - radius, centerX + radius, centerZ - radius, centerZ + radius, selectionBaseY());
     }
 
@@ -1143,7 +1206,7 @@ public class BladelowHudScreen extends Screen {
     private String rightPanelLabel() {
         return switch (activeFlow) {
             case FLOW_AREA -> "AREA SETUP";
-            case FLOW_BLOCKS -> "BLOCK PICKER";
+            case FLOW_BLOCKS -> MODE_CITY.equals(activeMode) ? "PALETTE OVERRIDE" : "BLOCK PICKER";
             case FLOW_SOURCE -> MODE_CITY.equals(activeMode) ? "CITY PLANNER" : "SOURCE";
             case FLOW_RUN -> MODE_CITY.equals(activeMode) ? "CITY RUNNER" : "RUNTIME";
             default -> "SETUP";
@@ -1262,10 +1325,23 @@ public class BladelowHudScreen extends Screen {
     }
 
     private String slotDisplayLabel(int slotIndex, String blockId) {
+        String role = slotRoleName(slotIndex);
         if (blockId == null || blockId.isBlank()) {
-            return "S" + (slotIndex + 1) + ": empty";
+            if (MODE_CITY.equals(activeMode) && !cityPaletteOverrideEnabled) {
+                return role + ": auto";
+            }
+            return role + ": empty";
         }
-        return "S" + (slotIndex + 1) + ": " + shortBlockName(blockId, 8);
+        return role + ": " + shortBlockName(blockId, 8);
+    }
+
+    private String slotRoleName(int slotIndex) {
+        return switch (slotIndex) {
+            case 0 -> "Primary";
+            case 1 -> "Trim";
+            case 2 -> "Roof";
+            default -> "Slot " + (slotIndex + 1);
+        };
     }
 
     private ItemStack stackForBlock(String blockId) {
@@ -1288,7 +1364,7 @@ public class BladelowHudScreen extends Screen {
         int barY = statusY;
         int barW = panelW - sx(16);
         boolean cityStatus = MODE_CITY.equals(activeMode);
-        int barH = cityStatus ? sx(64) : sx(24);
+        int barH = cityStatus ? sx(76) : sx(24);
 
         boolean hasValidation = !validationText.isEmpty();
         boolean isWarning = hasValidation || statusLooksError(statusText);
@@ -1306,7 +1382,7 @@ public class BladelowHudScreen extends Screen {
         context.drawText(this.textRenderer, Text.literal(clippedPrimary), barX + sx(4), barY + sx(3), textColor, false);
         context.drawText(this.textRenderer, Text.literal(clippedSecondary), barX + sx(4), barY + sx(13), 0xFFB7C7DF, false);
         if (cityStatus) {
-            drawIntentCard(context, barX + sx(4), barY + sx(23), barW - sx(8), sx(36));
+            drawIntentCard(context, barX + sx(4), barY + sx(23), barW - sx(8), sx(48));
         }
     }
 
@@ -1341,10 +1417,12 @@ public class BladelowHudScreen extends Screen {
         String intentLine = this.textRenderer.trimToWidth("Intent: " + intentParts[0], width - sx(8));
         String contextLine = this.textRenderer.trimToWidth("Context: " + intentParts[1], width - sx(8));
         String plotLine = this.textRenderer.trimToWidth("Plot: " + selectedPlotSummary(), width - sx(8));
+        String paletteLine = this.textRenderer.trimToWidth("Palette: " + paletteStatusLine(), width - sx(8));
 
         context.drawText(this.textRenderer, Text.literal(intentLine), x + sx(4), y + sx(3), 0xFFE0F2E2, false);
         context.drawText(this.textRenderer, Text.literal(contextLine), x + sx(4), y + sx(13), 0xFFC7DFC9, false);
         context.drawText(this.textRenderer, Text.literal(plotLine), x + sx(4), y + sx(23), 0xFFAED2B4, false);
+        context.drawText(this.textRenderer, Text.literal(paletteLine), x + sx(4), y + sx(33), 0xFF9FD0AB, false);
     }
 
     private String[] intentCardLines() {
@@ -1356,6 +1434,27 @@ public class BladelowHudScreen extends Screen {
         String summary = parts.length > 0 && !parts[0].isBlank() ? parts[0] : latestIntent;
         String context = parts.length > 1 && !parts[1].isBlank() ? parts[1] : "no planner context";
         return new String[]{summary, context};
+    }
+
+    private String paletteStatusLine() {
+        if (!MODE_CITY.equals(activeMode)) {
+            return selectedBlockSpec() == null ? "manual slots empty" : "manual slots set";
+        }
+        if (!cityPaletteOverrideEnabled) {
+            String joined = String.join(" / ",
+                shortBlockName(selectedSlots[0], 10),
+                shortBlockName(selectedSlots[1], 10),
+                shortBlockName(selectedSlots[2], 10)
+            );
+            if ("- / - / -".equals(joined)) {
+                return "auto from intent";
+            }
+            return "auto from intent -> " + joined;
+        }
+        return "override -> "
+            + shortBlockName(selectedSlots[0], 10) + " / "
+            + shortBlockName(selectedSlots[1], 10) + " / "
+            + shortBlockName(selectedSlots[2], 10);
     }
 
     private String selectedPlotSummary() {
@@ -1388,7 +1487,7 @@ public class BladelowHudScreen extends Screen {
     private String modeHintText() {
         return switch (activeFlow) {
             case FLOW_AREA -> MODE_CITY.equals(activeMode) ? "City Area" : "Area";
-            case FLOW_BLOCKS -> MODE_CITY.equals(activeMode) ? "Blocks optional" : "Blocks";
+            case FLOW_BLOCKS -> MODE_CITY.equals(activeMode) ? "Palette Override" : "Blocks";
             case FLOW_SOURCE -> MODE_CITY.equals(activeMode) ? "City Source" : "Source";
             case FLOW_RUN -> MODE_CITY.equals(activeMode) ? "City Run" : "Run";
             default -> "Ready";
@@ -1397,13 +1496,13 @@ public class BladelowHudScreen extends Screen {
 
     private void setFlow(String flow) {
         String normalized = normalizeFlow(flow);
-        if (MODE_CITY.equals(activeMode) && FLOW_BLOCKS.equals(normalized)) {
+        if (MODE_CITY.equals(activeMode) && !cityPaletteOverrideEnabled && FLOW_BLOCKS.equals(normalized)) {
             normalized = FLOW_SOURCE;
         }
         this.activeFlow = normalized;
         updateFlowUi();
         updateRunGuard();
-        statusText = "Step " + flowStep(activeFlow) + "/4: " + activeFlow.toUpperCase(Locale.ROOT);
+        statusText = "Step " + flowStep(activeFlow) + "/" + totalFlowSteps() + ": " + flowTitle(activeFlow);
     }
 
     private String normalizeFlow(String flow) {
@@ -1421,6 +1520,9 @@ public class BladelowHudScreen extends Screen {
     }
 
     private void updateFlowUi() {
+        if (MODE_CITY.equals(activeMode) && !cityPaletteOverrideEnabled && FLOW_BLOCKS.equals(activeFlow)) {
+            activeFlow = FLOW_SOURCE;
+        }
         boolean area = FLOW_AREA.equals(activeFlow);
         boolean blocks = FLOW_BLOCKS.equals(activeFlow);
         boolean source = FLOW_SOURCE.equals(activeFlow);
@@ -1470,6 +1572,10 @@ public class BladelowHudScreen extends Screen {
         setVisible(modeSelectionButton, true);
         setVisible(modeBlueprintButton, true);
         setVisible(modeCityButton, true);
+        setVisible(flowAreaButton, true);
+        setVisible(flowBlocksButton, !cityMode || cityPaletteOverrideEnabled);
+        setVisible(flowSourceButton, true);
+        setVisible(flowRunButton, true);
 
         boolean blueprintSource = source && blueprintMode;
         setVisible(blueprintField, blueprintSource);
@@ -1489,6 +1595,7 @@ public class BladelowHudScreen extends Screen {
         setVisible(cityTownFillButton, source && cityMode);
         setVisible(cityAutoZonesButton, source && cityMode);
         setVisible(cityAutoBuildButton, source && cityMode);
+        setVisible(cityPaletteOverrideButton, source && cityMode);
         setVisible(citySaveStyleButton, source && cityMode);
         setVisible(cityAutoCityButton, source && cityMode);
 
@@ -1507,6 +1614,8 @@ public class BladelowHudScreen extends Screen {
         setVisible(reachButton, false);
         setVisible(reachPlusButton, false);
 
+        layoutFlowButtons();
+        layoutStatusDetailButton(source, cityMode, run);
         updateFlowButtons();
         updateBlockButtons();
         updateSlotButtons();
@@ -1517,7 +1626,8 @@ public class BladelowHudScreen extends Screen {
             return;
         }
         flowAreaButton.setMessage(Text.literal(FLOW_AREA.equals(activeFlow) ? "AREA*" : "AREA"));
-        flowBlocksButton.setMessage(Text.literal(FLOW_BLOCKS.equals(activeFlow) ? "BLOCKS*" : "BLOCKS"));
+        String blocksLabel = MODE_CITY.equals(activeMode) ? "PALETTE" : "BLOCKS";
+        flowBlocksButton.setMessage(Text.literal(FLOW_BLOCKS.equals(activeFlow) ? blocksLabel + "*" : blocksLabel));
         flowSourceButton.setMessage(Text.literal(FLOW_SOURCE.equals(activeFlow) ? "SOURCE*" : "SOURCE"));
         flowRunButton.setMessage(Text.literal(FLOW_RUN.equals(activeFlow) ? "RUN*" : "RUN"));
     }
@@ -1540,7 +1650,7 @@ public class BladelowHudScreen extends Screen {
 
     private void setMode(String mode) {
         this.activeMode = normalizeMode(mode);
-        if (MODE_CITY.equals(this.activeMode) && FLOW_BLOCKS.equals(activeFlow)) {
+        if (MODE_CITY.equals(this.activeMode) && !cityPaletteOverrideEnabled && FLOW_BLOCKS.equals(activeFlow)) {
             this.activeFlow = FLOW_SOURCE;
         }
         updateModeUi();
@@ -1604,7 +1714,7 @@ public class BladelowHudScreen extends Screen {
         activeSlot = clamp(slot, 0, SLOT_COUNT - 1);
         updateSlotButtons();
         updateQuickButtons();
-        statusText = "Active slot " + (activeSlot + 1);
+        statusText = "Editing " + slotRoleName(activeSlot);
     }
 
     private void updateSlotButtons() {
@@ -1622,7 +1732,7 @@ public class BladelowHudScreen extends Screen {
         updateSlotButtons();
         updateQuickButtons();
         updateRunGuard();
-        statusText = "Cleared slot " + (idx + 1);
+        statusText = "Cleared " + slotRoleName(idx);
     }
 
     private void assignFavorite(int idx) {
@@ -1657,7 +1767,7 @@ public class BladelowHudScreen extends Screen {
         updateSlotButtons();
         updateQuickButtons();
         updateRunGuard();
-        statusText = "S" + (assigned + 1) + " <- " + shortBlockName(blockId, 16);
+        statusText = slotRoleName(assigned) + " <- " + shortBlockName(blockId, 16);
     }
 
     private void maybeAutofillSlotsFromIntent() {
@@ -1705,7 +1815,7 @@ public class BladelowHudScreen extends Screen {
         updateSlotButtons();
         updateQuickButtons();
         updateRunGuard();
-        statusText = "Auto-filled slots from inferred intent";
+        statusText = "Auto palette from inferred intent";
     }
 
     private IntentPalette intentPaletteFromTelemetry() {
@@ -1908,6 +2018,9 @@ public class BladelowHudScreen extends Screen {
     }
 
     private String shortBlockName(String blockId, int maxLen) {
+        if (blockId == null || blockId.isBlank()) {
+            return "-";
+        }
         String name = blockId.startsWith("minecraft:") ? blockId.substring("minecraft:".length()) : blockId;
         return name.length() > maxLen ? name.substring(0, maxLen) : name;
     }
@@ -2060,8 +2173,15 @@ public class BladelowHudScreen extends Screen {
             statusText = "Select an area or suggested plot first";
             return;
         }
-        citySummary = plot == null ? "auto build queued" : "auto build " + plot.label();
-        runCityBuild();
+        String label = plot == null || plot.label() == null || plot.label().isBlank() ? "auto" : plot.label();
+        citySummary = plot == null ? "auto build generating" : "auto build " + plot.label();
+        sendAction(
+            HudAction.CITY_BUILD_AUTO,
+            label,
+            slotOverrideArg(0),
+            slotOverrideArg(1),
+            slotOverrideArg(2)
+        );
     }
 
     private void saveStyleExampleArea() {
@@ -2086,6 +2206,33 @@ public class BladelowHudScreen extends Screen {
             return palette.archetype();
         }
         return MODE_CITY.equals(activeMode) ? "city" : "example";
+    }
+
+    private String slotOverrideArg(int index) {
+        if (MODE_CITY.equals(activeMode) && !cityPaletteOverrideEnabled) {
+            return "-";
+        }
+        if (index < 0 || index >= selectedSlots.length) {
+            return "-";
+        }
+        String slot = selectedSlots[index];
+        return slot == null || slot.isBlank() ? "-" : slot;
+    }
+
+    private void toggleCityPaletteOverride() {
+        cityPaletteOverrideEnabled = !cityPaletteOverrideEnabled;
+        if (!cityPaletteOverrideEnabled && MODE_CITY.equals(activeMode) && FLOW_BLOCKS.equals(activeFlow)) {
+            activeFlow = FLOW_SOURCE;
+        }
+        if (!cityPaletteOverrideEnabled) {
+            maybeAutofillSlotsFromIntent();
+        }
+        updateFlowUi();
+        refreshButtonLabels();
+        updateRunGuard();
+        statusText = cityPaletteOverrideEnabled
+            ? "Palette override enabled"
+            : "Palette override disabled; using inferred intent palette";
     }
 
     private void toggleModelStatusPage() {
@@ -2744,6 +2891,9 @@ public class BladelowHudScreen extends Screen {
         if (cityAutoBuildButton != null) {
             cityAutoBuildButton.setMessage(Text.literal("Auto Build Here"));
         }
+        if (cityPaletteOverrideButton != null) {
+            cityPaletteOverrideButton.setMessage(Text.literal(cityPaletteOverrideEnabled ? "Palette: OVERRIDE" : "Palette: AUTO"));
+        }
         if (citySaveStyleButton != null) {
             citySaveStyleButton.setMessage(Text.literal("Save Style Area"));
         }
@@ -2783,6 +2933,10 @@ public class BladelowHudScreen extends Screen {
         return switch (payload.action()) {
             case BLUEPRINT_LOAD -> "Loading blueprint...";
             case BLUEPRINT_BUILD -> "Queueing blueprint...";
+            case CITY_BUILD_AUTO -> {
+                citySummary = "auto build queued";
+                yield "Generating one building for the selected plot...";
+            }
             case CITY_AUTOPLAY_START -> {
                     citySummary = "director queued";
                 yield "Starting city director autoplay...";
@@ -2889,19 +3043,39 @@ public class BladelowHudScreen extends Screen {
     }
 
     private int flowStep(String flow) {
+        boolean compactCityFlow = MODE_CITY.equals(activeMode) && !cityPaletteOverrideEnabled;
         return switch (normalizeFlow(flow)) {
             case FLOW_AREA -> 1;
             case FLOW_BLOCKS -> 2;
-            case FLOW_SOURCE -> 3;
-            case FLOW_RUN -> 4;
+            case FLOW_SOURCE -> compactCityFlow ? 2 : 3;
+            case FLOW_RUN -> compactCityFlow ? 3 : 4;
             default -> 1;
+        };
+    }
+
+    private int totalFlowSteps() {
+        return MODE_CITY.equals(activeMode) && !cityPaletteOverrideEnabled ? 3 : 4;
+    }
+
+    private String flowTitle(String flow) {
+        return switch (normalizeFlow(flow)) {
+            case FLOW_AREA -> "AREA";
+            case FLOW_BLOCKS -> MODE_CITY.equals(activeMode) ? "PALETTE" : "BLOCKS";
+            case FLOW_SOURCE -> "SOURCE";
+            case FLOW_RUN -> "RUN";
+            default -> "AREA";
         };
     }
 
     private String flowProgressText() {
         String area = (markerA != null && markerB != null) ? "A:OK" : "A:--";
-        boolean blocksReady = MODE_CITY.equals(activeMode) || selectedBlockSpec() != null;
-        String blocks = blocksReady ? "B:OK" : "B:--";
+        String blocks;
+        if (MODE_CITY.equals(activeMode) && !cityPaletteOverrideEnabled) {
+            blocks = "P:AUTO";
+        } else {
+            boolean blocksReady = MODE_CITY.equals(activeMode) || selectedBlockSpec() != null;
+            blocks = blocksReady ? "P:OK" : "P:--";
+        }
         boolean sourceReady = !MODE_BLUEPRINT.equals(activeMode)
             || (blueprintField != null && !blueprintField.getText().trim().isEmpty());
         String source = sourceReady ? "S:OK" : "S:--";
@@ -3199,6 +3373,7 @@ public class BladelowHudScreen extends Screen {
         UiState.districtCounts = readProfileValue(profile, "districtCounts", "");
         UiState.citySummary = readProfileValue(profile, "citySummary", "none");
         UiState.cityPreset = readProfileValue(profile, "cityPreset", "medieval");
+        UiState.cityPaletteOverride = readProfileBoolean(profile, "cityPaletteOverride", false);
     }
 
     private void saveUiState() {
@@ -3248,6 +3423,7 @@ public class BladelowHudScreen extends Screen {
         UiState.districtCounts = encodeDistrictCounts();
         UiState.citySummary = citySummary == null ? "none" : citySummary;
         UiState.cityPreset = normalizeCityPreset(cityLayoutPreset);
+        UiState.cityPaletteOverride = cityPaletteOverrideEnabled;
 
         writeProfileValue(profileKey, "mode", UiState.mode);
         writeProfileValue(profileKey, "flow", UiState.flow);
@@ -3281,6 +3457,7 @@ public class BladelowHudScreen extends Screen {
         writeProfileValue(profileKey, "districtCounts", UiState.districtCounts);
         writeProfileValue(profileKey, "citySummary", UiState.citySummary);
         writeProfileValue(profileKey, "cityPreset", UiState.cityPreset);
+        writeProfileValue(profileKey, "cityPaletteOverride", Boolean.toString(UiState.cityPaletteOverride));
 
         flushHudStore();
     }

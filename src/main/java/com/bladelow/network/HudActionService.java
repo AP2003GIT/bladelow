@@ -7,6 +7,7 @@ import com.bladelow.builder.BuildSiteScan;
 import com.bladelow.builder.BuildProfileStore;
 import com.bladelow.builder.BuildRuntimeSettings;
 import com.bladelow.builder.BlueprintLibrary;
+import com.bladelow.builder.IntentStructurePlanner;
 import com.bladelow.builder.SelectionState;
 import com.bladelow.builder.TownAutoLayoutPlanner;
 import com.bladelow.builder.TownDistrictType;
@@ -78,7 +79,7 @@ public final class HudActionService {
                 case ZONE_SET, ZONE_LIST, ZONE_CLEAR, ZONE_AUTO_LAYOUT ->
                     handleZone(source, player, payload.action(), args);
                 case BLUEPRINT_LOAD, BLUEPRINT_BUILD, TOWN_FILL_SELECTION, TOWN_PREVIEW_SELECTION,
-                     CITY_AUTOPLAY_START, CITY_AUTOPLAY_STATUS, CITY_AUTOPLAY_STOP,
+                     CITY_BUILD_AUTO, CITY_AUTOPLAY_START, CITY_AUTOPLAY_STATUS, CITY_AUTOPLAY_STOP,
                      CITY_AUTOPLAY_CONTINUE, CITY_AUTOPLAY_CANCEL ->
                     handleBlueprint(source, player, payload.action(), args);
                 case MOVE_SMART_ENABLE, MOVE_SMART_DISABLE, MOVE_SET_MODE, MOVE_SET_REACH ->
@@ -255,6 +256,35 @@ public final class HudActionService {
                 } else {
                     feedback(source, "[Bladelow] townpreview area from=" + bounds[0].toShortString() + " to=" + bounds[1].toShortString());
                     PlacementPipeline.queue(source, player, plan.blockStates(), plan.targets(), "blueprint:" + plan.message(), true);
+                }
+                yield true;
+            }
+            case CITY_BUILD_AUTO -> {
+                BlockPos[] bounds = selectionBounds3d(player, source);
+                if (bounds == null) {
+                    yield true;
+                }
+                String plotLabel = args.isEmpty() ? "" : args.get(0);
+                List<String> slotOverrides = new ArrayList<>();
+                for (int i = 1; i < Math.min(args.size(), 4); i++) {
+                    String token = args.get(i);
+                    if (!token.equals("-")) {
+                        slotOverrides.add(token);
+                    }
+                }
+                IntentStructurePlanner.GeneratedBuild plan = IntentStructurePlanner.planSelection(
+                    source.getWorld(),
+                    player.getUuid(),
+                    bounds[0],
+                    bounds[1],
+                    plotLabel,
+                    slotOverrides
+                );
+                if (!plan.ok()) {
+                    error(source, "[Bladelow] " + plan.message());
+                } else {
+                    feedback(source, "[Bladelow] " + plan.message());
+                    PlacementPipeline.queue(source, player, plan.blockStates(), plan.targets(), "autobuild:" + plan.blueprint().name(), false);
                 }
                 yield true;
             }
