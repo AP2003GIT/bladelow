@@ -12,6 +12,7 @@ import argparse
 import collections
 import json
 import math
+import sys
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -42,15 +43,19 @@ def read_jsonl(path: Path) -> List[dict]:
     if not path.exists():
         return []
     rows: List[dict] = []
+    skipped = 0
     with path.open("r", encoding="utf-8") as handle:
-        for raw in handle:
+        for line_num, raw in enumerate(handle, start=1):
             raw = raw.strip()
             if not raw:
                 continue
             try:
                 rows.append(json.loads(raw))
-            except json.JSONDecodeError:
-                continue
+            except json.JSONDecodeError as exc:
+                skipped += 1
+                print(f"  warning: {path.name}:{line_num} skipped — {exc}", file=sys.stderr)
+    if skipped:
+        print(f"  warning: {path.name} skipped {skipped} malformed line(s) out of {len(rows) + skipped} total", file=sys.stderr)
     return rows
 
 

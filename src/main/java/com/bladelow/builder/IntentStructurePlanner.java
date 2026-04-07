@@ -545,12 +545,16 @@ public final class IntentStructurePlanner {
         int west = 0;
         int east = 0;
         for (int x = minX; x <= maxX; x++) {
-            north += roadLike(world, x, baseY, minZ - 1) ? 1 : 0;
-            south += roadLike(world, x, baseY, maxZ + 1) ? 1 : 0;
+            int ny = world.getTopY(Heightmap.Type.MOTION_BLOCKING_NO_LEAVES, x, minZ - 1) - 1;
+            int sy = world.getTopY(Heightmap.Type.MOTION_BLOCKING_NO_LEAVES, x, maxZ + 1) - 1;
+            north += roadLike(world, x, ny, minZ - 1) ? 1 : 0;
+            south += roadLike(world, x, sy, maxZ + 1) ? 1 : 0;
         }
         for (int z = minZ; z <= maxZ; z++) {
-            west += roadLike(world, minX - 1, baseY, z) ? 1 : 0;
-            east += roadLike(world, maxX + 1, baseY, z) ? 1 : 0;
+            int wy = world.getTopY(Heightmap.Type.MOTION_BLOCKING_NO_LEAVES, minX - 1, z) - 1;
+            int ey = world.getTopY(Heightmap.Type.MOTION_BLOCKING_NO_LEAVES, maxX + 1, z) - 1;
+            west += roadLike(world, minX - 1, wy, z) ? 1 : 0;
+            east += roadLike(world, maxX + 1, ey, z) ? 1 : 0;
         }
         int best = Math.max(Math.max(north, south), Math.max(west, east));
         if (best <= 0) {

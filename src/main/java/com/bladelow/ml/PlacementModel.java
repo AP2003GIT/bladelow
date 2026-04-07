@@ -15,6 +15,7 @@ public final class PlacementModel {
     private static final double DEFAULT_DISTANCE_WEIGHT = -0.30;
     private static final double DEFAULT_THRESHOLD = 0.10;
     private static final double DEFAULT_LEARNING_RATE = 0.05;
+    private static final double WEIGHT_CLAMP = 5.0;
 
     private double biasWeight = DEFAULT_BIAS_WEIGHT;
     private double replaceableWeight = DEFAULT_REPLACEABLE_WEIGHT;
@@ -47,10 +48,10 @@ public final class PlacementModel {
             return;
         }
 
-        biasWeight += learningRate * error * f.bias();
-        replaceableWeight += learningRate * error * f.replaceable();
-        supportWeight += learningRate * error * f.support();
-        distanceWeight += learningRate * error * f.distance();
+        biasWeight = clamp(biasWeight + learningRate * error * f.bias(), -WEIGHT_CLAMP, WEIGHT_CLAMP);
+        replaceableWeight = clamp(replaceableWeight + learningRate * error * f.replaceable(), -WEIGHT_CLAMP, WEIGHT_CLAMP);
+        supportWeight = clamp(supportWeight + learningRate * error * f.support(), -WEIGHT_CLAMP, WEIGHT_CLAMP);
+        distanceWeight = clamp(distanceWeight + learningRate * error * f.distance(), -WEIGHT_CLAMP, WEIGHT_CLAMP);
         updates++;
     }
 
@@ -82,10 +83,10 @@ public final class PlacementModel {
     }
 
     public synchronized void fromProperties(Properties p) {
-        biasWeight = parseDouble(p, "biasWeight", DEFAULT_BIAS_WEIGHT);
-        replaceableWeight = parseDouble(p, "replaceableWeight", DEFAULT_REPLACEABLE_WEIGHT);
-        supportWeight = parseDouble(p, "supportWeight", DEFAULT_SUPPORT_WEIGHT);
-        distanceWeight = parseDouble(p, "distanceWeight", DEFAULT_DISTANCE_WEIGHT);
+        biasWeight = clamp(parseDouble(p, "biasWeight", DEFAULT_BIAS_WEIGHT), -WEIGHT_CLAMP, WEIGHT_CLAMP);
+        replaceableWeight = clamp(parseDouble(p, "replaceableWeight", DEFAULT_REPLACEABLE_WEIGHT), -WEIGHT_CLAMP, WEIGHT_CLAMP);
+        supportWeight = clamp(parseDouble(p, "supportWeight", DEFAULT_SUPPORT_WEIGHT), -WEIGHT_CLAMP, WEIGHT_CLAMP);
+        distanceWeight = clamp(parseDouble(p, "distanceWeight", DEFAULT_DISTANCE_WEIGHT), -WEIGHT_CLAMP, WEIGHT_CLAMP);
         threshold = parseDouble(p, "threshold", DEFAULT_THRESHOLD);
         learningRate = parseDouble(p, "learningRate", DEFAULT_LEARNING_RATE);
         updates = parseLong(p, "updates", 0L);
@@ -114,6 +115,10 @@ public final class PlacementModel {
         } catch (NumberFormatException ex) {
             return fallback;
         }
+    }
+
+    private static double clamp(double value, double min, double max) {
+        return Math.max(min, Math.min(max, value));
     }
 
     private static long parseLong(Properties p, String key, long fallback) {

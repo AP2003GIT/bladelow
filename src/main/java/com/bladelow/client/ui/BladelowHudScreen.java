@@ -677,10 +677,10 @@ public class BladelowHudScreen extends Screen {
         int desiredPanelH = sx(PANEL_BASE_HEIGHT);
         int maxPanelW = Math.max(sx(PANEL_MIN_WIDTH), this.width - sx(8));
         int maxPanelH = Math.max(sx(PANEL_MIN_HEIGHT), this.height - sx(8));
-        this.panelW = Math.max(sx(PANEL_MIN_WIDTH), Math.min(desiredPanelW, maxPanelW));
-        this.panelH = Math.max(sx(PANEL_MIN_HEIGHT), Math.min(desiredPanelH, maxPanelH));
-        this.panelX = Math.max(4, this.width / 2 - panelW / 2);
-        this.panelY = Math.max(4, this.height / 2 - panelH / 2);
+        this.panelW = Math.min(this.width - 8, Math.max(sx(PANEL_MIN_WIDTH), Math.min(desiredPanelW, maxPanelW)));
+        this.panelH = Math.min(this.height - 8, Math.max(sx(PANEL_MIN_HEIGHT), Math.min(desiredPanelH, maxPanelH)));
+        this.panelX = Math.max(0, Math.min(this.width - panelW, this.width / 2 - panelW / 2));
+        this.panelY = Math.max(0, Math.min(this.height - panelH, this.height / 2 - panelH / 2));
 
         this.rowGap = sx(8);
         this.buttonH = sx(24);
