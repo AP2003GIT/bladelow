@@ -59,6 +59,7 @@ public final class CityAutoplayDirector {
     private static final Path SESSION_PATH = Path.of("config", "bladelow", "city-director.properties");
 
     private static volatile boolean dirty;
+    private static volatile String lastSaveError = "";
 
     private CityAutoplayDirector() {
     }
@@ -211,7 +212,8 @@ public final class CityAutoplayDirector {
             + " skipped=" + session.skippedDistricts
             + " failed=" + session.failedDistricts
             + " age=" + runtimeAge
-            + " last=\"" + session.lastSummary + "\"";
+            + " last=\"" + session.lastSummary + "\""
+            + (lastSaveError.isBlank() ? "" : " saveError=\"" + lastSaveError + "\"");
     }
 
     public static String stop(MinecraftServer server, UUID playerId) {
@@ -421,8 +423,9 @@ public final class CityAutoplayDirector {
                 props.store(out, "Bladelow city autoplay sessions");
             }
             dirty = false;
-        } catch (IOException ignored) {
-            // Keep running even if persistence fails.
+            lastSaveError = "";
+        } catch (IOException ex) {
+            lastSaveError = ex.getMessage();
         }
     }
 

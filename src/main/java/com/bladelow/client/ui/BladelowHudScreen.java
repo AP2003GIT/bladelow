@@ -1063,7 +1063,7 @@ public class BladelowHudScreen extends Screen {
         int boxY = top + (height - boxH) / 2;
         context.fill(boxX, boxY, boxX + boxW, boxY + boxH, selected ? 0xCC243A2A : 0xB8222A20);
         drawBorder(context, boxX, boxY, boxW, boxH, selected ? 0xFF91F9B0 : 0xFFD7E989);
-            context.drawText(this.textRenderer, Text.literal(label), boxX + sx(3), boxY + sx(2), 0xFFF2F7E7, false);
+        context.drawText(this.textRenderer, Text.literal(label), boxX + sx(3), boxY + sx(2), 0xFFF2F7E7, false);
     }
 
     private void drawGeneratedPreview(DrawContext context, MinimapView view) {
@@ -1201,7 +1201,7 @@ public class BladelowHudScreen extends Screen {
     }
 
     private boolean isInside(double mouseX, double mouseY, int x, int y, int width, int height) {
-        return mouseX >= x && mouseX <= x + width && mouseY >= y && mouseY <= y + height;
+        return mouseX >= x && mouseX < x + width && mouseY >= y && mouseY < y + height;
     }
 
     private boolean isShiftPressed() {

@@ -97,8 +97,8 @@ public final class OfflineTrainingModel {
                 return;
             }
             fingerprint = currentFingerprint;
-            cache = loadModel();
             lastError = "";
+            cache = loadModel();
         } catch (IOException ex) {
             lastError = ex.getMessage();
         }
