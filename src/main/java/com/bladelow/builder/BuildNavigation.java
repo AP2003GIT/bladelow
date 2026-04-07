@@ -50,6 +50,16 @@ public final class BuildNavigation {
         PATH_PLANS.remove(playerId);
     }
 
+    public static void clearPlayerState(UUID playerId) {
+        if (playerId == null) {
+            return;
+        }
+        TEMP_BLOCKED.remove(playerId);
+        PATH_PLANS.remove(playerId);
+        BLACKLIST_HITS.remove(playerId);
+        TRACE_NEXT_MSG_AT.remove(playerId);
+    }
+
     public static void noteExternalFailure(UUID playerId, BlockPos pos, String reason, boolean hard) {
         if (playerId == null || pos == null) {
             return;

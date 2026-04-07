@@ -134,8 +134,7 @@ public final class PlacementJobRunner {
         STUCK.remove(playerId);
         WATCHDOG.remove(playerId);
         NODE_GUARD.remove(playerId);
-        BuildNavigation.invalidateCachedPath(playerId);
-        BuildNavigation.consumeBlacklistHits(playerId);
+        BuildNavigation.clearPlayerState(playerId);
         boolean active = activeJob != null;
         boolean pending = pendingJob != null;
         boolean changed = active || pending;
@@ -1423,6 +1422,7 @@ public final class PlacementJobRunner {
     private static void finishJob(ServerPlayerEntity player, PlacementJob job) {
         player.sendMessage(blueText(job.completionSummary()), false);
         rememberSnapshot(job.playerId(), "completed", job, detailSummary("completed", job));
+        BuildNavigation.clearPlayerState(job.playerId());
         String saveStatus = BladelowLearning.save();
         player.sendMessage(blueText("[Bladelow] model " + saveStatus), false);
 

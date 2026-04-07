@@ -850,7 +850,7 @@ public final class IntentStructurePlanner {
         }
 
         public int minX() {
-            return blueprint == null ? originX : originX;
+            return originX;
         }
 
         public int maxX() {
@@ -858,7 +858,7 @@ public final class IntentStructurePlanner {
         }
 
         public int minZ() {
-            return blueprint == null ? originZ : originZ;
+            return originZ;
         }
 
         public int maxZ() {

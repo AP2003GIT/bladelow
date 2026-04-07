@@ -105,9 +105,7 @@ public final class PlacementPipeline {
                                                   String tag) {
         if (states == null || targets == null
                 || states.size() != targets.size() || targets.isEmpty()) {
-            return new ExecutionPlan(
-                states == null ? List.of() : states,
-                targets == null ? List.of() : targets, 0, false);
+            return new ExecutionPlan(List.of(), List.of(), 0, false);
         }
         if (targets.size() == 1) {
             return new ExecutionPlan(states, targets, 0, false);

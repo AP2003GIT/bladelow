@@ -22,8 +22,13 @@ import java.util.UUID;
 public final class PlacementCheckpointStore {
     private static final int CHECKPOINT_VERSION = 1;
     private static final Path CHECKPOINT_PATH = Path.of("config", "bladelow", "jobs-checkpoint.properties");
+    private static volatile String lastSaveError = "";
 
     private PlacementCheckpointStore() {
+    }
+
+    public static String lastSaveError() {
+        return lastSaveError;
     }
 
     /**
@@ -60,8 +65,9 @@ public final class PlacementCheckpointStore {
             } catch (IOException ex) {
                 Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
             }
-        } catch (IOException ignored) {
-            // Ignore checkpoint write failures.
+            lastSaveError = "";
+        } catch (IOException ex) {
+            lastSaveError = ex.getMessage();
         }
     }
 
