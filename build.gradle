@@ -53,3 +53,30 @@ publishing {
         }
     }
 }
+
+// Auto-deploy to Lunar Client mods folder after build
+tasks.register('deployToLunar', Copy) {
+    dependsOn 'remapJar'
+    group = 'bladelow'
+    description = 'Copy the built mod jar to Lunar Client mods folder'
+
+    def lunarBase = file("${System.getProperty('user.home')}/.lunarclient/profiles/vanilla/1.21/mods/fabric-1.21.11")
+    from(tasks.remapJar.archiveFile)
+    into(lunarBase)
+
+    doFirst {
+        lunarBase.mkdirs()
+        // Remove old versions before copying the new one
+        lunarBase.listFiles()?.findAll { it.name.startsWith('minecraft-bladelow-') && it.name.endsWith('.jar') }?.each { it.delete() }
+    }
+
+    doLast {
+        println "Deployed ${tasks.remapJar.archiveFile.get().asFile.name} to ${lunarBase}"
+        println "Restart Lunar Client to load the update."
+    }
+}
+
+// Run deployToLunar automatically after every build
+tasks.named('build') {
+    finalizedBy 'deployToLunar'
+}
