@@ -21,7 +21,7 @@ import java.util.concurrent.ConcurrentMap;
 /**
  * Manages phased execution of a build plan.
  *
- * After /bladeauto confirm, the build is split into phases (FOUNDATION →
+ * After the player confirms a proposal, the build is split into phases (FOUNDATION →
  * WALLS → ROOF → DETAILS). Each phase is submitted as a normal PlacementJob.
  * When a phase completes, PhasedBuildPlan automatically queues the next one
  * and notifies the player.

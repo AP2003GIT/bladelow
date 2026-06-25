@@ -120,7 +120,7 @@ public final class PlacementJobRunner {
         saveCheckpoint(server);
         ServerPlayerEntity player = server.getPlayerManager().getPlayer(job.playerId());
         if (player != null) {
-            player.sendMessage(blueText("[Bladelow] preview ready. Use /bladeconfirm to start or /bladecancel to discard."), false);
+            player.sendMessage(blueText("[Bladelow] preview ready. Use HUD Resume to start or Stop Build to discard."), false);
             preview(job, server, player);
         }
     }

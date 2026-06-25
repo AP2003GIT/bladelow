@@ -84,11 +84,11 @@ public final class BlueprintLibrary {
     public static synchronized BuildPlan resolveSelected(UUID playerId, BlockPos start) {
         String key = SELECTED_BY_PLAYER.get(playerId);
         if (key == null) {
-            return BuildPlan.error("no selected blueprint; use /bladeblueprint load <name>");
+            return BuildPlan.error("no selected blueprint; load or capture one from the HUD");
         }
         BlueprintTemplate template = TEMPLATES.get(key);
         if (template == null) {
-            return BuildPlan.error("selected blueprint not loaded; run /bladeblueprint reload");
+            return BuildPlan.error("selected blueprint not loaded; reload or capture it from the HUD");
         }
         return resolveTemplate(template, start);
     }

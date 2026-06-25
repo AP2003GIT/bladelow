@@ -30,7 +30,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *   4. Scores the plan using PlacementModel
  *   5. Produces a Proposal the player can confirm or skip
  *
- * Nothing is placed until the player runs /bladeauto confirm.
+ * Nothing is placed until the player confirms the pending plan through the HUD.
  * On confirm: the proposal is handed to PlacementJobRunner as a normal job.
  * On skip:    the site is blacklisted for this session and a new scan runs.
  * On cancel:  the goal is returned to the front of the queue.
@@ -64,7 +64,7 @@ public final class AutoPlanner {
                 "[Bladelow] AI proposes: %s at (%d, %d, %d)\n" +
                 "  site score=%.2f  model confidence=%.2f  materials=%.0f%%\n" +
                 "  %s\n" +
-                "  Run /bladeauto confirm  or  /bladeauto skip",
+                "  Confirm from the HUD, or skip this proposal and plan again",
                 blueprintName,
                 site.getX(), groundY, site.getZ(),
                 siteScore, modelScore, materialCoverage * 100.0,
@@ -124,7 +124,7 @@ public final class AutoPlanner {
         BuildGoalQueue.Goal goal = BuildGoalQueue.peek(playerId);
         if (goal == null) {
             return PlanOutcome.fail(PlanResult.NO_GOALS,
-                "[Bladelow] No build goals. Add one with /bladeauto add <blueprint> <count>");
+                "[Bladelow] No build goals queued in the autonomous planner.");
         }
 
         // 2. Resolve blueprint info
@@ -132,7 +132,7 @@ public final class AutoPlanner {
         if (info == null) {
             return PlanOutcome.fail(PlanResult.NO_BLUEPRINT,
                 "[Bladelow] Blueprint not found: " + goal.blueprintName() +
-                ". Run /bladeblueprint reload if you just added it.");
+                ". Reload or recapture the blueprint from the HUD if you just added it.");
         }
 
         // 3. Scan for sites
@@ -188,7 +188,7 @@ public final class AutoPlanner {
         UUID playerId = player.getUuid();
         Proposal proposal = PENDING_PROPOSALS.remove(playerId);
         if (proposal == null) {
-            return "[Bladelow] No pending proposal. Run /bladeauto plan first.";
+            return "[Bladelow] No pending proposal. Ask the HUD planner for a proposal first.";
         }
 
         // Consume one from the goal queue
@@ -206,7 +206,7 @@ public final class AutoPlanner {
 
     /**
      * Skip: train model negatively, discard proposal, don't consume the goal.
-     * The goal stays in the queue; next /bladeauto plan will find a different site.
+     * The goal stays in the queue; the next planner pass will find a different site.
      */
     public static String skip(ServerPlayerEntity player) {
         UUID playerId = player.getUuid();
@@ -215,7 +215,7 @@ public final class AutoPlanner {
             return "[Bladelow] No pending proposal to skip.";
         }
         trainModel(proposal, false);
-        return "[Bladelow] Skipped. Run /bladeauto plan to find a different site for: "
+        return "[Bladelow] Skipped. Plan again to find a different site for: "
             + proposal.blueprintName();
     }
 

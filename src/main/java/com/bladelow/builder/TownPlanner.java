@@ -111,7 +111,7 @@ public final class TownPlanner {
             .sorted(Comparator.comparingInt(TownBlueprint::priority).reversed().thenComparing(TownBlueprint::name))
             .toList();
         if (usable.isEmpty()) {
-            return TownPlan.error("no town blueprints loaded; run /bladeblueprint reload");
+            return TownPlan.error("no town blueprints loaded; capture or load blueprints from the HUD");
         }
 
         TownArea area = TownArea.analyze(world, from, to, zones);
