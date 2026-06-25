@@ -845,7 +845,7 @@ public final class IntentStructurePlanner {
             return new GeneratedBuild(true, message, intent, context, blueprint, originX, originY, originZ, List.copyOf(blockStates), List.copyOf(targets));
         }
 
-        private static GeneratedBuild error(String message) {
+        public static GeneratedBuild error(String message) {
             return new GeneratedBuild(false, message, BuildIntent.NONE, null, null, 0, 0, 0, List.of(), List.of());
         }
 

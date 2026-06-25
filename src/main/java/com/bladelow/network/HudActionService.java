@@ -858,21 +858,12 @@ public final class HudActionService {
         List<String> args,
         int variant
     ) {
-        String plotLabel = args.isEmpty() ? "" : args.get(0);
-        List<String> slotOverrides = new ArrayList<>();
-        for (int i = 1; i < Math.min(args.size(), 4); i++) {
-            String token = args.get(i);
-            if (!token.equals("-")) {
-                slotOverrides.add(token);
-            }
-        }
-        return IntentStructurePlanner.planSelection(
+        return AutonomousBuildService.generateCityStructure(
             source.getWorld(),
-            player.getUuid(),
+            player,
             bounds[0],
             bounds[1],
-            plotLabel,
-            slotOverrides,
+            args,
             variant
         );
     }

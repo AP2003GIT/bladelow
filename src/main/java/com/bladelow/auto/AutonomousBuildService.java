@@ -1,6 +1,7 @@
 package com.bladelow.auto;
 
 import com.bladelow.builder.BlueprintLibrary;
+import com.bladelow.builder.IntentStructurePlanner;
 import com.bladelow.builder.SelectionState;
 import com.bladelow.builder.TownZoneStore;
 import com.bladelow.builder.WorldContextMemoryStore;
@@ -10,6 +11,7 @@ import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.util.math.BlockPos;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -100,6 +102,38 @@ public final class AutonomousBuildService {
             return PerceptionResult.error(save.message());
         }
         return PerceptionResult.ok(snapshot.compactSummary() + "; " + save.message(), snapshot);
+    }
+
+    public static IntentStructurePlanner.GeneratedBuild generateCityStructure(
+        ServerWorld world,
+        ServerPlayerEntity player,
+        BlockPos from,
+        BlockPos to,
+        List<String> args,
+        int variant
+    ) {
+        if (world == null || player == null || from == null || to == null) {
+            return IntentStructurePlanner.GeneratedBuild.error("invalid generation context");
+        }
+        String plotLabel = args == null || args.isEmpty() ? "" : args.get(0);
+        List<String> slotOverrides = new ArrayList<>();
+        if (args != null) {
+            for (int i = 1; i < Math.min(args.size(), 4); i++) {
+                String token = args.get(i);
+                if (!token.equals("-")) {
+                    slotOverrides.add(token);
+                }
+            }
+        }
+        return IntentStructurePlanner.planSelection(
+            world,
+            player.getUuid(),
+            from,
+            to,
+            plotLabel,
+            slotOverrides,
+            variant
+        );
     }
 
     public record CaptureResult(
