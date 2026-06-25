@@ -30,7 +30,11 @@ public final class BladelowModelStatus {
     private static final Path BUILD_INTENT_DATASET = ML_DIR.resolve("build_intent_examples.jsonl");
     private static final Path STYLE_EXAMPLES_DATASET = ML_DIR.resolve("style_examples.jsonl");
     private static final Path PREVIEW_FEEDBACK_DATASET = ML_DIR.resolve("preview_feedback.jsonl");
+    private static final Path BUILD_EVALUATIONS_DATASET = ML_DIR.resolve("build_evaluations.jsonl");
     private static final Path STYLE_REFS_DIR = ML_DIR.resolve("style_refs");
+    private static final Path MEMORY_DIR = Path.of("config", "bladelow", "memory");
+    private static final Path WORLD_CONTEXT_MEMORY = MEMORY_DIR.resolve("world_context.jsonl");
+    private static final Path STRUCTURE_MEMORY_DIR = MEMORY_DIR.resolve("structures");
 
     private static long fingerprint = Long.MIN_VALUE;
     private static Snapshot cached = Snapshot.empty();
@@ -53,6 +57,9 @@ public final class BladelowModelStatus {
         long intent = countLines(BUILD_INTENT_DATASET);
         long styleExamples = countLines(STYLE_EXAMPLES_DATASET);
         long previewFeedback = countLines(PREVIEW_FEEDBACK_DATASET);
+        long buildEvaluations = countLines(BUILD_EVALUATIONS_DATASET);
+        long worldContext = countLines(WORLD_CONTEXT_MEMORY);
+        long structureMemories = countJsonFiles(STRUCTURE_MEMORY_DIR);
         long refs = countImages(STYLE_REFS_DIR);
         List<String> rawThemes = topThemesFromRawData();
         var offline = BladelowLearning.offlineModel().snapshot();
@@ -63,6 +70,9 @@ public final class BladelowModelStatus {
             intent,
             styleExamples,
             previewFeedback,
+            buildEvaluations,
+            worldContext,
+            structureMemories,
             refs,
             offline.trained(),
             offline.generatedAt(),
@@ -77,6 +87,9 @@ public final class BladelowModelStatus {
             ^ fingerprintFor(BUILD_INTENT_DATASET)
             ^ fingerprintFor(STYLE_EXAMPLES_DATASET)
             ^ fingerprintFor(PREVIEW_FEEDBACK_DATASET)
+            ^ fingerprintFor(BUILD_EVALUATIONS_DATASET)
+            ^ fingerprintFor(WORLD_CONTEXT_MEMORY)
+            ^ fingerprintForDirectory(STRUCTURE_MEMORY_DIR)
             ^ fingerprintForDirectory(STYLE_REFS_DIR)
             ^ BladelowLearning.offlineModel().snapshot().generatedAt().hashCode();
     }
@@ -125,6 +138,20 @@ public final class BladelowModelStatus {
             return stream
                 .filter(Files::isRegularFile)
                 .filter(BladelowModelStatus::isImageFile)
+                .count();
+        } catch (IOException ex) {
+            return 0L;
+        }
+    }
+
+    private static long countJsonFiles(Path dir) {
+        if (!Files.isDirectory(dir)) {
+            return 0L;
+        }
+        try (Stream<Path> stream = Files.list(dir)) {
+            return stream
+                .filter(Files::isRegularFile)
+                .filter(path -> path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".json"))
                 .count();
         } catch (IOException ex) {
             return 0L;
@@ -202,6 +229,9 @@ public final class BladelowModelStatus {
         long intentSamples,
         long styleExampleSamples,
         long previewFeedbackSamples,
+        long buildEvaluationSamples,
+        long worldContextMemories,
+        long structureMemories,
         long referenceImages,
         boolean offlineModelPresent,
         String generatedAt,
@@ -209,13 +239,14 @@ public final class BladelowModelStatus {
         List<String> zonePriors
     ) {
         private static Snapshot empty() {
-            return new Snapshot(0L, 0L, 0L, 0L, 0L, 0L, false, "", List.of(), List.of());
+            return new Snapshot(0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, false, "", List.of(), List.of());
         }
 
         public List<String> lines() {
             List<String> out = new ArrayList<>();
             out.add("placements=" + placementSamples + " env=" + environmentSamples + " intent=" + intentSamples);
-            out.add("style examples=" + styleExampleSamples + " preview feedback=" + previewFeedbackSamples + " refs=" + referenceImages);
+            out.add("style examples=" + styleExampleSamples + " preview feedback=" + previewFeedbackSamples + " eval=" + buildEvaluationSamples);
+            out.add("memory world=" + worldContextMemories + " structures=" + structureMemories + " refs=" + referenceImages);
             out.add(offlineModelPresent
                 ? "offline model: trained"
                 : "offline model: not trained");
