@@ -2,6 +2,7 @@ package com.bladelow.network;
 
 import com.bladelow.BladelowMod;
 import com.bladelow.auto.CityAutoplayDirector;
+import com.bladelow.auto.AutonomousBuildService;
 import com.bladelow.builder.BuildSiteAnalyzer;
 import com.bladelow.builder.BuildSiteScan;
 import com.bladelow.builder.BuildProfileStore;
@@ -44,7 +45,6 @@ import java.util.UUID;
  */
 public final class HudActionService {
     private static final int MAX_SELECTION_BOX_BLOCKS = 131072;
-    private static final int MAX_BLUEPRINT_CAPTURE_BLOCKS = 262144;
     private static final Map<UUID, CachedPreview> CITY_BUILD_PREVIEWS = new HashMap<>();
 
     private HudActionService() {
@@ -603,28 +603,11 @@ public final class HudActionService {
         }
         boolean includeAir = args.size() > 2 && "air".equalsIgnoreCase(args.get(2));
 
-        List<BlockPos> base = SelectionState.snapshot(player.getUuid(), source.getWorld().getRegistryKey());
-        if (base.isEmpty()) {
-            error(source, "[Bladelow] selection is empty; mark an area in the HUD first");
-            return;
-        }
-        BlockPos[] bounds = selectionBounds3d(player, source);
-        if (bounds == null) {
-            return;
-        }
-        long volume = ((long) bounds[1].getX() - bounds[0].getX() + 1L)
-            * ((long) bounds[1].getZ() - bounds[0].getZ() + 1L)
-            * ((long) height + 1L);
-        if (volume > MAX_BLUEPRINT_CAPTURE_BLOCKS) {
-            error(source, "[Bladelow] capture volume too large (" + volume + " blocks). limit=" + MAX_BLUEPRINT_CAPTURE_BLOCKS);
-            return;
-        }
-
-        BlueprintLibrary.SaveResult result = BlueprintLibrary.captureSelectionAsBlueprint(
+        AutonomousBuildService.CaptureResult result = AutonomousBuildService.captureSelectedStructure(
             source.getServer(),
             source.getWorld(),
+            player,
             name,
-            base,
             height,
             includeAir
         );
@@ -632,9 +615,8 @@ public final class HudActionService {
             error(source, "[Bladelow] " + result.message());
             return;
         }
-        BlueprintLibrary.select(player.getUuid(), name);
         feedback(source, "[Bladelow] " + result.message());
-        feedback(source, "[Bladelow] selected blueprint " + name);
+        feedback(source, "[Bladelow] selected blueprint " + name + " volume=" + result.volume());
     }
 
     private static void runSelectionBuildHeight(ServerCommandSource source, ServerPlayerEntity player, int height, String blockSpec) {
