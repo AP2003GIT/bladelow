@@ -498,20 +498,15 @@ public final class HudActionService {
     private static boolean handleModel(ServerCommandSource source, ServerPlayerEntity player, HudAction action, List<String> args) {
         return switch (action) {
             case MODEL_SCAN_INTENT -> {
-                BlockPos[] bounds = selectionBounds3d(player, source);
-                if (bounds == null) {
-                    yield true;
-                }
-                TownPlanner.IntentSuggestion suggestion = TownPlanner.suggestBuildIntent(
+                AutonomousBuildService.PerceptionResult result = AutonomousBuildService.perceiveSelectedArea(
+                    source.getServer(),
                     source.getWorld(),
-                    bounds[0],
-                    bounds[1],
-                    TownZoneStore.snapshot(player.getUuid(), source.getWorld().getRegistryKey())
+                    player
                 );
-                if (!suggestion.ok()) {
-                    error(source, "[Bladelow] " + suggestion.message());
+                if (!result.ok()) {
+                    error(source, "[Bladelow] " + result.message());
                 } else {
-                    feedback(source, "[Bladelow] " + suggestion.message());
+                    feedback(source, "[Bladelow] " + result.message());
                 }
                 yield true;
             }

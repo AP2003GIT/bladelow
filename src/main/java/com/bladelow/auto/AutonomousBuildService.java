@@ -2,6 +2,9 @@ package com.bladelow.auto;
 
 import com.bladelow.builder.BlueprintLibrary;
 import com.bladelow.builder.SelectionState;
+import com.bladelow.builder.TownZoneStore;
+import com.bladelow.builder.WorldContextMemoryStore;
+import com.bladelow.builder.WorldPerceptionSnapshot;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
@@ -72,6 +75,33 @@ public final class AutonomousBuildService {
         );
     }
 
+    public static PerceptionResult perceiveSelectedArea(
+        MinecraftServer server,
+        ServerWorld world,
+        ServerPlayerEntity player
+    ) {
+        if (server == null || world == null || player == null) {
+            return PerceptionResult.error("perception context unavailable");
+        }
+        List<BlockPos> base = SelectionState.snapshot(player.getUuid(), world.getRegistryKey());
+        if (base.isEmpty()) {
+            return PerceptionResult.error("selection is empty; mark an area in the HUD first");
+        }
+
+        Bounds bounds = Bounds.from(base);
+        WorldPerceptionSnapshot snapshot = WorldPerceptionSnapshot.scan(
+            world,
+            new BlockPos(bounds.minX(), bounds.minY(), bounds.minZ()),
+            new BlockPos(bounds.maxX(), bounds.maxY(), bounds.maxZ()),
+            TownZoneStore.snapshot(player.getUuid(), world.getRegistryKey())
+        );
+        WorldContextMemoryStore.SaveResult save = WorldContextMemoryStore.append(server, snapshot);
+        if (!save.ok()) {
+            return PerceptionResult.error(save.message());
+        }
+        return PerceptionResult.ok(snapshot.compactSummary() + "; " + save.message(), snapshot);
+    }
+
     public record CaptureResult(
         boolean ok,
         String message,
@@ -98,6 +128,16 @@ public final class AutonomousBuildService {
 
         public static CaptureResult error(String message) {
             return new CaptureResult(false, message, 0, 0, 0, 0, 0, 0, 0L);
+        }
+    }
+
+    public record PerceptionResult(boolean ok, String message, WorldPerceptionSnapshot snapshot) {
+        public static PerceptionResult ok(String message, WorldPerceptionSnapshot snapshot) {
+            return new PerceptionResult(true, message, snapshot);
+        }
+
+        public static PerceptionResult error(String message) {
+            return new PerceptionResult(false, message, null);
         }
     }
 
