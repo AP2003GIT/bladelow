@@ -1,6 +1,7 @@
 package com.bladelow.command;
 
 import com.bladelow.builder.BuildRuntimeSettings;
+import com.bladelow.builder.BuildTaskGraph;
 import com.bladelow.builder.PlacementJob;
 import com.bladelow.builder.PlacementJobRunner;
 import net.minecraft.block.Block;
@@ -11,13 +12,8 @@ import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 import net.minecraft.util.math.BlockPos;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 
 /**
  * Orchestrates the full placement pipeline:
@@ -57,7 +53,8 @@ public final class PlacementPipeline {
             source.sendFeedback(() -> blueText("[Bladelow] " + mat.summary()), false);
         }
 
-        ExecutionPlan plan = dependencyOrder(player, mat.blockStates(), targets, tag);
+        BuildTaskGraph graph = BuildTaskGraph.fromPlacements(tag, mat.blockStates(), targets, player);
+        BuildTaskGraph.OrderedPlacements plan = graph.orderedPlacements();
         BuildRuntimeSettings.Snapshot snapshot = BuildRuntimeSettings.snapshot();
         if (forcePreview && !snapshot.previewBeforeBuild()) {
             snapshot = withPreview(snapshot);
@@ -82,60 +79,12 @@ public final class PlacementPipeline {
             + " targets=" + plan.targets().size()
             + " blocks=" + plan.states().size()
             + " feasible=" + String.format(Locale.ROOT, "%.1f", mat.feasibilityPercent()) + "%"
-            + " deps=" + plan.dependencyEdges()
-            + " order=" + (plan.dependencyOrdered() ? "support-first" : "path-first")
+            + " " + graph.summary()
             + " " + snapshot.summary()
             + (previewMode ? " [pending]" : " [active]")
             + (replaced ? " (replaced previous pending job)" : "");
         source.sendFeedback(() -> blueText(msg), false);
         return 1;
-    }
-
-    // -------------------------------------------------------------------------
-    // Dependency-aware ordering
-    // -------------------------------------------------------------------------
-
-    private record ExecutionPlan(List<BlockState> states, List<BlockPos> targets,
-                                  int dependencyEdges, boolean dependencyOrdered) {
-    }
-
-    private static ExecutionPlan dependencyOrder(ServerPlayerEntity player,
-                                                  List<BlockState> states,
-                                                  List<BlockPos> targets,
-                                                  String tag) {
-        if (states == null || targets == null
-                || states.size() != targets.size() || targets.isEmpty()) {
-            return new ExecutionPlan(List.of(), List.of(), 0, false);
-        }
-        if (targets.size() == 1) {
-            return new ExecutionPlan(states, targets, 0, false);
-        }
-
-        Map<BlockPos, Integer> indexByPos = new HashMap<>(targets.size() * 2);
-        for (int i = 0; i < targets.size(); i++) indexByPos.putIfAbsent(targets.get(i), i);
-
-        int edges = 0;
-        for (BlockPos pos : targets) {
-            if (indexByPos.containsKey(pos.down())) edges++;
-        }
-        if (edges <= 0) return new ExecutionPlan(states, targets, 0, false);
-
-        double px = player.getX(), py = player.getY(), pz = player.getZ();
-        List<Integer> order = new ArrayList<>(targets.size());
-        for (int i = 0; i < targets.size(); i++) order.add(i);
-        Collections.sort(order, Comparator
-            .comparingInt((Integer i) -> targets.get(i).getY())
-            .thenComparingDouble(i -> targets.get(i).getSquaredDistance(px, py, pz))
-            .thenComparingInt(i -> targets.get(i).getX())
-            .thenComparingInt(i -> targets.get(i).getZ()));
-
-        List<BlockState> orderedStates = new ArrayList<>(states.size());
-        List<BlockPos> orderedTargets = new ArrayList<>(targets.size());
-        for (int idx : order) {
-            orderedStates.add(states.get(idx));
-            orderedTargets.add(targets.get(idx));
-        }
-        return new ExecutionPlan(orderedStates, orderedTargets, edges, true);
     }
 
     // -------------------------------------------------------------------------

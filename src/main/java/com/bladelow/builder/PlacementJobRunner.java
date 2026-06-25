@@ -1422,6 +1422,7 @@ public final class PlacementJobRunner {
     private static void finishJob(ServerPlayerEntity player, PlacementJob job) {
         player.sendMessage(blueText(job.completionSummary()), false);
         rememberSnapshot(job.playerId(), "completed", job, detailSummary("completed", job));
+        BladelowLearning.buildEvaluationLogger().recordCompletion(player, job);
         BuildNavigation.clearPlayerState(job.playerId());
         String saveStatus = BladelowLearning.save();
         player.sendMessage(blueText("[Bladelow] model " + saveStatus), false);
