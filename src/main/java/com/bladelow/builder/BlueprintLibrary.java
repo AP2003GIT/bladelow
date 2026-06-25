@@ -198,31 +198,19 @@ public final class BlueprintLibrary {
             return SaveResult.error("height must be 1..256");
         }
 
-        int minX = basePoints.stream().mapToInt(BlockPos::getX).min().orElse(0);
-        int maxX = basePoints.stream().mapToInt(BlockPos::getX).max().orElse(0);
-        int minY = basePoints.stream().mapToInt(BlockPos::getY).min().orElse(0);
-        int minZ = basePoints.stream().mapToInt(BlockPos::getZ).min().orElse(0);
-        int maxZ = basePoints.stream().mapToInt(BlockPos::getZ).max().orElse(0);
-        int maxY = Math.min(world.getTopYInclusive(), minY + height);
-
-        List<BlueprintPlacement> placements = new ArrayList<>();
-        for (int y = minY; y <= maxY; y++) {
-            for (int x = minX; x <= maxX; x++) {
-                for (int z = minZ; z <= maxZ; z++) {
-                    BlockPos pos = new BlockPos(x, y, z);
-                    BlockState state = world.getBlockState(pos);
-                    if (!includeAir && state.isAir()) {
-                        continue;
-                    }
-                    placements.add(new BlueprintPlacement(pos, BlueprintStateCodec.stringify(state)));
-                }
-            }
-        }
-
-        if (placements.isEmpty()) {
+        StructureSnapshot snapshot = StructureSnapshot.capture(world, name, basePoints, height, includeAir);
+        if (snapshot.blocks().isEmpty()) {
             return SaveResult.error("selection volume contains no captured blocks");
         }
-        return savePlacementsAsBlueprint(server, name, placements);
+        StructureMemoryStore.SaveResult memoryResult = StructureMemoryStore.save(server, snapshot);
+        if (!memoryResult.ok()) {
+            return SaveResult.error(memoryResult.message());
+        }
+        SaveResult blueprintResult = savePlacementsAsBlueprint(server, name, snapshot.toBlueprintPlacements());
+        if (!blueprintResult.ok()) {
+            return blueprintResult;
+        }
+        return SaveResult.ok(blueprintResult.message() + "; " + memoryResult.message() + "; " + snapshot.summary());
     }
 
     public static synchronized SaveResult savePlacementsAsBlueprint(
