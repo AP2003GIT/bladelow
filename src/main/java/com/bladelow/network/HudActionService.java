@@ -44,6 +44,7 @@ import java.util.UUID;
  */
 public final class HudActionService {
     private static final int MAX_SELECTION_BOX_BLOCKS = 131072;
+    private static final int MAX_BLUEPRINT_CAPTURE_BLOCKS = 262144;
     private static final Map<UUID, CachedPreview> CITY_BUILD_PREVIEWS = new HashMap<>();
 
     private HudActionService() {
@@ -82,8 +83,8 @@ public final class HudActionService {
                     handleSelection(source, player, payload.action(), args);
                 case ZONE_SET, ZONE_LIST, ZONE_CLEAR, ZONE_AUTO_LAYOUT ->
                     handleZone(source, player, payload.action(), args);
-                case BLUEPRINT_LOAD, BLUEPRINT_BUILD, TOWN_FILL_SELECTION, TOWN_PREVIEW_SELECTION,
-                     CITY_BUILD_PREVIEW, CITY_BUILD_REROLL, CITY_BUILD_REJECT, CITY_BUILD_COMMIT, CITY_BUILD_AUTO,
+                case BLUEPRINT_LOAD, BLUEPRINT_BUILD, BLUEPRINT_CAPTURE, TOWN_FILL_SELECTION, TOWN_PREVIEW_SELECTION,
+                      CITY_BUILD_PREVIEW, CITY_BUILD_REROLL, CITY_BUILD_REJECT, CITY_BUILD_COMMIT, CITY_BUILD_AUTO,
                      CITY_AUTOPLAY_START, CITY_AUTOPLAY_STATUS, CITY_AUTOPLAY_STOP,
                      CITY_AUTOPLAY_CONTINUE, CITY_AUTOPLAY_CANCEL ->
                     handleBlueprint(source, player, payload.action(), args);
@@ -236,6 +237,10 @@ public final class HudActionService {
             }
             case BLUEPRINT_BUILD -> {
                 runBlueprintBuild(source, player, args);
+                yield true;
+            }
+            case BLUEPRINT_CAPTURE -> {
+                runBlueprintCapture(source, player, args);
                 yield true;
             }
             case TOWN_FILL_SELECTION -> {
@@ -585,6 +590,51 @@ public final class HudActionService {
         }
         List<Block> blocks = PaletteAssigner.applyOverride(plan.blocks(), plan.targets(), override);
         PlacementPipeline.queue(source, player, PaletteAssigner.defaultStates(blocks), plan.targets(), "blueprint:" + plan.message(), false);
+    }
+
+    private static void runBlueprintCapture(ServerCommandSource source, ServerPlayerEntity player, List<String> args) {
+        if (args.size() < 2) {
+            throw new IllegalArgumentException("blueprint capture needs name and height");
+        }
+        String name = args.get(0);
+        int height = parseInt(args.get(1), "capture height");
+        if (height < 1 || height > 256) {
+            throw new IllegalArgumentException("height must be 1..256");
+        }
+        boolean includeAir = args.size() > 2 && "air".equalsIgnoreCase(args.get(2));
+
+        List<BlockPos> base = SelectionState.snapshot(player.getUuid(), source.getWorld().getRegistryKey());
+        if (base.isEmpty()) {
+            error(source, "[Bladelow] selection is empty; mark an area in the HUD first");
+            return;
+        }
+        BlockPos[] bounds = selectionBounds3d(player, source);
+        if (bounds == null) {
+            return;
+        }
+        long volume = ((long) bounds[1].getX() - bounds[0].getX() + 1L)
+            * ((long) bounds[1].getZ() - bounds[0].getZ() + 1L)
+            * ((long) height + 1L);
+        if (volume > MAX_BLUEPRINT_CAPTURE_BLOCKS) {
+            error(source, "[Bladelow] capture volume too large (" + volume + " blocks). limit=" + MAX_BLUEPRINT_CAPTURE_BLOCKS);
+            return;
+        }
+
+        BlueprintLibrary.SaveResult result = BlueprintLibrary.captureSelectionAsBlueprint(
+            source.getServer(),
+            source.getWorld(),
+            name,
+            base,
+            height,
+            includeAir
+        );
+        if (!result.ok()) {
+            error(source, "[Bladelow] " + result.message());
+            return;
+        }
+        BlueprintLibrary.select(player.getUuid(), name);
+        feedback(source, "[Bladelow] " + result.message());
+        feedback(source, "[Bladelow] selected blueprint " + name);
     }
 
     private static void runSelectionBuildHeight(ServerCommandSource source, ServerPlayerEntity player, int height, String blockSpec) {

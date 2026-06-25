@@ -26,6 +26,7 @@ public enum HudAction {
 
     BLUEPRINT_LOAD("blueprint_load"),
     BLUEPRINT_BUILD("blueprint_build"),
+    BLUEPRINT_CAPTURE("blueprint_capture"),
     TOWN_FILL_SELECTION("town_fill_selection"),
     TOWN_PREVIEW_SELECTION("town_preview_selection"),
     CITY_BUILD_PREVIEW("city_build_preview"),

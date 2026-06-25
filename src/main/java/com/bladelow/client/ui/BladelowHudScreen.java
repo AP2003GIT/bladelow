@@ -211,6 +211,7 @@ public class BladelowHudScreen extends Screen {
     private ButtonWidget bpPrevButton;
     private ButtonWidget bpNextButton;
     private ButtonWidget bpLoadButton;
+    private ButtonWidget bpCaptureButton;
     private ButtonWidget bpBuildButton;
     private ButtonWidget zoneResidentialButton;
     private ButtonWidget zoneMarketButton;
@@ -536,6 +537,9 @@ public class BladelowHudScreen extends Screen {
         int sourceFieldY = searchY + (buttonH + rowGap) * 2;
         this.bpLoadButton = addDrawableChild(ButtonWidget.builder(Text.literal("Load Blueprint"), b -> loadBlueprint())
             .dimensions(rightX, sourceFieldY + buttonH + rowGap, rightW, buttonH)
+            .build());
+        this.bpCaptureButton = addDrawableChild(ButtonWidget.builder(Text.literal("Capture Selection"), b -> captureBlueprint())
+            .dimensions(rightX, sourceFieldY + (buttonH + rowGap) * 2, rightW, buttonH)
             .build());
 
         int cityHalfW = (rightW - rowGap) / 2;
@@ -1627,6 +1631,7 @@ public class BladelowHudScreen extends Screen {
         boolean blueprintSource = source && blueprintMode;
         setVisible(blueprintField, blueprintSource);
         setVisible(bpLoadButton, blueprintSource);
+        setVisible(bpCaptureButton, blueprintSource);
         setVisible(bpPrevButton, false);
         setVisible(bpNextButton, false);
         setVisible(zoneResidentialButton, source && cityMode);
@@ -2928,6 +2933,24 @@ public class BladelowHudScreen extends Screen {
         sendAction(HudAction.BLUEPRINT_LOAD, name);
     }
 
+    private void captureBlueprint() {
+        String name = blueprintField.getText().trim();
+        if (name.isEmpty()) {
+            statusText = "Blueprint name required";
+            return;
+        }
+        if (markerA == null || markerB == null) {
+            statusText = "Set markers A/B first";
+            return;
+        }
+        Integer height = parseInt(heightField.getText());
+        if (height == null || height < 1 || height > 256) {
+            statusText = "Height must be 1..256";
+            return;
+        }
+        sendAction(HudAction.BLUEPRINT_CAPTURE, name, Integer.toString(height));
+    }
+
     private void buildBlueprint() {
         Coords c;
         if (markerA != null) {
@@ -3071,6 +3094,7 @@ public class BladelowHudScreen extends Screen {
     private String actionStatus(HudCommandPayload payload) {
         return switch (payload.action()) {
             case BLUEPRINT_LOAD -> "Loading blueprint...";
+            case BLUEPRINT_CAPTURE -> "Capturing selected build...";
             case BLUEPRINT_BUILD -> "Queueing blueprint...";
             case CITY_BUILD_PREVIEW -> {
                 citySummary = "preview requested";

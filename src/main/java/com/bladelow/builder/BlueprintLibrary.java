@@ -180,6 +180,51 @@ public final class BlueprintLibrary {
         return savePlacementsAsBlueprint(server, name, placements);
     }
 
+    public static synchronized SaveResult captureSelectionAsBlueprint(
+        MinecraftServer server,
+        ServerWorld world,
+        String name,
+        List<BlockPos> basePoints,
+        int height,
+        boolean includeAir
+    ) {
+        if (world == null) {
+            return SaveResult.error("world is unavailable");
+        }
+        if (basePoints == null || basePoints.isEmpty()) {
+            return SaveResult.error("selection is empty");
+        }
+        if (height < 1 || height > 256) {
+            return SaveResult.error("height must be 1..256");
+        }
+
+        int minX = basePoints.stream().mapToInt(BlockPos::getX).min().orElse(0);
+        int maxX = basePoints.stream().mapToInt(BlockPos::getX).max().orElse(0);
+        int minY = basePoints.stream().mapToInt(BlockPos::getY).min().orElse(0);
+        int minZ = basePoints.stream().mapToInt(BlockPos::getZ).min().orElse(0);
+        int maxZ = basePoints.stream().mapToInt(BlockPos::getZ).max().orElse(0);
+        int maxY = Math.min(world.getTopYInclusive(), minY + height);
+
+        List<BlueprintPlacement> placements = new ArrayList<>();
+        for (int y = minY; y <= maxY; y++) {
+            for (int x = minX; x <= maxX; x++) {
+                for (int z = minZ; z <= maxZ; z++) {
+                    BlockPos pos = new BlockPos(x, y, z);
+                    BlockState state = world.getBlockState(pos);
+                    if (!includeAir && state.isAir()) {
+                        continue;
+                    }
+                    placements.add(new BlueprintPlacement(pos, BlueprintStateCodec.stringify(state)));
+                }
+            }
+        }
+
+        if (placements.isEmpty()) {
+            return SaveResult.error("selection volume contains no captured blocks");
+        }
+        return savePlacementsAsBlueprint(server, name, placements);
+    }
+
     public static synchronized SaveResult savePlacementsAsBlueprint(
         MinecraftServer server,
         String name,
@@ -208,9 +253,16 @@ public final class BlueprintLibrary {
         int minX = sorted.stream().mapToInt(p -> p.pos().getX()).min().orElse(0);
         int minY = sorted.stream().mapToInt(p -> p.pos().getY()).min().orElse(0);
         int minZ = sorted.stream().mapToInt(p -> p.pos().getZ()).min().orElse(0);
+        int maxX = sorted.stream().mapToInt(p -> p.pos().getX()).max().orElse(minX);
+        int maxZ = sorted.stream().mapToInt(p -> p.pos().getZ()).max().orElse(minZ);
 
         BlueprintJson out = new BlueprintJson();
         out.name = normalizedName;
+        out.category = "captured";
+        out.plotWidth = maxX - minX + 1;
+        out.plotDepth = maxZ - minZ + 1;
+        out.themeTags = List.of("captured");
+        out.tags = List.of("captured", "replay");
         out.placements = new ArrayList<>(sorted.size());
         for (BlueprintPlacement placement : sorted) {
             String blockText = placement.blockId().trim();
