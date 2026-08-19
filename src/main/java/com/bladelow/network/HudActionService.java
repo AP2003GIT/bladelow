@@ -295,6 +295,17 @@ public final class HudActionService {
                 CachedPreview previous = CITY_BUILD_PREVIEWS.get(player.getUuid());
                 boolean matchingPrevious = previous != null && previous.matches(bounds[0], bounds[1]);
                 int nextVariant = matchingPrevious ? previous.variant() + 1 : 1;
+                if (matchingPrevious) {
+                    BladelowLearning.previewFeedbackLogger().recordFeedback(
+                        "preview_reroll",
+                        "rerolled",
+                        source.getWorld(),
+                        bounds[0],
+                        bounds[1],
+                        previous.plan(),
+                        previous.variant()
+                    );
+                }
                 IntentStructurePlanner.GeneratedBuild plan = generateCityPlan(source, player, bounds, args, nextVariant);
                 if (!plan.ok()) {
                     if (!matchingPrevious) {
@@ -302,17 +313,6 @@ public final class HudActionService {
                     }
                     error(source, "[Bladelow] " + plan.message());
                 } else {
-                    if (matchingPrevious) {
-                        BladelowLearning.previewFeedbackLogger().recordFeedback(
-                            "preview_reroll",
-                            "rerolled",
-                            source.getWorld(),
-                            bounds[0],
-                            bounds[1],
-                            previous.plan(),
-                            previous.variant()
-                        );
-                    }
                     rememberCityPreview(player.getUuid(), bounds[0], bounds[1], nextVariant, plan);
                     feedback(source, "[Bladelow] preview plan " + previewSummary(plan, nextVariant));
                     feedback(source, "[Bladelow] " + previewMapLine(bounds[0], bounds[1], nextVariant, plan));
@@ -371,6 +371,12 @@ public final class HudActionService {
                     plan,
                     preview.variant()
                 );
+                BladelowLearning.buildIntentLogger().recordTownPlacement(
+                    "auto_build_preview_commit",
+                    source.getWorld(),
+                    plan.context(),
+                    plan.blueprint()
+                );
                 feedback(source, "[Bladelow] build queued from preview " + plan.blueprint().name());
                 feedback(source, "[Bladelow] preview-clear");
                 clearCityPreview(player.getUuid());
@@ -386,6 +392,12 @@ public final class HudActionService {
                 if (!plan.ok()) {
                     error(source, "[Bladelow] " + plan.message());
                 } else {
+                    BladelowLearning.buildIntentLogger().recordTownPlacement(
+                        "auto_build_direct",
+                        source.getWorld(),
+                        plan.context(),
+                        plan.blueprint()
+                    );
                     feedback(source, "[Bladelow] " + plan.message());
                     feedback(source, "[Bladelow] preview-clear");
                     clearCityPreview(player.getUuid());
@@ -886,12 +898,17 @@ public final class HudActionService {
     private static String previewSummary(IntentStructurePlanner.GeneratedBuild plan, int variant) {
         String label = plan.intent().primaryArchetype().isBlank() ? "house" : plan.intent().primaryArchetype();
         String palette = plan.intent().paletteProfile().isBlank() ? "auto" : plan.intent().paletteProfile();
+        IntentStructurePlanner.GenerationProfile generation = plan.generation();
+        String generator = generation != null && generation.learned()
+            ? "ml=" + String.format(Locale.ROOT, "%.0f%%", generation.preference() * 100.0)
+            : "ml=learning";
         return "label=" + label
             + " size=" + plan.blueprint().plotWidth() + "x" + plan.blueprint().plotDepth()
             + " floors=" + Math.max(1, plan.intent().floors())
             + " road=" + plan.blueprint().roadSide()
             + " variant=" + variant
-            + " palette=" + palette;
+            + " palette=" + palette
+            + " " + generator;
     }
 
     private static String previewMapLine(BlockPos from, BlockPos to, int variant, IntentStructurePlanner.GeneratedBuild plan) {

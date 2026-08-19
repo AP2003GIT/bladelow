@@ -45,6 +45,7 @@ public final class PreviewFeedbackLogger {
         }
         try {
             Files.createDirectories(DATASET_PATH.getParent());
+            IntentStructurePlanner.GenerationProfile generation = plan.generation();
             PreviewFeedback event = new PreviewFeedback(
                 Instant.now().toString(),
                 normalize(source),
@@ -72,7 +73,15 @@ public final class PreviewFeedbackLogger {
                 plan.minZ(),
                 plan.maxZ(),
                 plan.entranceWorldX(),
-                plan.entranceWorldZ()
+                plan.entranceWorldZ(),
+                generation == null ? variant : generation.designSeed(),
+                generation == null ? plan.blueprint().plotWidth() : generation.bodyWidth(),
+                generation == null ? plan.blueprint().plotDepth() : generation.bodyDepth(),
+                generation == null ? Math.max(1, plan.intent().floors()) : generation.floors(),
+                generation == null ? 1 : generation.roofLayers(),
+                generation == null ? 0.5 : generation.preference(),
+                generation != null && generation.learned(),
+                generation == null ? 0 : generation.trainingSamples()
             );
             try (Writer out = Files.newBufferedWriter(
                 DATASET_PATH,
@@ -154,7 +163,15 @@ public final class PreviewFeedbackLogger {
         int previewMinZ,
         int previewMaxZ,
         int entranceX,
-        int entranceZ
+        int entranceZ,
+        int designSeed,
+        int bodyWidth,
+        int bodyDepth,
+        int actualFloors,
+        int roofLayers,
+        double preferenceScore,
+        boolean learnedGeneration,
+        int generationTrainingSamples
     ) {
     }
 }

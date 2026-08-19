@@ -3,6 +3,7 @@ package com.bladelow.builder;
 import com.bladelow.ml.BladelowLearning;
 import com.bladelow.ml.BuildIntent;
 import com.bladelow.ml.BuildIntentContext;
+import com.bladelow.ml.OfflineTrainingModel;
 import net.minecraft.block.BlockState;
 import net.minecraft.registry.Registries;
 import net.minecraft.server.world.ServerWorld;
@@ -11,6 +12,7 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.world.Heightmap;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
@@ -105,9 +107,17 @@ public final class IntentStructurePlanner {
         int normalizedVariant = Math.max(0, variant);
         MaterialSet materials = chooseMaterials(intent, scan, archetype, slotOverrides);
 
-        int bodyWidth = chooseFootprintWidth(plotWidth, context, intent, archetype, normalizedVariant);
-        int bodyDepth = chooseFootprintDepth(plotDepth, context, intent, archetype, normalizedVariant);
-        int floors = chooseFloors(intent, archetype, normalizedVariant);
+        GenerationProfile generation = chooseGenerationProfile(
+            plotWidth,
+            plotDepth,
+            context,
+            intent,
+            archetype,
+            normalizedVariant
+        );
+        int bodyWidth = generation.bodyWidth();
+        int bodyDepth = generation.bodyDepth();
+        int floors = generation.floors();
 
         int originX = placeOriginX(minX, maxX, bodyWidth, roadSide);
         int originZ = placeOriginZ(minZ, maxZ, bodyDepth, roadSide);
@@ -121,21 +131,24 @@ public final class IntentStructurePlanner {
             floors,
             intent,
             materials,
-            normalizedVariant
+            generation.designSeed(),
+            normalizedVariant,
+            generation.roofLayers()
         );
         BlueprintLibrary.BuildPlan buildPlan = resolveGeneratedPlan(world, blueprint, originX, floorY, originZ, materials.foundation());
         if (!buildPlan.ok()) {
             return GeneratedBuild.error(buildPlan.message());
         }
 
-        BladelowLearning.buildIntentLogger().recordTownPlacement("auto_build_here", world, context, blueprint);
         String message = "auto-build " + blueprint.name()
             + " " + bodyWidth + "x" + bodyDepth
             + " floors=" + floors
             + " road=" + roadSide
             + " variant=" + normalizedVariant
+            + " generator=" + (generation.learned() ? "ml" : "fallback")
+            + (generation.learned() ? " preference=" + String.format(Locale.ROOT, "%.3f", generation.preference()) : "")
             + " intent=" + intent.summary();
-        return GeneratedBuild.ok(message, intent, context, blueprint, originX, floorY, originZ, buildPlan.blockStates(), buildPlan.targets());
+        return GeneratedBuild.ok(message, intent, context, blueprint, generation, originX, floorY, originZ, buildPlan.blockStates(), buildPlan.targets());
     }
 
     private static BlueprintLibrary.BuildPlan resolveGeneratedPlan(
@@ -184,12 +197,14 @@ public final class IntentStructurePlanner {
         int floors,
         BuildIntent intent,
         MaterialSet materials,
-        int variant
+        int designSeed,
+        int displayVariant,
+        int roofLayerCount
     ) {
         List<TownBlueprint.Placement> placements = new ArrayList<>();
         int storyHeight = 4;
         int bodyTop = floors * storyHeight;
-        int doorOffset = entranceOffset(roadSide, width, depth, variant);
+        int doorOffset = entranceOffset(roadSide, width, depth, designSeed);
 
         for (int x = 0; x < width; x++) {
             for (int z = 0; z < depth; z++) {
@@ -227,10 +242,10 @@ public final class IntentStructurePlanner {
             }
         }
 
-        addRoof(placements, width, depth, bodyTop + 1, roofLayers(intent, width, depth, variant), materials, variant);
+        addRoof(placements, width, depth, bodyTop + 1, roofLayerCount, materials, designSeed);
         addEntranceDetail(placements, roadSide, width, depth, doorOffset, materials, archetype);
 
-        String name = "generated_" + archetype + "_" + intent.sizeClass() + (variant <= 0 ? "" : "_v" + variant);
+        String name = "generated_" + archetype + "_" + intent.sizeClass() + (displayVariant <= 0 ? "" : "_v" + displayVariant);
         return new TownBlueprint(
             name,
             "generated",
@@ -447,6 +462,57 @@ public final class IntentStructurePlanner {
             delta = Math.max(0, delta);
         }
         return Math.max(1, Math.min(3, base + delta));
+    }
+
+    private static GenerationProfile chooseGenerationProfile(
+        int plotWidth,
+        int plotDepth,
+        BuildIntentContext context,
+        BuildIntent intent,
+        String archetype,
+        int requestedVariant
+    ) {
+        List<GenerationProfile> candidates = new ArrayList<>();
+        boolean learned = false;
+        for (int designSeed = 0; designSeed < 10; designSeed++) {
+            int width = chooseFootprintWidth(plotWidth, context, intent, archetype, designSeed);
+            int depth = chooseFootprintDepth(plotDepth, context, intent, archetype, designSeed);
+            int floors = chooseFloors(intent, archetype, designSeed);
+            int roofLayerCount = roofLayers(intent, width, depth, designSeed);
+            OfflineTrainingModel.GenerationScore score = BladelowLearning.offlineModel().scoreGeneration(
+                new OfflineTrainingModel.GenerationFeatures(
+                    plotWidth,
+                    plotDepth,
+                    width,
+                    depth,
+                    floors,
+                    roofLayerCount
+                )
+            );
+            learned |= score.trained();
+            candidates.add(new GenerationProfile(
+                designSeed,
+                width,
+                depth,
+                floors,
+                roofLayerCount,
+                score.probability(),
+                score.trained(),
+                score.samples()
+            ));
+        }
+
+        if (learned) {
+            candidates.sort(
+                Comparator.comparingDouble(GenerationProfile::preference)
+                    .reversed()
+                    .thenComparingInt(GenerationProfile::designSeed)
+            );
+            return candidates.get(Math.floorMod(requestedVariant, candidates.size()));
+        }
+
+        int designSeed = Math.floorMod(requestedVariant, 10);
+        return candidates.get(designSeed);
     }
 
     private static int placeOriginX(int minX, int maxX, int width, String roadSide) {
@@ -819,12 +885,25 @@ public final class IntentStructurePlanner {
     ) {
     }
 
+    public record GenerationProfile(
+        int designSeed,
+        int bodyWidth,
+        int bodyDepth,
+        int floors,
+        int roofLayers,
+        double preference,
+        boolean learned,
+        int trainingSamples
+    ) {
+    }
+
     public record GeneratedBuild(
         boolean ok,
         String message,
         BuildIntent intent,
         BuildIntentContext context,
         TownBlueprint blueprint,
+        GenerationProfile generation,
         int originX,
         int originY,
         int originZ,
@@ -836,17 +915,18 @@ public final class IntentStructurePlanner {
             BuildIntent intent,
             BuildIntentContext context,
             TownBlueprint blueprint,
+            GenerationProfile generation,
             int originX,
             int originY,
             int originZ,
             List<BlockState> blockStates,
             List<BlockPos> targets
         ) {
-            return new GeneratedBuild(true, message, intent, context, blueprint, originX, originY, originZ, List.copyOf(blockStates), List.copyOf(targets));
+            return new GeneratedBuild(true, message, intent, context, blueprint, generation, originX, originY, originZ, List.copyOf(blockStates), List.copyOf(targets));
         }
 
         public static GeneratedBuild error(String message) {
-            return new GeneratedBuild(false, message, BuildIntent.NONE, null, null, 0, 0, 0, List.of(), List.of());
+            return new GeneratedBuild(false, message, BuildIntent.NONE, null, null, null, 0, 0, 0, List.of(), List.of());
         }
 
         public int minX() {

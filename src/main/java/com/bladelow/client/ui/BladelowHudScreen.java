@@ -93,7 +93,8 @@ public class BladelowHudScreen extends Screen {
     private static final int PANEL_MIN_WIDTH = 920;
     private static final int PANEL_MIN_HEIGHT = 540;
     private static final int MINIMAP_BASE_RADIUS = 72;
-    private static final int MINIMAP_MAX_RADIUS = 196;
+    private static final int MINIMAP_MAX_SAMPLES_PER_AXIS = 160;
+    private static final long MINIMAP_CACHE_TICKS = 20L;
     private static final int MAX_SUGGESTED_PLOTS = 6;
 
     private static final Path HUD_STATE_PATH = Path.of("config", "bladelow", "hud-state.properties");
@@ -293,6 +294,8 @@ public class BladelowHudScreen extends Screen {
     private String districtBrush = "";
     private boolean planningDragActive;
     private BlockPos planningDragOrigin;
+    private MinimapView planningDragView;
+    private MinimapRaster minimapRaster;
     private List<SuggestedPlot> suggestedPlots = List.of();
     private int selectedSuggestedPlot = -1;
     private boolean showModelStatusPage;
@@ -840,33 +843,34 @@ public class BladelowHudScreen extends Screen {
         context.fill(view.screenX(), view.screenY(), view.screenX() + view.screenW(), view.screenY() + view.screenH(), 0xCC18212B);
         drawBorder(context, view.screenX(), view.screenY(), view.screenW(), view.screenH(), 0xFF8AA4C4);
 
-        // Sample the world into a coarse minimap grid. This is not a chunk map;
-        // it is a planning aid that favors clarity and speed over exact detail.
-        int samplesX = Math.max(24, Math.min(48, view.screenW() / Math.max(2, sx(6))));
-        int samplesZ = Math.max(24, Math.min(48, view.screenH() / Math.max(2, sx(6))));
-        double cellW = (double) view.screenW() / samplesX;
-        double cellH = (double) view.screenH() / samplesZ;
-        for (int sampleZ = 0; sampleZ < samplesZ; sampleZ++) {
-            for (int sampleX = 0; sampleX < samplesX; sampleX++) {
-                int worldX = view.minX() + (int) Math.round((sampleX + 0.5) * (view.maxX() - view.minX()) / Math.max(1.0, samplesX));
-                int worldZ = view.minZ() + (int) Math.round((sampleZ + 0.5) * (view.maxZ() - view.minZ()) / Math.max(1.0, samplesZ));
-                MinimapCell cell = sampleMinimapCell(this.client.world, worldX, worldZ, view.baseY());
-                int x1 = view.screenX() + (int) Math.floor(sampleX * cellW);
-                int y1 = view.screenY() + (int) Math.floor(sampleZ * cellH);
-                int x2 = view.screenX() + (int) Math.ceil((sampleX + 1) * cellW);
-                int y2 = view.screenY() + (int) Math.ceil((sampleZ + 1) * cellH);
-                context.fill(x1, y1, x2, y2, cell.color());
-            }
+        // Cache a denser world raster so narrow roads and small structures stay
+        // visible without running thousands of height lookups every render tick.
+        MinimapRaster raster = minimapRaster(view, this.client.world);
+        double cellW = (double) view.screenW() / raster.samplesX();
+        double cellH = (double) view.screenH() / raster.samplesZ();
+        for (MinimapRun run : raster.runs()) {
+            int x1 = view.screenX() + (int) Math.floor(run.startX() * cellW);
+            int y1 = view.screenY() + (int) Math.floor(run.z() * cellH);
+            int x2 = view.screenX() + (int) Math.ceil(run.endXExclusive() * cellW);
+            int y2 = view.screenY() + (int) Math.ceil((run.z() + 1) * cellH);
+            context.fill(x1, y1, x2, y2, run.color());
         }
 
         int gridColor = 0x334D5D73;
         context.fill(view.screenX() + view.screenW() / 2, view.screenY(), view.screenX() + view.screenW() / 2 + 1, view.screenY() + view.screenH(), gridColor);
         context.fill(view.screenX(), view.screenY() + view.screenH() / 2, view.screenX() + view.screenW(), view.screenY() + view.screenH() / 2 + 1, gridColor);
 
-        if (this.client.player != null) {
+        if (this.client.player != null
+            && this.client.player.getBlockX() >= view.minX()
+            && this.client.player.getBlockX() <= view.maxX()
+            && this.client.player.getBlockZ() >= view.minZ()
+            && this.client.player.getBlockZ() <= view.maxZ()) {
             int playerX = worldToMapX(view, this.client.player.getBlockX());
             int playerY = worldToMapZ(view, this.client.player.getBlockZ());
-            context.fill(playerX - sx(2), playerY - sx(2), playerX + sx(2), playerY + sx(2), 0xFFFFDD6A);
+            context.fill(playerX - sx(3), playerY - 1, playerX + sx(3) + 1, playerY + 2, 0xDD111820);
+            context.fill(playerX - 1, playerY - sx(3), playerX + 2, playerY + sx(3) + 1, 0xDD111820);
+            context.fill(playerX - sx(2), playerY, playerX + sx(2) + 1, playerY + 1, 0xFFFFE06A);
+            context.fill(playerX, playerY - sx(2), playerX + 1, playerY + sx(2) + 1, 0xFFFFE06A);
         }
 
         if (markerA != null && markerB != null) {
@@ -890,10 +894,15 @@ public class BladelowHudScreen extends Screen {
                 int hoverX = worldToMapX(view, hovered.getX());
                 int hoverY = worldToMapZ(view, hovered.getZ());
                 context.fill(hoverX - 1, hoverY - 1, hoverX + 2, hoverY + 2, 0xFFFFFFFF);
-                String hoverLabel = hoveredCell.label() + " | " + hovered.getX() + ", " + hovered.getZ();
-                context.drawText(this.textRenderer, Text.literal(hoverLabel), view.screenX() + sx(6), view.screenY() + sx(6), 0xFFF4F7FB, false);
+                String hoverLabel = hoveredCell.label() + " | " + hovered.getX() + ", " + hoveredCell.topY() + ", " + hovered.getZ();
+                int hoverLabelW = Math.min(view.screenW() - sx(12), this.textRenderer.getWidth(hoverLabel) + sx(8));
+                context.fill(view.screenX() + sx(4), view.screenY() + sx(4), view.screenX() + sx(4) + hoverLabelW, view.screenY() + sx(18), 0xD9121821);
+                drawBorder(context, view.screenX() + sx(4), view.screenY() + sx(4), hoverLabelW, sx(14), 0xCCB9CBE0);
+                context.drawText(this.textRenderer, Text.literal(this.textRenderer.trimToWidth(hoverLabel, hoverLabelW - sx(6))), view.screenX() + sx(7), view.screenY() + sx(7), 0xFFF4F7FB, false);
             }
         }
+
+        drawMapOrientationAndScale(context, view);
 
         String title = planningMapTitle();
         String subtitle = planningMapSubtitle();
@@ -940,8 +949,106 @@ public class BladelowHudScreen extends Screen {
         String path = Registries.BLOCK.getId(state.getBlock()).getPath();
         MapCellType type = classifyMinimapCell(path, !state.getFluidState().isEmpty(), topY, referenceY);
         int base = colorForSurface(type);
-        int shade = clamp((topY - referenceY) * 3, -22, 22);
+        int rawShade = clamp((topY - referenceY) * 3, -24, 24);
+        int shade = (int) Math.round(rawShade / 6.0) * 6;
         return new MinimapCell(type, shadeColor(base, shade), minimapLabel(type), topY);
+    }
+
+    private MinimapRaster minimapRaster(MinimapView view, ClientWorld world) {
+        int worldWidth = Math.max(1, view.maxX() - view.minX() + 1);
+        int worldDepth = Math.max(1, view.maxZ() - view.minZ() + 1);
+        int samplePixelSize = Math.max(1, sx(3));
+        int samplesX = Math.max(1, Math.min(worldWidth, Math.min(MINIMAP_MAX_SAMPLES_PER_AXIS, view.screenW() / samplePixelSize)));
+        int samplesZ = Math.max(1, Math.min(worldDepth, Math.min(MINIMAP_MAX_SAMPLES_PER_AXIS, view.screenH() / samplePixelSize)));
+        long worldTick = world.getTime();
+
+        if (minimapRaster != null
+            && minimapRaster.matches(view, samplesX, samplesZ)
+            && worldTick >= minimapRaster.sampledAtTick()
+            && worldTick - minimapRaster.sampledAtTick() < MINIMAP_CACHE_TICKS) {
+            return minimapRaster;
+        }
+
+        List<MinimapCell> cells = new ArrayList<>(samplesX * samplesZ);
+        for (int sampleZ = 0; sampleZ < samplesZ; sampleZ++) {
+            int worldZ = sampleCoordinate(view.minZ(), worldDepth, sampleZ, samplesZ);
+            for (int sampleX = 0; sampleX < samplesX; sampleX++) {
+                int worldX = sampleCoordinate(view.minX(), worldWidth, sampleX, samplesX);
+                cells.add(sampleMinimapCell(world, worldX, worldZ, view.baseY()));
+            }
+        }
+        minimapRaster = new MinimapRaster(
+            view.minX(),
+            view.maxX(),
+            view.minZ(),
+            view.maxZ(),
+            view.baseY(),
+            samplesX,
+            samplesZ,
+            worldTick,
+            createMinimapRuns(cells, samplesX, samplesZ)
+        );
+        return minimapRaster;
+    }
+
+    private List<MinimapRun> createMinimapRuns(List<MinimapCell> cells, int samplesX, int samplesZ) {
+        List<MinimapRun> runs = new ArrayList<>();
+        for (int z = 0; z < samplesZ; z++) {
+            int startX = 0;
+            int color = cells.get(z * samplesX).color();
+            for (int x = 1; x <= samplesX; x++) {
+                int nextColor = x < samplesX ? cells.get(z * samplesX + x).color() : Integer.MIN_VALUE;
+                if (x == samplesX || nextColor != color) {
+                    runs.add(new MinimapRun(startX, x, z, color));
+                    startX = x;
+                    color = nextColor;
+                }
+            }
+        }
+        return List.copyOf(runs);
+    }
+
+    private int sampleCoordinate(int minimum, int span, int sample, int sampleCount) {
+        int offset = (int) Math.floor((sample + 0.5) * span / Math.max(1.0, sampleCount));
+        return minimum + clamp(offset, 0, Math.max(0, span - 1));
+    }
+
+    private void drawMapOrientationAndScale(DrawContext context, MinimapView view) {
+        String compass = "N ^";
+        int compassW = this.textRenderer.getWidth(compass) + sx(6);
+        int compassX = view.screenX() + view.screenW() - compassW - sx(4);
+        int compassY = view.screenY() + sx(4);
+        context.fill(compassX, compassY, compassX + compassW, compassY + sx(14), 0xB8121821);
+        context.drawText(this.textRenderer, Text.literal(compass), compassX + sx(3), compassY + sx(3), 0xFFF3F6FA, false);
+
+        int worldWidth = Math.max(1, view.maxX() - view.minX() + 1);
+        int scaleBlocks = niceScale(Math.max(1, worldWidth / 5));
+        int scalePixels = Math.max(sx(12), (int) Math.round(scaleBlocks * (view.screenW() - 1) / (double) Math.max(1, worldWidth - 1)));
+        scalePixels = Math.min(view.screenW() / 3, scalePixels);
+        int scaleX = view.screenX() + sx(7);
+        int scaleY = view.screenY() + view.screenH() - sx(8);
+        String scaleLabel = scaleBlocks + " blocks";
+        int labelW = this.textRenderer.getWidth(scaleLabel);
+        context.fill(scaleX - sx(3), scaleY - this.textRenderer.fontHeight - sx(4), scaleX + Math.max(scalePixels, labelW) + sx(3), scaleY + sx(4), 0xA8121821);
+        context.fill(scaleX, scaleY, scaleX + scalePixels, scaleY + sx(2), 0xFFF3F6FA);
+        context.fill(scaleX, scaleY - sx(2), scaleX + 1, scaleY + sx(3), 0xFFF3F6FA);
+        context.fill(scaleX + scalePixels - 1, scaleY - sx(2), scaleX + scalePixels, scaleY + sx(3), 0xFFF3F6FA);
+        context.drawText(this.textRenderer, Text.literal(scaleLabel), scaleX, scaleY - this.textRenderer.fontHeight - sx(2), 0xFFF3F6FA, false);
+    }
+
+    private int niceScale(int target) {
+        int power = 1;
+        while (power <= target / 10 && power <= 10_000_000) {
+            power *= 10;
+        }
+        int leading = Math.max(1, target / power);
+        if (leading >= 5) {
+            return 5 * power;
+        }
+        if (leading >= 2) {
+            return 2 * power;
+        }
+        return power;
     }
 
     private MapCellType classifyMinimapCell(String path, boolean fluid, int topY, int referenceY) {
@@ -949,8 +1056,16 @@ public class BladelowHudScreen extends Screen {
         if (fluid || lowered.contains("water") || lowered.contains("kelp") || lowered.contains("seagrass")) {
             return MapCellType.WATER;
         }
-        if (lowered.contains("path") || lowered.contains("gravel")
-            || (Math.abs(topY - referenceY) <= 3 && (lowered.contains("road") || lowered.contains("farmland")))) {
+        boolean nearGround = Math.abs(topY - referenceY) <= 4;
+        boolean roadMaterial = lowered.contains("path")
+            || lowered.contains("gravel")
+            || lowered.contains("road")
+            || lowered.contains("farmland")
+            || lowered.contains("packed_mud")
+            || lowered.contains("cobblestone")
+            || lowered.contains("andesite")
+            || lowered.contains("stone_bricks");
+        if (lowered.contains("path") || lowered.contains("gravel") || (nearGround && roadMaterial)) {
             return MapCellType.ROAD;
         }
         if (lowered.contains("leaf") || lowered.contains("vine") || lowered.contains("crop")
@@ -993,12 +1108,12 @@ public class BladelowHudScreen extends Screen {
 
     private int colorForSurface(MapCellType type) {
         return switch (type) {
-            case WATER -> 0xFF2E5F93;
-            case ROAD -> 0xFFB88D5E;
-            case BUILDING -> 0xFF8A6B61;
-            case VEGETATION -> 0xFF4B7C48;
-            case OPEN_GROUND -> 0xFFA18B67;
-            case TERRAIN -> 0xFF727A84;
+            case WATER -> 0xFF286DA8;
+            case ROAD -> 0xFFD0A05E;
+            case BUILDING -> 0xFFB55F59;
+            case VEGETATION -> 0xFF47884F;
+            case OPEN_GROUND -> 0xFFB79B68;
+            case TERRAIN -> 0xFF697785;
         };
     }
 
@@ -1163,6 +1278,17 @@ public class BladelowHudScreen extends Screen {
             return null;
         }
 
+        if (planningDragActive && planningDragView != null) {
+            return planningDragView;
+        }
+
+        int mapX = planningMapX + sx(8);
+        int mapY = planningMapY + sx(8);
+        int mapW = Math.max(sx(120), planningMapW - sx(16));
+        // Reserve enough height for the title, subtitle, and legend so the
+        // map footer stays aligned instead of drifting into the build controls.
+        int mapH = Math.max(sx(120), planningMapH - sx(48));
+
         int centerX;
         int centerZ;
         if (markerA != null && markerB != null) {
@@ -1179,18 +1305,43 @@ public class BladelowHudScreen extends Screen {
             centerZ = 0;
         }
 
-        int radius = MINIMAP_BASE_RADIUS;
+        int minX = centerX - MINIMAP_BASE_RADIUS;
+        int maxX = centerX + MINIMAP_BASE_RADIUS;
+        int minZ = centerZ - MINIMAP_BASE_RADIUS;
+        int maxZ = centerZ + MINIMAP_BASE_RADIUS;
         if (markerA != null && markerB != null) {
-            radius = Math.max(radius, Math.max(Math.abs(markerA.getX() - markerB.getX()), Math.abs(markerA.getZ() - markerB.getZ())) / 2 + 12);
+            int selectionMinX = Math.min(markerA.getX(), markerB.getX());
+            int selectionMaxX = Math.max(markerA.getX(), markerB.getX());
+            int selectionMinZ = Math.min(markerA.getZ(), markerB.getZ());
+            int selectionMaxZ = Math.max(markerA.getZ(), markerB.getZ());
+            int selectionWidth = selectionMaxX - selectionMinX + 1;
+            int selectionDepth = selectionMaxZ - selectionMinZ + 1;
+            int padding = Math.max(8, (int) Math.ceil(Math.max(selectionWidth, selectionDepth) * 0.08));
+            minX = Math.min(minX, selectionMinX - padding);
+            maxX = Math.max(maxX, selectionMaxX + padding);
+            minZ = Math.min(minZ, selectionMinZ - padding);
+            maxZ = Math.max(maxZ, selectionMaxZ + padding);
         }
-        radius = Math.min(MINIMAP_MAX_RADIUS, radius);
-        int mapX = planningMapX + sx(8);
-        int mapY = planningMapY + sx(8);
-        int mapW = Math.max(sx(120), planningMapW - sx(16));
-        // Reserve enough height for the title, subtitle, and legend so the
-        // map footer stays aligned instead of drifting into the build controls.
-        int mapH = Math.max(sx(120), planningMapH - sx(48));
-        return new MinimapView(mapX, mapY, mapW, mapH, centerX - radius, centerX + radius, centerZ - radius, centerZ + radius, selectionBaseY());
+
+        // Match the world viewport to the actual on-screen aspect ratio. This
+        // prevents rectangular city areas from being stretched and guarantees
+        // the complete selection remains visible regardless of its size.
+        int worldWidth = maxX - minX + 1;
+        int worldDepth = maxZ - minZ + 1;
+        double targetAspect = mapW / (double) Math.max(1, mapH);
+        double worldAspect = worldWidth / (double) Math.max(1, worldDepth);
+        if (worldAspect < targetAspect) {
+            int desiredWidth = Math.max(worldWidth, (int) Math.ceil(worldDepth * targetAspect));
+            int extra = desiredWidth - worldWidth;
+            minX -= extra / 2;
+            maxX += extra - extra / 2;
+        } else if (worldAspect > targetAspect) {
+            int desiredDepth = Math.max(worldDepth, (int) Math.ceil(worldWidth / targetAspect));
+            int extra = desiredDepth - worldDepth;
+            minZ -= extra / 2;
+            maxZ += extra - extra / 2;
+        }
+        return new MinimapView(mapX, mapY, mapW, mapH, minX, maxX, minZ, maxZ, selectionBaseY());
     }
 
     private int districtBrushColor() {
@@ -1230,6 +1381,32 @@ public class BladelowHudScreen extends Screen {
     }
 
     private record MinimapCell(MapCellType type, int color, String label, int topY) {
+    }
+
+    private record MinimapRaster(
+        int minX,
+        int maxX,
+        int minZ,
+        int maxZ,
+        int baseY,
+        int samplesX,
+        int samplesZ,
+        long sampledAtTick,
+        List<MinimapRun> runs
+    ) {
+        private boolean matches(MinimapView view, int expectedSamplesX, int expectedSamplesZ) {
+            return minX == view.minX()
+                && maxX == view.maxX()
+                && minZ == view.minZ()
+                && maxZ == view.maxZ()
+                && baseY == view.baseY()
+                && samplesX == expectedSamplesX
+                && samplesZ == expectedSamplesZ;
+        }
+
+    }
+
+    private record MinimapRun(int startX, int endXExclusive, int z, int color) {
     }
 
     private record PlotEvaluation(boolean accepted, double score, String label) {
@@ -3674,13 +3851,13 @@ public class BladelowHudScreen extends Screen {
     @Override
     public boolean mouseReleased(net.minecraft.client.gui.Click click) {
         if (planningDragActive && click.button() == GLFW.GLFW_MOUSE_BUTTON_LEFT) {
-            planningDragActive = false;
-            MinimapView view = currentMinimapView();
+            MinimapView view = planningDragView == null ? currentMinimapView() : planningDragView;
             BlockPos endPos = view == null ? null : mapScreenToWorld(view, click.x(), click.y());
             if (endPos != null) {
                 markerA = planningDragOrigin;
                 markerB = endPos;
             }
+            planningDragActive = false;
             finalizePlanningMapSelection();
             return true;
         }
@@ -3697,6 +3874,7 @@ public class BladelowHudScreen extends Screen {
         }
 
         if (button == GLFW.GLFW_MOUSE_BUTTON_RIGHT) {
+            planningDragView = null;
             clearMarkers();
             return true;
         }
@@ -3716,6 +3894,7 @@ public class BladelowHudScreen extends Screen {
                 return true;
             }
         }
+        planningDragView = view;
         planningDragActive = true;
         planningDragOrigin = clicked;
         markerA = clicked;
@@ -3731,6 +3910,7 @@ public class BladelowHudScreen extends Screen {
 
     private void finalizePlanningMapSelection() {
         planningDragOrigin = null;
+        planningDragView = null;
         updateMarkerButtonLabels();
         syncOverlayDraft();
         updateRunGuard();

@@ -23,6 +23,14 @@ import java.util.Map;
 public final class OfflineTrainingModel {
     private static final Gson GSON = new Gson();
     private static final Path MODEL_PATH = Path.of("config", "bladelow", "ml", "offline_model.json");
+    private static final List<String> GENERATION_FEATURE_NAMES = List.of(
+        "widthFill",
+        "depthFill",
+        "areaFill",
+        "compactness",
+        "floors",
+        "roofFill"
+    );
 
     private long fingerprint = Long.MIN_VALUE;
     private String lastError = "";
@@ -57,6 +65,28 @@ public final class OfflineTrainingModel {
         );
     }
 
+    /**
+     * Score one concrete procedural design with the preference model trained
+     * from accepted versus rejected/rerolled previews.
+     */
+    public synchronized GenerationScore scoreGeneration(GenerationFeatures features) {
+        refreshIfNeeded();
+        GenerationPreference preference = cache.generationPreference;
+        if (features == null || preference == null || !preference.usable()) {
+            return GenerationScore.untrained();
+        }
+
+        double[] values = features.values();
+        double logit = preference.bias;
+        for (int i = 0; i < values.length; i++) {
+            double scale = Math.max(0.0001, preference.scales[i]);
+            double normalized = (values[i] - preference.means[i]) / scale;
+            logit += normalized * preference.weights[i];
+        }
+        double probability = sigmoid(logit);
+        return new GenerationScore(true, probability, preference.samples, preference.balancedAccuracy);
+    }
+
     public synchronized Snapshot snapshot() {
         refreshIfNeeded();
         return new Snapshot(
@@ -66,6 +96,9 @@ public final class OfflineTrainingModel {
             cache.sampleCounts == null ? 0 : cache.sampleCounts.environmentObservations,
             cache.sampleCounts == null ? 0 : cache.sampleCounts.buildIntentExamples,
             cache.sampleCounts == null ? 0 : cache.sampleCounts.styleExamples,
+            cache.sampleCounts == null ? 0 : cache.sampleCounts.previewFeedback,
+            cache.generationPreference != null && cache.generationPreference.usable(),
+            cache.generationPreference == null ? 0 : Math.max(0, cache.generationPreference.samples),
             topThemeLabels(cache.topThemes),
             new ArrayList<>(normalizedZonePriors().keySet())
         );
@@ -79,6 +112,8 @@ public final class OfflineTrainingModel {
             .append(" trained=").append(snapshot.trained())
             .append(" zones=").append(snapshot.zoneKeys().size())
             .append(" themes=").append(snapshot.topThemes().size())
+            .append(" generation=").append(snapshot.generationPreferenceTrained() ? "trained" : "fallback")
+            .append(" generationSamples=").append(snapshot.generationPreferenceSamples())
             .append("]");
         if (!lastError.isBlank()) {
             out.append(" offlineError=").append(lastError);
@@ -218,6 +253,15 @@ public final class OfflineTrainingModel {
         return text.trim().toLowerCase(Locale.ROOT);
     }
 
+    private static double sigmoid(double value) {
+        if (value >= 0.0) {
+            double exp = Math.exp(-value);
+            return 1.0 / (1.0 + exp);
+        }
+        double exp = Math.exp(value);
+        return exp / (1.0 + exp);
+    }
+
     public record Snapshot(
         boolean trained,
         String generatedAt,
@@ -225,9 +269,50 @@ public final class OfflineTrainingModel {
         long environmentObservations,
         long buildIntentExamples,
         long styleExamples,
+        long previewFeedback,
+        boolean generationPreferenceTrained,
+        int generationPreferenceSamples,
         List<String> topThemes,
         List<String> zoneKeys
     ) {
+    }
+
+    public record GenerationFeatures(
+        int selectionWidth,
+        int selectionDepth,
+        int bodyWidth,
+        int bodyDepth,
+        int floors,
+        int roofLayers
+    ) {
+        public GenerationFeatures {
+            selectionWidth = Math.max(1, selectionWidth);
+            selectionDepth = Math.max(1, selectionDepth);
+            bodyWidth = Math.max(1, bodyWidth);
+            bodyDepth = Math.max(1, bodyDepth);
+            floors = Math.max(1, Math.min(4, floors));
+            roofLayers = Math.max(1, roofLayers);
+        }
+
+        private double[] values() {
+            double widthFill = Math.min(1.25, bodyWidth / (double) selectionWidth);
+            double depthFill = Math.min(1.25, bodyDepth / (double) selectionDepth);
+            int maxRoofLayers = Math.max(1, Math.min(bodyWidth, bodyDepth) / 2);
+            return new double[]{
+                widthFill,
+                depthFill,
+                Math.min(1.5, widthFill * depthFill),
+                Math.min(bodyWidth, bodyDepth) / (double) Math.max(bodyWidth, bodyDepth),
+                floors,
+                Math.min(1.0, roofLayers / (double) maxRoofLayers)
+            };
+        }
+    }
+
+    public record GenerationScore(boolean trained, double probability, int samples, double balancedAccuracy) {
+        private static GenerationScore untrained() {
+            return new GenerationScore(false, 0.5, 0, 0.0);
+        }
     }
 
     private static final class ModelFile {
@@ -238,6 +323,7 @@ public final class OfflineTrainingModel {
         List<NamedCount> topPalettes;
         Map<String, Prior> zonePriors;
         Map<String, Prior> themePriors;
+        GenerationPreference generationPreference;
 
         private ModelFile normalized() {
             if (sampleCounts == null) {
@@ -255,6 +341,10 @@ public final class OfflineTrainingModel {
             if (themePriors == null) {
                 themePriors = Map.of();
             }
+            if (generationPreference == null) {
+                generationPreference = new GenerationPreference();
+            }
+            generationPreference.normalized();
             return this;
         }
     }
@@ -264,6 +354,64 @@ public final class OfflineTrainingModel {
         long environmentObservations;
         long buildIntentExamples;
         long styleExamples;
+        long previewFeedback;
+    }
+
+    private static final class GenerationPreference {
+        boolean enabled;
+        int minimumSamples;
+        int samples;
+        int positiveSamples;
+        int negativeSamples;
+        List<String> featureNames;
+        double[] means;
+        double[] scales;
+        double[] weights;
+        double bias;
+        double balancedAccuracy;
+        double logLoss;
+
+        private void normalized() {
+            if (featureNames == null) {
+                featureNames = List.of();
+            }
+            means = validVector(means, 0.0);
+            scales = validVector(scales, 1.0);
+            weights = validVector(weights, 0.0);
+            samples = Math.max(0, samples);
+            positiveSamples = Math.max(0, positiveSamples);
+            negativeSamples = Math.max(0, negativeSamples);
+            balancedAccuracy = clampFinite(balancedAccuracy, 0.0, 1.0, 0.0);
+            bias = Double.isFinite(bias) ? bias : 0.0;
+        }
+
+        private boolean usable() {
+            return enabled
+                && samples >= Math.max(1, minimumSamples)
+                && positiveSamples > 0
+                && negativeSamples > 0
+                && featureNames.equals(GENERATION_FEATURE_NAMES)
+                && means.length == GENERATION_FEATURE_NAMES.size()
+                && scales.length == GENERATION_FEATURE_NAMES.size()
+                && weights.length == GENERATION_FEATURE_NAMES.size();
+        }
+
+        private static double[] validVector(double[] source, double fallback) {
+            int size = GENERATION_FEATURE_NAMES.size();
+            double[] result = new double[size];
+            for (int i = 0; i < size; i++) {
+                double value = source != null && i < source.length ? source[i] : fallback;
+                result[i] = Double.isFinite(value) ? value : fallback;
+            }
+            return result;
+        }
+
+        private static double clampFinite(double value, double min, double max, double fallback) {
+            if (!Double.isFinite(value)) {
+                return fallback;
+            }
+            return Math.max(min, Math.min(max, value));
+        }
     }
 
     private static final class NamedCount {

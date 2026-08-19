@@ -75,6 +75,8 @@ public final class BladelowModelStatus {
             structureMemories,
             refs,
             offline.trained(),
+            offline.generationPreferenceTrained(),
+            offline.generationPreferenceSamples(),
             offline.generatedAt(),
             learnedThemes,
             offline.zoneKeys()
@@ -234,12 +236,14 @@ public final class BladelowModelStatus {
         long structureMemories,
         long referenceImages,
         boolean offlineModelPresent,
+        boolean generationPreferenceTrained,
+        int generationPreferenceSamples,
         String generatedAt,
         List<String> learnedThemes,
         List<String> zonePriors
     ) {
         private static Snapshot empty() {
-            return new Snapshot(0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, false, "", List.of(), List.of());
+            return new Snapshot(0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, 0L, false, false, 0, "", List.of(), List.of());
         }
 
         public List<String> lines() {
@@ -250,6 +254,9 @@ public final class BladelowModelStatus {
             out.add(offlineModelPresent
                 ? "offline model: trained"
                 : "offline model: not trained");
+            out.add(generationPreferenceTrained
+                ? "procedural preference: trained (" + generationPreferenceSamples + " feedback samples)"
+                : "procedural preference: learning (" + generationPreferenceSamples + " balanced samples)");
             if (offlineModelPresent && generatedAt != null && !generatedAt.isBlank()) {
                 out.add("generated: " + generatedAt);
             }

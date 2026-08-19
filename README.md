@@ -126,6 +126,8 @@ What it does:
 - right-click to clear the current area
 - show a layout-style map rather than raw coordinates
 - render water, roads, structures, vegetation, open ground, and terrain separately
+- fit the full selected area without stretching or clipping large selections
+- use a cached high-resolution terrain raster so narrow roads and small structures remain legible
 - show plot suggestions inside the selected city area
 - let you click a suggested plot to snap the selection to that footprint
 - show small plot labels such as `house`, `shop`, or `civic`
@@ -182,7 +184,7 @@ Current limitations:
 - focused on one generated building at a time
 - exterior quality is prioritized over rich interiors
 - overlapping plots are rejected rather than forced
-- rerolls are controlled generator variants, not freeform generative AI
+- rerolls explore ranked procedural candidates; after enough balanced preview feedback, a trained logistic preference model orders those candidates by predicted acceptance
 
 ## City Director
 
@@ -265,7 +267,7 @@ Current datasets:
 - `style_refs/`
   - optional style reference images and sidecar metadata
 - `offline_model.json`
-  - offline-trained priors loaded back into runtime
+  - offline-trained intent priors and procedural-geometry preference weights loaded back into runtime
 
 ### What Gets Learned
 
@@ -275,6 +277,7 @@ Bladelow currently learns from:
 - saved style areas
 - repeated build-intent choices for similar plots
 - explicit preview feedback from accepted, rerolled, and rejected proposals
+- preferred footprint fill, aspect ratio, floor count, and roof proportions for generated structures
 - optional image style references
 
 This is still structured learning, not raw generative AI.
@@ -307,6 +310,10 @@ It reads:
 
 It writes:
 - `config/bladelow/ml/offline_model.json`
+
+The procedural preference model activates after at least eight usable feedback
+samples with both positive (`accepted`) and negative (`rerolled`/`rejected`)
+examples. Until then, generation keeps the deterministic fallback variants.
 
 ### Model Status Page
 
