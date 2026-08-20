@@ -123,7 +123,7 @@ public final class BuildTaskGraph {
 
     public record OrderedPlacements(List<BlockState> states, List<BlockPos> targets) {
     }
-
+//todo add notes to graph loop
     public record Task(
         int taskIndex,
         int sourceIndex,
