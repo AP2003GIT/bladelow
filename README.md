@@ -60,12 +60,12 @@ cd "/home/p90lo/project bladelow/minecraft-bladelow"
 ```
 
 Jar output:
-- `build/libs/minecraft-bladelow-0.1.0.jar`
+- `build/libs/minecraft-bladelow-0.1.6.jar`
 
 WSL to Lunar copy example:
 
 ```bash
-cp "build/libs/minecraft-bladelow-0.1.0.jar" "/mnt/c/Users/<YourUser>/.lunarclient/profiles/vanilla/1.21/mods/fabric-1.21.11/"
+cp "build/libs/minecraft-bladelow-0.1.6.jar" "/mnt/c/Users/<YourUser>/.lunarclient/profiles/vanilla/1.21/mods/fabric-1.21.11/"
 ```
 
 Helper scripts:
