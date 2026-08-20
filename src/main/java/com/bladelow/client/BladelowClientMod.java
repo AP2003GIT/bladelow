@@ -47,9 +47,11 @@ public class BladelowClientMod implements ClientModInitializer {
         ClientReceiveMessageEvents.CHAT.register((message, signedMessage, sender, params, timestamp) ->
             BladelowHudTelemetry.recordServerMessage(message.getString())
         );
-        ClientReceiveMessageEvents.GAME.register((message, overlay) ->
-            BladelowHudTelemetry.recordServerMessage(message.getString())
-        );
+        ClientReceiveMessageEvents.ALLOW_GAME.register((message, overlay) -> {
+            String raw = message.getString();
+            BladelowHudTelemetry.recordServerMessage(raw);
+            return overlay || !BladelowHudTelemetry.isInternalTransportMessage(raw);
+        });
 
         ClientSendMessageEvents.ALLOW_CHAT.register(message -> {
             String trimmed = message == null ? "" : message.trim();

@@ -355,7 +355,7 @@ public final class PlacementJobRunner {
                 trackStuckAndRecover(world, player, job);
                 runProgressWatchdog(world, player, job, server.getTicks());
                 if (job.shouldReportProgress()) {
-                    player.sendMessage(blueText(job.progressSummary()), false);
+                    player.sendMessage(blueText(job.compactProgressSummary()), true);
                 }
                 continue;
             }
@@ -368,7 +368,7 @@ public final class PlacementJobRunner {
             runProgressWatchdog(world, player, job, server.getTicks());
 
             if (job.shouldReportProgress()) {
-                player.sendMessage(blueText(job.progressSummary()), false);
+                player.sendMessage(blueText(job.compactProgressSummary()), true);
             }
 
             if (job.isComplete()) {
@@ -823,10 +823,6 @@ public final class PlacementJobRunner {
                 job.noteEvent("skip(unknown) target=" + shortTarget(target));
                 job.advance();
             }
-        }
-
-        if (job.shouldReportProgress()) {
-            player.sendMessage(blueText(job.progressSummary()), false);
         }
     }
 
@@ -1450,7 +1446,7 @@ public final class PlacementJobRunner {
     }
 
     private static void finishJob(ServerPlayerEntity player, PlacementJob job) {
-        player.sendMessage(blueText(job.completionSummary()), false);
+        player.sendMessage(blueText(job.compactCompletionSummary()), false);
         rememberSnapshot(job.playerId(), "completed", job, detailSummary("completed", job));
         BladelowLearning.buildEvaluationLogger().recordCompletion(player, job);
         BuildNavigation.clearPlayerState(job.playerId());

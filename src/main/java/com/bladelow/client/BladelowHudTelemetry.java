@@ -20,7 +20,7 @@ public final class BladelowHudTelemetry {
     private static final int MAX_LOG_LINES = 24;
 
     private static final Pattern PROGRESS_PATTERN = Pattern.compile("progress\\s+(\\d+)/(\\d+)");
-    private static final Pattern COUNTER_PATTERN = Pattern.compile("(placed|skipped|failed)=(-?\\d+)");
+    private static final Pattern COUNTER_PATTERN = Pattern.compile("(placed|skipped|failed)(?:=|\\s+)(-?\\d+)");
 
     private static final Deque<String> LINES = new ArrayDeque<>();
 
@@ -73,6 +73,25 @@ public final class BladelowHudTelemetry {
         appendLine("cmd " + cleaned);
     }
 
+    /**
+     * Server-to-HUD transport lines are useful to the client parser but should
+     * never occupy the player's chat history.
+     */
+    public static boolean isInternalTransportMessage(String rawMessage) {
+        if (rawMessage == null) {
+            return false;
+        }
+        String line = rawMessage.trim();
+        if (!line.contains("[Bladelow]")) {
+            return false;
+        }
+        line = line.replace("[Bladelow]", "").trim().toLowerCase(Locale.ROOT);
+        return line.startsWith("preview-map ")
+            || line.startsWith("preview plan ")
+            || line.startsWith("preview-clear")
+            || line.startsWith("intent ");
+    }
+
     public static synchronized List<String> recent(int maxLines) {
         int wanted = Math.max(0, maxLines);
         List<String> all = new ArrayList<>(LINES);
@@ -102,13 +121,14 @@ public final class BladelowHudTelemetry {
     }
 
     private static void parseProgress(String line) {
-        Matcher progress = PROGRESS_PATTERN.matcher(line.toLowerCase(Locale.ROOT));
+        String lower = line.toLowerCase(Locale.ROOT);
+        Matcher progress = PROGRESS_PATTERN.matcher(lower);
         if (progress.find()) {
             done = parseInt(progress.group(1), done);
             total = parseInt(progress.group(2), total);
         }
 
-        Matcher counter = COUNTER_PATTERN.matcher(line.toLowerCase(Locale.ROOT));
+        Matcher counter = COUNTER_PATTERN.matcher(lower);
         while (counter.find()) {
             int value = parseInt(counter.group(2), 0);
             switch (counter.group(1)) {
@@ -120,7 +140,7 @@ public final class BladelowHudTelemetry {
             }
         }
 
-        if (line.contains("build complete") && total > 0) {
+        if (lower.contains("build complete") && total > 0) {
             done = total;
         }
     }

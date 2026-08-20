@@ -353,16 +353,16 @@ public class BladelowHudScreen extends Screen {
         int flowGap = rowGap;
         int flowButtonW = (panelW - sx(16) - flowGap * 3) / 4;
         int flowX = panelX + sx(8);
-        this.flowAreaButton = addDrawableChild(ButtonWidget.builder(Text.literal("AREA"), b -> setFlow(FLOW_AREA))
+        this.flowAreaButton = addDrawableChild(ButtonWidget.builder(Text.literal("1 Area"), b -> setFlow(FLOW_AREA))
             .dimensions(flowX, flowY, flowButtonW, buttonH)
             .build());
-        this.flowBlocksButton = addDrawableChild(ButtonWidget.builder(Text.literal("BLOCKS"), b -> setFlow(FLOW_BLOCKS))
+        this.flowBlocksButton = addDrawableChild(ButtonWidget.builder(Text.literal("2 Materials"), b -> setFlow(FLOW_BLOCKS))
             .dimensions(flowX + (flowButtonW + flowGap), flowY, flowButtonW, buttonH)
             .build());
-        this.flowSourceButton = addDrawableChild(ButtonWidget.builder(Text.literal("SOURCE"), b -> setFlow(FLOW_SOURCE))
+        this.flowSourceButton = addDrawableChild(ButtonWidget.builder(Text.literal("3 Style"), b -> setFlow(FLOW_SOURCE))
             .dimensions(flowX + (flowButtonW + flowGap) * 2, flowY, flowButtonW, buttonH)
             .build());
-        this.flowRunButton = addDrawableChild(ButtonWidget.builder(Text.literal("RUN"), b -> setFlow(FLOW_RUN))
+        this.flowRunButton = addDrawableChild(ButtonWidget.builder(Text.literal("4 Build"), b -> setFlow(FLOW_RUN))
             .dimensions(flowX + (flowButtonW + flowGap) * 3, flowY, flowButtonW, buttonH)
             .build());
 
@@ -517,13 +517,13 @@ public class BladelowHudScreen extends Screen {
             .build());
 
         int modeW = (rightW - rowGap * 2) / 3;
-        this.modeSelectionButton = addDrawableChild(ButtonWidget.builder(Text.literal("SEL"), b -> setMode(MODE_SELECTION))
+        this.modeSelectionButton = addDrawableChild(ButtonWidget.builder(Text.literal("Single"), b -> setMode(MODE_SELECTION))
             .dimensions(rightX, searchY, modeW, buttonH)
             .build());
-        this.modeBlueprintButton = addDrawableChild(ButtonWidget.builder(Text.literal("BP"), b -> setMode(MODE_BLUEPRINT))
+        this.modeBlueprintButton = addDrawableChild(ButtonWidget.builder(Text.literal("Blueprint"), b -> setMode(MODE_BLUEPRINT))
             .dimensions(rightX + modeW + rowGap, searchY, modeW, buttonH)
             .build());
-        this.modeCityButton = addDrawableChild(ButtonWidget.builder(Text.literal("CITY"), b -> setMode(MODE_CITY))
+        this.modeCityButton = addDrawableChild(ButtonWidget.builder(Text.literal("City"), b -> setMode(MODE_CITY))
             .dimensions(rightX + (modeW + rowGap) * 2, searchY, modeW, buttonH)
             .build());
 
@@ -637,7 +637,7 @@ public class BladelowHudScreen extends Screen {
         this.bpBuildButton = addDrawableChild(ButtonWidget.builder(Text.literal("Build"), b -> buildBlueprint())
             .dimensions(rightX, hiddenY, sx(1), buttonH)
             .build());
-        this.statusDetailButton = addDrawableChild(ButtonWidget.builder(Text.literal("Model"), b -> toggleModelStatusPage())
+        this.statusDetailButton = addDrawableChild(ButtonWidget.builder(Text.literal("Model Details"), b -> toggleModelStatusPage())
             .dimensions(rightX + sideW + rowGap, rightRowY + buttonH + rowGap, sideW, buttonH)
             .build());
         this.reachMinusButton = addDrawableChild(ButtonWidget.builder(Text.literal("-"), b -> adjustReach(-0.25))
@@ -1433,10 +1433,10 @@ public class BladelowHudScreen extends Screen {
 
     private String rightPanelLabel() {
         return switch (activeFlow) {
-            case FLOW_AREA -> "AREA SETUP";
-            case FLOW_BLOCKS -> MODE_CITY.equals(activeMode) ? "PALETTE OVERRIDE" : "BLOCK PICKER";
-            case FLOW_SOURCE -> MODE_CITY.equals(activeMode) ? "CITY PLANNER" : "SOURCE";
-            case FLOW_RUN -> MODE_CITY.equals(activeMode) ? "CITY RUNNER" : "RUNTIME";
+            case FLOW_AREA -> "SELECT AREA";
+            case FLOW_BLOCKS -> MODE_CITY.equals(activeMode) ? "MATERIAL OVERRIDE" : "CHOOSE MATERIALS";
+            case FLOW_SOURCE -> MODE_CITY.equals(activeMode) ? "STYLE & PREVIEW" : "BUILD SOURCE";
+            case FLOW_RUN -> "PREVIEW & BUILD";
             default -> "SETUP";
         };
     }
@@ -1624,7 +1624,7 @@ public class BladelowHudScreen extends Screen {
         context.fill(x, y, x + width, y + height, 0xEA121923);
         drawBorder(context, x, y, width, height, 0xFF7FA2CF);
         context.fill(x, y, x + width, y + sx(20), 0xCC223246);
-        context.drawText(this.textRenderer, Text.literal("MODEL STATUS"), x + sx(8), y + sx(6), 0xFFF2F6FC, false);
+        context.drawText(this.textRenderer, Text.literal("MODEL DETAILS"), x + sx(8), y + sx(6), 0xFFF2F6FC, false);
 
         int lineY = y + sx(30);
         for (String line : snapshot.lines()) {
@@ -1656,7 +1656,7 @@ public class BladelowHudScreen extends Screen {
     private String[] intentCardLines() {
         String latestIntent = BladelowHudTelemetry.latestIntent();
         if (latestIntent == null || latestIntent.isBlank()) {
-            return new String[]{"waiting for scan", "select or snap a plot in CITY mode"};
+            return new String[]{"waiting for scan", "select or snap a plot in City Builder mode"};
         }
         String[] parts = latestIntent.split("\\s+\\|\\s+", 2);
         String summary = parts.length > 0 && !parts[0].isBlank() ? parts[0] : latestIntent;
@@ -1714,10 +1714,12 @@ public class BladelowHudScreen extends Screen {
 
     private String modeHintText() {
         return switch (activeFlow) {
-            case FLOW_AREA -> MODE_CITY.equals(activeMode) ? "City Area" : "Area";
-            case FLOW_BLOCKS -> MODE_CITY.equals(activeMode) ? "Palette Override" : "Blocks";
-            case FLOW_SOURCE -> MODE_CITY.equals(activeMode) ? "City Source" : "Source";
-            case FLOW_RUN -> MODE_CITY.equals(activeMode) ? "City Run" : "Run";
+            case FLOW_AREA -> "Select or adjust the build area";
+            case FLOW_BLOCKS -> MODE_CITY.equals(activeMode) ? "Optional material override" : "Choose materials";
+            case FLOW_SOURCE -> MODE_CITY.equals(activeMode)
+                ? "Choose a style and generate a preview"
+                : MODE_BLUEPRINT.equals(activeMode) ? "Choose or capture a blueprint" : "Review the build source";
+            case FLOW_RUN -> "Review controls and start the build";
             default -> "Ready";
         };
     }
@@ -1857,11 +1859,18 @@ public class BladelowHudScreen extends Screen {
         if (flowAreaButton == null) {
             return;
         }
-        flowAreaButton.setMessage(Text.literal(FLOW_AREA.equals(activeFlow) ? "AREA*" : "AREA"));
-        String blocksLabel = MODE_CITY.equals(activeMode) ? "PALETTE" : "BLOCKS";
-        flowBlocksButton.setMessage(Text.literal(FLOW_BLOCKS.equals(activeFlow) ? blocksLabel + "*" : blocksLabel));
-        flowSourceButton.setMessage(Text.literal(FLOW_SOURCE.equals(activeFlow) ? "SOURCE*" : "SOURCE"));
-        flowRunButton.setMessage(Text.literal(FLOW_RUN.equals(activeFlow) ? "RUN*" : "RUN"));
+        boolean compactCityFlow = MODE_CITY.equals(activeMode) && !cityPaletteOverrideEnabled;
+        String blocksLabel = MODE_CITY.equals(activeMode) ? "2 Palette" : "2 Materials";
+        String sourceLabel = compactCityFlow ? "2 Style" : "3 Style";
+        String runLabel = compactCityFlow ? "3 Build" : "4 Build";
+        flowAreaButton.setMessage(Text.literal(activeStepLabel("1 Area", FLOW_AREA)));
+        flowBlocksButton.setMessage(Text.literal(activeStepLabel(blocksLabel, FLOW_BLOCKS)));
+        flowSourceButton.setMessage(Text.literal(activeStepLabel(sourceLabel, FLOW_SOURCE)));
+        flowRunButton.setMessage(Text.literal(activeStepLabel(runLabel, FLOW_RUN)));
+    }
+
+    private String activeStepLabel(String label, String flow) {
+        return flow.equals(activeFlow) ? label + " *" : label;
     }
 
     private void refreshPreviewActionButtons() {
@@ -1902,7 +1911,7 @@ public class BladelowHudScreen extends Screen {
         }
         updateModeUi();
         updateRunGuard();
-        statusText = "Mode: " + this.activeMode.toUpperCase(Locale.ROOT);
+        statusText = "Mode: " + modeDisplayName();
     }
 
     private void updateModeUi() {
@@ -1917,9 +1926,17 @@ public class BladelowHudScreen extends Screen {
     }
 
     private void updateModeButtons() {
-        modeSelectionButton.setMessage(Text.literal(MODE_SELECTION.equals(activeMode) ? "SELECTION*" : "SELECTION"));
-        modeBlueprintButton.setMessage(Text.literal(MODE_BLUEPRINT.equals(activeMode) ? "BLUEPRINT*" : "BLUEPRINT"));
-        modeCityButton.setMessage(Text.literal(MODE_CITY.equals(activeMode) ? "CITY*" : "CITY"));
+        modeSelectionButton.setMessage(Text.literal(MODE_SELECTION.equals(activeMode) ? "Single *" : "Single"));
+        modeBlueprintButton.setMessage(Text.literal(MODE_BLUEPRINT.equals(activeMode) ? "Blueprint *" : "Blueprint"));
+        modeCityButton.setMessage(Text.literal(MODE_CITY.equals(activeMode) ? "City *" : "City"));
+    }
+
+    private String modeDisplayName() {
+        return switch (activeMode) {
+            case MODE_BLUEPRINT -> "Blueprint";
+            case MODE_CITY -> "City Builder";
+            default -> "Single Build";
+        };
     }
 
     private void updateQuickButtons() {
@@ -3203,7 +3220,7 @@ public class BladelowHudScreen extends Screen {
 
         profileButton.setMessage(Text.literal("Profile: " + PROFILE_PRESETS[clamp(profileIndex, 0, PROFILE_PRESETS.length - 1)]));
         scaleButton.setMessage(Text.literal("HUD Scale: " + SCALE_LABELS[clamp(uiScaleIndex, 0, SCALE_LABELS.length - 1)]));
-        statusDetailButton.setMessage(Text.literal(showModelStatusPage ? "Hide Model" : "Model"));
+        statusDetailButton.setMessage(Text.literal(showModelStatusPage ? "Hide Details" : "Model Details"));
         if (cityTownFillButton != null) {
             cityTownFillButton.setMessage(Text.literal("Director Continue"));
         }
@@ -3415,28 +3432,16 @@ public class BladelowHudScreen extends Screen {
 
     private String flowTitle(String flow) {
         return switch (normalizeFlow(flow)) {
-            case FLOW_AREA -> "AREA";
-            case FLOW_BLOCKS -> MODE_CITY.equals(activeMode) ? "PALETTE" : "BLOCKS";
-            case FLOW_SOURCE -> "SOURCE";
-            case FLOW_RUN -> "RUN";
-            default -> "AREA";
+            case FLOW_AREA -> "Area";
+            case FLOW_BLOCKS -> MODE_CITY.equals(activeMode) ? "Palette" : "Materials";
+            case FLOW_SOURCE -> "Style";
+            case FLOW_RUN -> "Build";
+            default -> "Area";
         };
     }
 
     private String flowProgressText() {
-        String area = (markerA != null && markerB != null) ? "A:OK" : "A:--";
-        String blocks;
-        if (MODE_CITY.equals(activeMode) && !cityPaletteOverrideEnabled) {
-            blocks = "P:AUTO";
-        } else {
-            boolean blocksReady = MODE_CITY.equals(activeMode) || selectedBlockSpec() != null;
-            blocks = blocksReady ? "P:OK" : "P:--";
-        }
-        boolean sourceReady = !MODE_BLUEPRINT.equals(activeMode)
-            || (blueprintField != null && !blueprintField.getText().trim().isEmpty());
-        String source = sourceReady ? "S:OK" : "S:--";
-        String run = validationText.isEmpty() ? "R:OK" : "R:--";
-        return area + " " + blocks + " " + source + " " + run;
+        return "Step " + flowStep(activeFlow) + " of " + totalFlowSteps() + ": " + flowTitle(activeFlow);
     }
 
     private boolean isBlockInAnySlot(String blockId) {

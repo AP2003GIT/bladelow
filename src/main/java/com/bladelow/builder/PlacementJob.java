@@ -465,6 +465,46 @@ public class PlacementJob {
             + current;
     }
 
+    /**
+     * Short, player-facing progress for Minecraft's single-line action bar.
+     * Full scheduler/navigation counters remain available through status detail.
+     */
+    public String compactProgressSummary() {
+        int percent = totalTargets() <= 0
+            ? 0
+            : (int) Math.round((cursor * 100.0) / totalTargets());
+        return "[Bladelow] Building " + Math.max(0, Math.min(100, percent)) + "%"
+            + " | progress " + cursor + "/" + totalTargets()
+            + " | Placed " + placed
+            + " | " + userActivity();
+    }
+
+    public String compactCompletionSummary() {
+        return "[Bladelow] Build complete | Placed " + placed
+            + " | Skipped " + skipped
+            + " | Failed " + failed;
+    }
+
+    private String userActivity() {
+        if (node != TaskNode.RECOVER) {
+            return switch (node) {
+                case MOVE -> "Finding a route...";
+                case ALIGN -> "Checking the build location...";
+                case PLACE -> "Placing blocks...";
+                case RECOVER -> "Recovering...";
+            };
+        }
+        return switch (recoverReason) {
+            case OUT_OF_REACH -> "Finding another route...";
+            case PROTECTED_BLOCK -> "Protecting existing blocks...";
+            case BLOCKED_STRICT_AIR, BLOCKED_SOLID -> "Handling an obstruction...";
+            case NO_ITEM -> "Checking materials...";
+            case ML_REJECTED -> "Evaluating placement...";
+            case PLACE_FAILED -> "Retrying placement...";
+            case NONE, UNKNOWN -> "Recovering...";
+        };
+    }
+
     public String completionSummary() {
         double avgScore = totalScore / Math.max(1, totalTargets());
         double noReachPct = (noReach * 100.0) / Math.max(1, totalTargets());

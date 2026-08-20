@@ -13,7 +13,6 @@ import net.minecraft.util.Formatting;
 import net.minecraft.util.math.BlockPos;
 
 import java.util.List;
-import java.util.Locale;
 
 /**
  * Orchestrates the full placement pipeline:
@@ -75,14 +74,9 @@ public final class PlacementPipeline {
             : PlacementJobRunner.hasActive(player.getUuid());
         PlacementJobRunner.queueOrPreview(source.getServer(), job);
 
-        String msg = "[Bladelow] queued " + tag
-            + " targets=" + plan.targets().size()
-            + " blocks=" + plan.states().size()
-            + " feasible=" + String.format(Locale.ROOT, "%.1f", mat.feasibilityPercent()) + "%"
-            + " " + graph.summary()
-            + " " + snapshot.summary()
-            + (previewMode ? " [pending]" : " [active]")
-            + (replaced ? " (replaced previous pending job)" : "");
+        String msg = "[Bladelow] Build queued: " + plan.targets().size() + " blocks"
+            + (previewMode ? " | Preview ready" : " | Progress appears above the hotbar")
+            + (replaced ? " | Previous build replaced" : "");
         source.sendFeedback(() -> blueText(msg), false);
         return 1;
     }
