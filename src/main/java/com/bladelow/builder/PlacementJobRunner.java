@@ -631,16 +631,46 @@ public final class PlacementJobRunner {
             return;
         }
 
-        CandidatePlan plan = solvePlacementCandidates(world, player, target, job.runtimeSettings().reachDistance());
+        double reach = job.runtimeSettings().reachDistance();
+        double currentDistance = distanceTo(player, target);
+        if (currentDistance <= reach + 0.45) {
+            job.updatePathDebug(0, 0, currentDistance, "already_in_range");
+            job.noteRetryReason("ok");
+            job.setNode(PlacementJob.TaskNode.ALIGN);
+            return;
+        }
+
+        CandidatePlan plan = solvePlacementCandidates(world, player, target, reach);
         if (plan.candidates().isEmpty()) {
+            // The placement solver intentionally favors close face-adjacent spots,
+            // but dense foliage can obstruct every one of those while a valid stand
+            // position still exists slightly farther out. Let the broader navigation
+            // solver search its full ring/coarse grid before deferring the target.
+            job.updatePathDebug(0, 0, Double.NaN, "navigation_fallback");
+            BuildNavigation.MoveResult fallbackMove = BuildNavigation.ensureInRangeForPlacement(
+                world,
+                player,
+                target,
+                job.runtimeSettings()
+            );
+            if (fallbackMove.status() >= 0) {
+                if (fallbackMove.status() > 0) {
+                    job.recordMoved();
+                    job.noteEvent("moved(" + fallbackMove.reason() + ") target=" + shortTarget(target));
+                }
+                job.noteRetryReason("ok");
+                job.setNode(PlacementJob.TaskNode.ALIGN);
+                return;
+            }
+
             addTargetPressure(job.playerId(), target, 1);
-            job.updatePathDebug(0, 0, Double.NaN, "none");
-            job.noteRetryReason("no_candidate");
-            double dist = Math.sqrt(player.squaredDistanceTo(target.getX() + 0.5, target.getY() + 0.5, target.getZ() + 0.5));
+            job.noteRetryReason(fallbackMove.reason());
             job.startRecover(
                 PlacementJob.RecoverReason.OUT_OF_REACH,
-                "target=" + shortTarget(target) + " reason=no_solver_candidate dist="
-                    + String.format(Locale.ROOT, "%.2f", dist)
+                "target=" + shortTarget(target)
+                    + " reason=" + fallbackMove.reason()
+                    + " dist=" + String.format(Locale.ROOT, "%.2f", fallbackMove.finalDistance())
+                    + " cand=0 navigation=fallback"
             );
             return;
         }
