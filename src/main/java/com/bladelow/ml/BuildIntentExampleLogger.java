@@ -14,7 +14,7 @@ import java.time.Instant;
 
 /**
  * Writes planner-approved lot decisions to a local dataset.
- *
+ * TODO add IntentExample for internal machine learning logging/base models
  * These rows are the training signal for the first lot-level model:
  * "given this site context, what kind of building did Bladelow decide fit?"
  */
