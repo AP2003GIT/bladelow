@@ -2398,11 +2398,10 @@ public class BladelowHudScreen extends Screen {
     }
 
     private void runCityBuild() {
-        if (!ensureMarkerSelection()) {
-            return;
-        }
-        citySummary = "fill requested";
-        sendAction(HudAction.TOWN_FILL_SELECTION);
+        // The primary City Builder action follows the documented preview-first
+        // single-plot workflow. Town template filling remains part of the City
+        // Director path for larger staged areas.
+        runCityAutoBuild();
     }
 
     private void runCityPreview() {
@@ -2435,6 +2434,9 @@ public class BladelowHudScreen extends Screen {
             snapToSuggestedPlot(plot);
         } else if (markerA == null || markerB == null) {
             statusText = "Select an area or suggested plot first";
+            return;
+        }
+        if (!ensureMarkerSelection()) {
             return;
         }
         String label = plot == null || plot.label() == null || plot.label().isBlank() ? "auto" : plot.label();
@@ -3256,10 +3258,13 @@ public class BladelowHudScreen extends Screen {
     }
 
     private void refreshCityAutoBuildButtonLabel() {
-        if (cityAutoBuildButton == null) {
-            return;
+        boolean previewReady = hasMatchingPreview();
+        if (cityAutoBuildButton != null) {
+            cityAutoBuildButton.setMessage(Text.literal(previewReady ? "Build Preview" : "Preview Here"));
         }
-        cityAutoBuildButton.setMessage(Text.literal(hasMatchingPreview() ? "Build Preview" : "Preview Here"));
+        if (runButton != null && MODE_CITY.equals(activeMode)) {
+            runButton.setMessage(Text.literal(previewReady ? "Build Preview" : "Preview Build"));
+        }
     }
 
     private void sendAction(HudAction action) {

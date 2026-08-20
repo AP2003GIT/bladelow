@@ -10,6 +10,7 @@ import net.minecraft.util.math.BlockPos;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.registry.Registries;
 import net.minecraft.util.Identifier;
+import net.minecraft.world.Heightmap;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -36,6 +37,8 @@ public final class TownPlanner {
     private static final int PLOT_SPACING = 1;
     private static final int ROAD_ADJACENT_RADIUS = 3;
     private static final int SYNTHETIC_ROAD_THRESHOLD = 10;
+    private static final int SURFACE_SNAP_RANGE = 4;
+    private static final int SURFACE_SAMPLE_GRID = 5;
     private static final List<String> ROAD_HINTS = List.of(
         "path",
         "gravel",
@@ -184,7 +187,11 @@ public final class TownPlanner {
         }
 
         if (buildings == 0 || blockStates.isEmpty() || targets.isEmpty()) {
-            return TownPlan.error("no clear lots fit town blueprints in selected area");
+            return TownPlan.error(
+                "no clear lots fit town blueprints in selected area ("
+                    + area.width() + "x" + area.depth() + " at ground Y=" + area.baseY()
+                    + "); use Preview Build for one lot or select a larger, flatter area for City Director"
+            );
         }
 
         StringBuilder message = new StringBuilder();
@@ -669,6 +676,50 @@ public final class TownPlanner {
         return false;
     }
 
+    /**
+     * HUD markers normally use the player's feet Y, which is one block above
+     * the ground. Snap that selection plane to the nearby terrain surface so a
+     * perfectly valid open lot is not rejected as having an air foundation.
+     * The short range deliberately avoids moving intentionally underground or
+     * elevated selections to an unrelated surface.
+     */
+    private static int resolveSurfaceBaseY(
+        ServerWorld world,
+        int minX,
+        int maxX,
+        int minZ,
+        int maxZ,
+        int selectedY
+    ) {
+        int samplesX = Math.min(SURFACE_SAMPLE_GRID, maxX - minX + 1);
+        int samplesZ = Math.min(SURFACE_SAMPLE_GRID, maxZ - minZ + 1);
+        List<Integer> nearbySurfaces = new ArrayList<>(samplesX * samplesZ);
+        for (int ix = 0; ix < samplesX; ix++) {
+            int x = sampledCoordinate(minX, maxX, ix, samplesX);
+            for (int iz = 0; iz < samplesZ; iz++) {
+                int z = sampledCoordinate(minZ, maxZ, iz, samplesZ);
+                int surfaceY = world.getTopY(Heightmap.Type.MOTION_BLOCKING_NO_LEAVES, x, z) - 1;
+                if (surfaceY < world.getBottomY() || Math.abs(surfaceY - selectedY) > SURFACE_SNAP_RANGE) {
+                    continue;
+                }
+                nearbySurfaces.add(surfaceY);
+            }
+        }
+        if (nearbySurfaces.isEmpty()) {
+            return selectedY;
+        }
+        nearbySurfaces.sort(Integer::compareTo);
+        return nearbySurfaces.get(nearbySurfaces.size() / 2);
+    }
+
+    private static int sampledCoordinate(int min, int max, int index, int count) {
+        if (count <= 1 || min >= max) {
+            return min;
+        }
+        double progress = index / (double) (count - 1);
+        return min + (int) Math.round((max - min) * progress);
+    }
+
     private record PlotPlacement(TownBlueprint blueprint, LotCandidate lot, int originX, int originZ, double score, BuildIntent intent) {
     }
 
@@ -722,7 +773,8 @@ public final class TownPlanner {
             int maxX = Math.max(from.getX(), to.getX());
             int minZ = Math.min(from.getZ(), to.getZ());
             int maxZ = Math.max(from.getZ(), to.getZ());
-            int baseY = Math.min(from.getY(), to.getY());
+            int selectedY = Math.min(from.getY(), to.getY());
+            int baseY = resolveSurfaceBaseY(world, minX, maxX, minZ, maxZ, selectedY);
 
             LinkedHashSet<Long> scannedRoads = new LinkedHashSet<>();
             for (int x = minX; x <= maxX; x++) {
